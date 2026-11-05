@@ -1,10 +1,11 @@
 // Markdown Preview mod for Herdr
+// Dual-column layout: Left sidebar for file list & search, right area for rich preview.
 // Supports Pane split, Overlay / Dialog popup, and auto live-refreshing.
 import { View, div } from "gpui-kit";
-import { v_flex, h_flex, TextView } from "gpui-base";
+import { v_flex, h_flex, TextView, InputState, Input } from "gpui-base";
 import {
   theme, props, closeOverlay, run, readTextFile, exec,
-  spaces, focused, panes, notify
+  spaces, focused, panes
 } from "herdr";
 
 function resolveLocation() {
@@ -28,13 +29,21 @@ export default class MarkdownPreview extends View {
     this.loading = true;
     this.lastHash = null;
     this.availableFiles = [];
-    this.showFileSelector = false;
+    this.showSidebar = true;
+    this.filter = "";
+
+    // Search filter input
+    this.input = InputState.new({ placeholder: "Filter .md files…" });
+    this.input.on("change", (_e, cx) => {
+      this.filter = (this.input.value() || "").trim().toLowerCase();
+      cx.notify();
+    });
 
     this.handle = cx.focus_handle();
     this.handle.focus();
 
-    // Initial load
-    this.loadFile(this.initialFile, cx);
+    // Initial load & discovery
+    this.bootstrap(this.initialFile, cx);
 
     // Watch for live changes (every 1.5s)
     cx.timer.every(1500, (cx) => {
@@ -46,12 +55,25 @@ export default class MarkdownPreview extends View {
 
   async discoverFiles(cwd, on) {
     try {
-      const r = await exec("sh", ["-c", 'find . -maxdepth 2 -name "*.md" -not -path "*/.*" 2>/dev/null | head -n 15'], { cwd, on });
+      const script = 'find . -maxdepth 3 \\( -name "*.md" -o -name "*.markdown" \\) -not -path "*/.*" -not -path "*/node_modules/*" 2>/dev/null | sort | head -n 60';
+      const r = await exec("sh", ["-c", script], { cwd, on });
       if (r.code === 0 && r.stdout) {
-        return r.stdout
+        const list = r.stdout
           .split("\n")
           .map((line) => line.trim().replace(/^\.\//, ""))
           .filter(Boolean);
+
+        // Put README.md first if present
+        list.sort((a, b) => {
+          const aBase = a.toLowerCase();
+          const bBase = b.toLowerCase();
+          if (aBase === "readme.md") return -1;
+          if (bBase === "readme.md") return 1;
+          if (aBase === "agents.md") return -1;
+          if (bBase === "agents.md") return 1;
+          return a.localeCompare(b);
+        });
+        return list;
       }
     } catch {
       // Fallback
@@ -59,7 +81,7 @@ export default class MarkdownPreview extends View {
     return [];
   }
 
-  loadFile(targetFile, cx) {
+  bootstrap(targetFile, cx) {
     this.loading = true;
     this.error = null;
     cx.notify();
@@ -67,58 +89,71 @@ export default class MarkdownPreview extends View {
     cx.spawn(async (cx) => {
       try {
         const { cwd, on } = resolveLocation();
+        const files = await this.discoverFiles(cwd, on);
+        this.availableFiles = files;
+
         let selected = targetFile;
-
-        // If no file specified, search default candidates
         if (!selected) {
-          const candidates = ["README.md", "readme.md", "AGENTS.md", "README.txt"];
-          for (const cand of candidates) {
-            const check = await readTextFile(`${cwd}/${cand}`, { on });
-            if (check !== null) {
-              selected = cand;
-              break;
-            }
-          }
-
-          // If still none, scan directory
-          if (!selected) {
-            const files = await this.discoverFiles(cwd, on);
-            this.availableFiles = files;
-            if (files.length > 0) {
-              selected = files[0];
+          if (files.length > 0) {
+            selected = files[0];
+          } else {
+            // Check direct README.md
+            for (const cand of ["README.md", "readme.md", "AGENTS.md"]) {
+              const check = await readTextFile(`${cwd}/${cand}`, { on });
+              if (check !== null) {
+                selected = cand;
+                if (!this.availableFiles.includes(cand)) {
+                  this.availableFiles.unshift(cand);
+                }
+                break;
+              }
             }
           }
         }
 
-        if (!selected) {
-          this.loading = false;
-          this.error = "No Markdown file found in current workspace.";
-          this.content = null;
-          cx.notify();
-          return;
-        }
-
-        const fullPath = selected.startsWith("/") ? selected : `${cwd}/${selected}`;
-        const text = await readTextFile(fullPath, { on });
-
-        if (text === null) {
-          this.loading = false;
-          this.error = `File not found: ${selected}`;
-          this.content = null;
+        if (selected) {
+          await this.loadFileContent(selected, cwd, on);
         } else {
-          this.filePath = fullPath;
-          this.fileName = selected.split("/").pop();
-          this.content = text;
-          this.lastHash = text.length + ":" + text.slice(0, 80);
           this.loading = false;
-          this.error = null;
+          this.error = "No Markdown files found in this workspace.";
+          this.content = null;
         }
+      } catch (err) {
+        this.loading = false;
+        this.error = String(err);
+      } finally {
+        cx.notify();
+      }
+    });
+  }
 
-        // Also fetch candidate files list in background for switching
-        const found = await this.discoverFiles(cwd, on);
-        if (found.length > 0) {
-          this.availableFiles = found;
-        }
+  async loadFileContent(selected, cwd, on) {
+    const fullPath = selected.startsWith("/") ? selected : `${cwd}/${selected}`;
+    const text = await readTextFile(fullPath, { on });
+
+    if (text === null) {
+      this.loading = false;
+      this.error = `File not found: ${selected}`;
+      this.content = null;
+    } else {
+      this.filePath = fullPath;
+      this.fileName = selected;
+      this.content = text;
+      this.lastHash = text.length + ":" + text.slice(0, 80);
+      this.loading = false;
+      this.error = null;
+    }
+  }
+
+  loadFile(selected, cx) {
+    this.loading = true;
+    this.error = null;
+    cx.notify();
+
+    cx.spawn(async (cx) => {
+      try {
+        const { cwd, on } = resolveLocation();
+        await this.loadFileContent(selected, cwd, on);
       } catch (err) {
         this.loading = false;
         this.error = String(err);
@@ -167,16 +202,22 @@ export default class MarkdownPreview extends View {
     }
   }
 
+  filteredFiles() {
+    if (!this.filter) return this.availableFiles;
+    return this.availableFiles.filter((f) => f.toLowerCase().includes(this.filter));
+  }
+
   render(cx) {
     const t = theme();
     const isOverlay = Boolean(this.overlayId);
+    const files = this.filteredFiles();
 
     return v_flex()
       .id("markdown-preview-root")
       .track_focus(this.handle)
       .size_full()
       .bg(t.background)
-      .rounded(isOverlay ? 12 : 0)
+      .when(isOverlay, (el) => el.rounded(12))
       .border_1()
       .border_color(t.border)
       .overflow_hidden()
@@ -186,10 +227,10 @@ export default class MarkdownPreview extends View {
           cx.stop_propagation();
         }
       })
-      // Header Bar
+      // Top Master Toolbar
       .child(
         h_flex()
-          .h(38)
+          .h(40)
           .flex_none()
           .px(12)
           .gap(8)
@@ -197,6 +238,34 @@ export default class MarkdownPreview extends View {
           .bg(t.surface)
           .border_b(1)
           .border_color(t.border)
+          // Sidebar Toggle Button
+          .child(
+            h_flex()
+              .px(6)
+              .h(24)
+              .rounded(4)
+              .items_center()
+              .gap(4)
+              .cursor_pointer()
+              .when(this.showSidebar, (el) => el.bg(t.raised))
+              .hover((s) => s.bg(t.hover))
+              .on_click((_e, cx) => {
+                this.showSidebar = !this.showSidebar;
+                cx.notify();
+              })
+              .child(div().text_size(12).text_color(t.muted).child("☰ Files"))
+              .when(this.availableFiles.length > 0, (el) =>
+                el.child(
+                  div()
+                    .text_size(11)
+                    .px(4)
+                    .rounded(3)
+                    .bg(t.background)
+                    .text_color(t.dim)
+                    .child(String(this.availableFiles.length))
+                )
+              )
+          )
           // Live status dot
           .child(
             div()
@@ -205,31 +274,13 @@ export default class MarkdownPreview extends View {
               .rounded(4)
               .bg(this.filePath ? t.ansi2 : t.muted)
           )
-          // File title / switcher button
+          // Current file name
           .child(
-            h_flex()
-              .gap(6)
-              .items_center()
-              .cursor_pointer()
-              .on_click((_e, cx) => {
-                this.showFileSelector = !this.showFileSelector;
-                cx.notify();
-              })
-              .child(
-                div()
-                  .font_semibold()
-                  .text_size(13)
-                  .text_color(t.foreground)
-                  .child(this.fileName ?? "Markdown Preview")
-              )
-              .when(this.availableFiles.length > 1, (el) =>
-                el.child(
-                  div()
-                    .text_size(11)
-                    .text_color(t.dim)
-                    .child(this.showFileSelector ? "▲" : "▼")
-                )
-              )
+            div()
+              .font_semibold()
+              .text_size(13)
+              .text_color(t.foreground)
+              .child(this.fileName ?? "Markdown Preview")
           )
           // Spacer
           .child(div().flex_1())
@@ -243,11 +294,11 @@ export default class MarkdownPreview extends View {
               .cursor_pointer()
               .hover((s) => s.bg(t.hover))
               .on_click((_e, cx) => {
-                this.loadFile(this.filePath, cx);
+                this.bootstrap(this.fileName, cx);
               })
               .child(div().text_size(12).text_color(t.muted).child("↻ Refresh"))
           )
-          // Split Pane button (especially handy in Overlay mode)
+          // Split Pane button (in Overlay mode)
           .when(isOverlay && Boolean(this.filePath), (el) =>
             el.child(
               h_flex()
@@ -279,65 +330,139 @@ export default class MarkdownPreview extends View {
             )
           )
       )
-      // Dropdown File Selector
-      .when(this.showFileSelector && this.availableFiles.length > 0, (el) =>
-        el.child(
-          v_flex()
-            .flex_none()
-            .p(6)
-            .gap(2)
-            .bg(t.popover)
-            .border_b(1)
-            .border_color(t.border)
-            .children(
-              this.availableFiles.map((file) =>
-                h_flex()
-                  .p(6)
-                  .rounded(4)
-                  .cursor_pointer()
-                  .hover((s) => s.bg(t.hover))
-                  .on_click((_e, cx) => {
-                    this.showFileSelector = false;
-                    this.loadFile(file, cx);
-                  })
-                  .child(
-                    div()
-                      .text_size(12)
-                      .text_color(file === this.fileName ? t.accent : t.foreground)
-                      .child(file)
-                  )
-              )
-            )
-        )
-      )
-      // Content Area
+      // Main Body: Dual-column layout
       .child(
-        v_flex()
-          .id("markdown-body")
+        h_flex()
           .flex_1()
           .min_h(0)
-          .p(16)
-          .overflow_y_scrollbar()
-          .when(this.loading && !this.content, (el) =>
-            el.child(
-              div().p(16).text_size(13).text_color(t.dim).child("Loading Markdown…")
-            )
-          )
-          .when(Boolean(this.error) && !this.content, (el) =>
+          // Left File List Column
+          .when(this.showSidebar, (el) =>
             el.child(
               v_flex()
-                .p(16)
-                .gap(8)
-                .child(div().text_size(14).font_semibold().text_color(t.ansi1).child("Error"))
-                .child(div().text_size(13).text_color(t.muted).child(this.error))
+                .w(260)
+                .flex_none()
+                .bg(t.surface)
+                .border_r(1)
+                .border_color(t.border)
+                // Filter box
+                .child(
+                  v_flex()
+                    .p(8)
+                    .flex_none()
+                    .border_b(1)
+                    .border_color(t.border)
+                    .child(
+                      Input.new(this.input)
+                        .h(30)
+                        .flex_none()
+                        .px(8)
+                        .rounded(6)
+                        .border_1()
+                        .border_color(t.border)
+                        .bg(t.background)
+                        .text_size(12)
+                        .text_color(t.foreground)
+                    )
+                )
+                // Files scrollable list
+                .child(
+                  v_flex()
+                    .id("md-file-list")
+                    .flex_1()
+                    .min_h(0)
+                    .overflow_y_scrollbar()
+                    .p(4)
+                    .gap(2)
+                    .when(files.length === 0, (emptyEl) =>
+                      emptyEl.child(
+                        div()
+                          .p(12)
+                          .text_size(12)
+                          .text_color(t.dim)
+                          .child(this.filter ? "No matching files" : "No .md files found")
+                      )
+                    )
+                    .children(
+                      files.map((file) => {
+                        const isSelected = file === this.fileName;
+                        const parts = file.split("/");
+                        const base = parts.pop();
+                        const dir = parts.length > 0 ? parts.join("/") + "/" : "";
+
+                        return h_flex()
+                          .id(`md-file-${file}`)
+                          .p(6)
+                          .rounded(6)
+                          .gap(6)
+                          .items_center()
+                          .cursor_pointer()
+                          .when(isSelected, (s) => s.bg(t.raised))
+                          .when(!isSelected, (s) => s.hover((h) => h.bg(t.hover)))
+                          .on_click((_e, cx) => {
+                            if (file !== this.fileName) {
+                              this.loadFile(file, cx);
+                            }
+                          })
+                          // File icon
+                          .child(div().text_size(13).child("📄"))
+                          // File name & directory path
+                          .child(
+                            v_flex()
+                              .flex_1()
+                              .min_w(0)
+                              .child(
+                                div()
+                                  .truncate()
+                                  .text_size(12)
+                                  .font_medium()
+                                  .text_color(isSelected ? t.accent : t.foreground)
+                                  .child(base)
+                              )
+                              .when(Boolean(dir), (dirEl) =>
+                                dirEl.child(
+                                  div()
+                                    .truncate()
+                                    .text_size(10.5)
+                                    .text_color(t.dim)
+                                    .child(dir)
+                                )
+                              )
+                          );
+                      })
+                    )
+                )
             )
           )
-          .when(Boolean(this.content), (el) =>
-            el.child(
-              TextView.markdown("preview-text", this.content || "*Empty file*")
-                .selectable(true)
-                .scrollable(true)
-            )
+          // Right Preview Area
+          .child(
+            v_flex()
+              .id("markdown-body")
+              .flex_1()
+              .min_w(0)
+              .min_h(0)
+              .p(16)
+              .overflow_y_scrollbar()
+              .when(this.loading && !this.content, (el) =>
+                el.child(
+                  div().p(16).text_size(13).text_color(t.dim).child("Loading Markdown…")
+                )
+              )
+              .when(Boolean(this.error) && !this.content, (el) =>
+                el.child(
+                  v_flex()
+                    .p(16)
+                    .gap(8)
+                    .child(div().text_size(14).font_semibold().text_color(t.ansi1).child("Error"))
+                    .child(div().text_size(13).text_color(t.muted).child(this.error))
+                )
+              )
+              .when(Boolean(this.content), (el) =>
+                el.child(
+                  TextView.markdown("preview-text", this.content || "*Empty file*")
+                    .selectable(true)
+                    .scrollable(true)
+                )
+              )
           )
       );
   }

@@ -73,6 +73,14 @@ async function harness(propsValue = {}) {
   const base = synthetic({
     v_flex: () => element,
     h_flex: () => element,
+    Input: { new: () => element },
+    InputState: {
+      new: () => ({
+        value: () => "",
+        on: () => {},
+        focus: () => {},
+      }),
+    },
     TextView: {
       markdown: (id, text) => {
         events.push(["TextView.markdown", id, text]);
@@ -121,7 +129,7 @@ test("markdown-preview loads explicit file prop", async () => {
   instance.init({ file: "docs/guide.md" }, cx);
   await new Promise((r) => setImmediate(r));
 
-  assert.equal(instance.fileName, "guide.md");
+  assert.equal(instance.fileName, "docs/guide.md");
   assert.equal(instance.filePath, "/repo/docs/guide.md");
   assert(instance.content.includes("Detailed documentation"));
 });
