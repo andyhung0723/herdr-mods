@@ -11,8 +11,10 @@ import {
   layout,
   exec,
   notify,
+  playSound,
 } from "herdr";
 import { formatClock } from "./date-format.js";
+import { computeDogState } from "./dog-state.js";
 
 function find(node, id) {
   if (node?.id === id) return node;
@@ -25,39 +27,34 @@ function find(node, id) {
 
 const narrow = () => (find(layout(), "sidebar")?.size?.px ?? Infinity) < 160;
 
-function toggleSidebar() {
-  const width = find(layout(), "sidebar")?.size?.px;
-  if (!narrow()) setShared("sidebar.width", width);
-  setShared("sidebar.collapsed", !narrow());
-  run("layout.resize", {
-    id: "sidebar",
-    px: narrow() ? (shared("sidebar.width") ?? 268) : window()?.platform === "macos" ? 76 : 44,
-  });
-}
-
 export default class EnhancedWorkspaceChrome extends View {
   init(_props, cx) {
-    // Tick every second to update live clock
-    cx.timer.every(1000, (timerCx) => {
+    this.tickCount = 0;
+
+    // Animation timer: ticks every 250ms for live clock + animated pixel pet
+    cx.timer.every(250, (timerCx) => {
+      this.tick();
       timerCx.notify();
     });
   }
 
-  button(id, label, action) {
-    const t = theme();
-    return div()
-      .id(id)
-      .size(26)
-      .flex_none()
-      .flex()
-      .items_center()
-      .justify_center()
-      .rounded(6)
-      .text_color(t.muted)
-      .hover((s) => s.bg(t.hover).text_color(t.foreground))
-      .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
-      .on_click(action)
-      .child(label);
+  tick() {
+    this.tickCount = (this.tickCount + 1) % 48; // 48 ticks * 250ms = 12-second behavioral loop
+  }
+
+  getDogState() {
+    return computeDogState(this.tickCount);
+  }
+
+  bark(cx) {
+    try {
+      playSound("done");
+    } catch {}
+    notify({
+      title: "汪！🐾",
+      body: "汪汪！(搖尾巴)",
+      level: "info",
+    });
   }
 
   copyTimestamp(cx) {
@@ -83,6 +80,7 @@ export default class EnhancedWorkspaceChrome extends View {
     const t = theme();
     const collapsed = narrow();
     const clock = formatClock(new Date());
+    const dog = this.getDogState();
 
     if (props()?.footer) {
       const row = (id, icon, label, dim, action) =>
@@ -174,23 +172,26 @@ export default class EnhancedWorkspaceChrome extends View {
             )
         )
       )
-      // Search and Sidebar Toggle buttons
+      // Animated Pixel Dog (Desktop Pet)
       .when(!collapsed, (el) =>
         el.child(
-          this.button(
-            "search",
-            svg("mods/enhanced-workspace-chrome/search.svg").size(15),
-            () => run("mod.open", { name: "picker" })
-          )
-        )
-      )
-      .when(!(collapsed && window()?.platform === "macos"), (el) =>
-        el.child(
-          this.button(
-            "sidebar-toggle",
-            svg("mods/enhanced-workspace-chrome/sidebar.svg").size(15),
-            toggleSidebar
-          )
+          h_flex()
+            .id("pixel-dog-runway")
+            .w(56)
+            .h(28)
+            .items_center()
+            .cursor_pointer()
+            .hover((s) => s.opacity(0.9))
+            .on_click((_e, cx) => this.bark(cx))
+            .child(
+              div()
+                .pl(dog.offset || 0)
+                .child(
+                  svg(`mods/enhanced-workspace-chrome/${dog.svg}`)
+                    .size(24)
+                    .flex_none()
+                )
+            )
         )
       );
   }
