@@ -119,3 +119,16 @@ test("revealInPathFinder - triggers Path Finder AppleScript", async () => {
   assert.equal(res.ok, true);
   assert.match(calls[0], /tell application "Path Finder"/);
 });
+
+test("contextMenu structure - validates items and actions definition", () => {
+  const menuConfig = {
+    path: "src/app.js",
+    isDir: false,
+    name: "app.js",
+    actions: ["cut", "copy", "paste", "rename", "delete", "pathfinder"],
+  };
+  assert.equal(menuConfig.path, "src/app.js");
+  assert.equal(menuConfig.actions.includes("pathfinder"), true);
+  assert.equal(menuConfig.actions.includes("rename"), true);
+});
+

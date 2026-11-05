@@ -567,16 +567,20 @@ export default class EnhancedFiles extends View {
           else this.show(path, cx);
         })
         .on_mouse_down("right", (e, cx) => {
-          cx.stop_propagation();
-          this.selectedPath = path;
-          this.contextMenu = {
-            path,
-            isDir: entry.dir,
-            name: entry.name,
-            x: e.position?.x ?? 40,
-            y: e.position?.y ?? 100,
-          };
-          cx.notify();
+          try {
+            cx.stop_propagation();
+            this.selectedPath = path;
+            this.contextMenu = {
+              path,
+              isDir: entry.dir,
+              name: entry.name,
+              x: e.position?.x ?? 40,
+              y: e.position?.y ?? 100,
+            };
+            cx.notify();
+          } catch (err) {
+            notify({ title: "選單開啟異常", body: String(err), level: "error" });
+          }
         })
         .child(
           entry.dir
@@ -660,7 +664,10 @@ export default class EnhancedFiles extends View {
       .border_1()
       .border_color(t.border)
       .bg(t.popover)
-      .shadow("md")
+      .on_mouse_down_out((_e, cx) => {
+        this.contextMenu = null;
+        cx.notify();
+      })
       .child(item("file-plus", "New File…", "", () => this.startCreate("file", parentFolder, cx)))
       .child(item("folder-plus", "New Folder…", "", () => this.startCreate("folder", parentFolder, cx)))
       .child(divider())
@@ -925,15 +932,18 @@ export default class EnhancedFiles extends View {
             .overflow_y_scrollbar()
             .p(6)
             .on_mouse_down("right", (e, cx) => {
-              // Right click on empty tree background
-              this.contextMenu = {
-                path: null,
-                isDir: true,
-                name: "root",
-                x: e.position?.x ?? 40,
-                y: e.position?.y ?? 100,
-              };
-              cx.notify();
+              try {
+                this.contextMenu = {
+                  path: null,
+                  isDir: true,
+                  name: "root",
+                  x: e.position?.x ?? 40,
+                  y: e.position?.y ?? 100,
+                };
+                cx.notify();
+              } catch (err) {
+                notify({ title: "選單開啟異常", body: String(err), level: "error" });
+              }
             })
             .children(this.rows("", 0, [], t, cx))
             .when(Boolean(this.error) || !this.entries.get("")?.length, el =>
