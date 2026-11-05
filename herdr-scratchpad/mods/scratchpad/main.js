@@ -1,6 +1,6 @@
 // Scratchpad (随手筆記 / 剪貼暫存區) Mod for Herdr
 import { View, div } from "gpui-kit";
-import { v_flex, h_flex, Editor, EditorState, InputState, Input } from "gpui-base";
+import { v_flex, h_flex, Textarea, TextareaState, InputState, Input } from "gpui-base";
 import {
   theme, settings, props, closeOverlay, openOverlay, run,
   nextCommand, shared, setShared
@@ -57,18 +57,17 @@ export default class Scratchpad extends View {
     this.renameInput = null;
 
     this.editor = null;
-    this.editorHandle = cx.focus_handle();
     this.handle = cx.focus_handle();
 
-    // Setup initial editor immediately & request focus
+    // Setup initial editor immediately & request focus directly onto the textarea
     this.setupEditor(this.getActiveTab(), cx);
-    this.editorHandle.focus();
+    this.editor?.focus();
     if (cx.timer?.after) {
-      cx.timer.after(30, () => this.editorHandle?.focus());
-      cx.timer.after(100, () => this.editorHandle?.focus());
+      cx.timer.after(30, () => this.editor?.focus());
+      cx.timer.after(100, () => this.editor?.focus());
     } else {
-      setTimeout(() => this.editorHandle?.focus(), 30);
-      setTimeout(() => this.editorHandle?.focus(), 100);
+      setTimeout(() => this.editor?.focus(), 30);
+      setTimeout(() => this.editor?.focus(), 100);
     }
 
     this.load(cx);
@@ -126,27 +125,16 @@ export default class Scratchpad extends View {
     this.editor = null;
 
     if (!tab) return;
-    const t = theme();
     const currentText = tab.content ?? "";
 
-    this.editor = EditorState.new({
+    this.editor = TextareaState.new({
+      placeholder: "隨手記下你的筆記或暫存剪貼區內容...",
       value: currentText,
-      language: tab.language || "markdown",
-      readonly: false,
-      soft_wrap: true,
-      line_numbers: true,
-      font_family: settings().font_family || "JetBrains Mono",
-      font_size: 13,
-      syntax: {
-        keyword: t.ansi5,
-        string: t.ansi2,
-        comment: t.dim,
-        function: t.ansi4,
-        type: t.ansi3,
-        number: t.ansi1,
-        constant: t.ansi6,
-      },
+      rows: 24,
     });
+    try {
+      this.editor.set_soft_wrap(true);
+    } catch {}
 
     const onUpdate = () => {
       const activeTab = this.getActiveTab();
@@ -173,9 +161,9 @@ export default class Scratchpad extends View {
       });
     } catch {}
 
-    if (this.editorHandle) {
-      this.editorHandle.focus();
-    }
+    try {
+      this.editor.focus();
+    } catch {}
 
     cx.notify();
   }
@@ -579,11 +567,12 @@ export default class Scratchpad extends View {
           .p(6)
           .bg(t.surface)
           .cursor_text()
-          .on_click(() => this.editorHandle?.focus())
+          .on_click(() => {
+            try { this.editor?.focus(); } catch {}
+          })
           .when(Boolean(this.editor), (el) =>
             el.child(
-              Editor.new(this.editor)
-                .track_focus(this.editorHandle)
+              Textarea.new(this.editor)
                 .size_full()
             )
           )

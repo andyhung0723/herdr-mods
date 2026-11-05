@@ -90,10 +90,14 @@ async function harness(overrides = {}) {
     svg: () => element,
   });
 
-  class MockEditorState {
+  let focusCalls = 0;
+
+  class MockTextareaState {
     constructor(opts) {
       this._val = opts?.value || "";
       this._handlers = [];
+      this.focused = false;
+      this.softWrap = false;
     }
     value() {
       return this._val;
@@ -101,6 +105,13 @@ async function harness(overrides = {}) {
     set_value(v) {
       this._val = v;
       for (const h of this._handlers) h({}, {});
+    }
+    set_soft_wrap(w) {
+      this.softWrap = w;
+    }
+    focus() {
+      this.focused = true;
+      focusCalls++;
     }
     on(event, handler) {
       if (event === "change") this._handlers.push(handler);
@@ -111,8 +122,12 @@ async function harness(overrides = {}) {
   const base = synthetic({
     v_flex: () => element,
     h_flex: () => element,
+    TextareaState: {
+      new: (opts) => new MockTextareaState(opts),
+    },
+    Textarea: { new: () => element },
     EditorState: {
-      new: (opts) => new MockEditorState(opts),
+      new: (opts) => new MockTextareaState(opts),
     },
     Editor: { new: () => element },
     InputState: {
@@ -134,7 +149,6 @@ async function harness(overrides = {}) {
   }[name]));
   await mainMod.evaluate();
 
-  let focusCalls = 0;
   const cx = {
     focus_handle: () => ({
       focus: () => {
