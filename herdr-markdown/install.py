@@ -108,6 +108,10 @@ def update_keys_json(keys_path: Path, backups_dir: Path, dry_run: bool) -> None:
         global_keys[SHORTCUT_TMUX] = ACTION_OPEN
         changed = True
 
+    if "ctrl-b h" not in global_keys or global_keys["ctrl-b h"] != "app.help":
+        global_keys["ctrl-b h"] = "app.help"
+        changed = True
+
     if changed:
         if dry_run:
             print(f"[dry-run] Add keybinding '{SHORTCUT_TMUX}': '{ACTION_OPEN}' in keys.json")
