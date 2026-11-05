@@ -149,8 +149,8 @@ export default class MarkdownPreview extends View {
     this.isMaximized = Boolean(savedSize.isMaximized);
     this.resizing = false;
     this.dragStart = null;
-    this.preMaxWidth = 940;
-    this.preMaxHeight = 660;
+    this.preMaxWidth = this.isMaximized ? 940 : this.dialogWidth;
+    this.preMaxHeight = this.isMaximized ? 660 : this.dialogHeight;
     this.collapsedFolders = new Set();
 
     // Search filter input
@@ -540,9 +540,11 @@ export default class MarkdownPreview extends View {
 
     if (isOverlay) {
       root
+        .relative()
         .w(this.dialogWidth)
         .h(this.dialogHeight)
         .rounded(12)
+        .shadow_lg()
         .on_mouse_move((e, cx) => {
           if (this.resizing && this.dragStart) {
             const dx = e.position.x - this.dragStart.x;
@@ -823,14 +825,21 @@ export default class MarkdownPreview extends View {
       .when(isOverlay, (el) =>
         el.child(
           div()
+            .id("md-resize-grip")
             .absolute()
-            .bottom(2)
-            .right(2)
-            .w(16)
-            .h(16)
+            .bottom(0)
+            .right(0)
+            .w(24)
+            .h(24)
+            .rounded_tl(6)
+            .bg(t.raised)
+            .border_t(1)
+            .border_l(1)
+            .border_color(t.border)
             .items_center()
             .justify_center()
             .cursor_nwse_resize()
+            .hover((s) => s.bg(t.hover))
             .on_mouse_down("left", (e, cx) => {
               this.resizing = true;
               this.dragStart = {
@@ -843,9 +852,10 @@ export default class MarkdownPreview extends View {
             })
             .child(
               div()
-                .text_size(11)
-                .text_color(t.dim)
-                .child("⌟")
+                .text_size(12)
+                .font_semibold()
+                .text_color(t.muted)
+                .child("⤡")
             )
         )
       );
