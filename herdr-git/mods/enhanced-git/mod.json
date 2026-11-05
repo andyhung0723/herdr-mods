@@ -1,0 +1,6 @@
+{
+  "name": "enhanced-git",
+  "version": "1.0.0",
+  "description": "Comprehensive Git manager for Herdr with visual Git Graph, staged/unstaged staging, and sync.",
+  "main": "main.js"
+}

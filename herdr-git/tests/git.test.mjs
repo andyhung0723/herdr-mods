@@ -1,0 +1,186 @@
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import vm from "node:vm";
+import { readFile } from "node:fs/promises";
+
+async function harness() {
+  const events = [];
+
+  const fakeStatusOutput = [
+    "## main...origin/main [ahead 1, behind 0]",
+    "M  staged-file.js",
+    " M unstaged-file.js",
+    "?? new-file.txt",
+    "",
+  ].join("\0");
+
+  const fakeNumstat = ["10\t5\tstaged-file.js", "2\t1\tunstaged-file.js", ""].join("\0");
+
+  const fakeLogGraph = [
+    "* 283ef88\t2a5a99e\t (HEAD -> main, origin/main)\tfeat(ui): replace logo\t10 minutes ago\tAndy",
+    "* 2a5a99e\t6feceb0\t\tfeat(codex): add week limit\t1 hour ago\tAndy",
+    "| \\\t\t\t\t\t",
+    "|  * 6feceb0\t\t (feature/test)\tfeat(quotas): refine display\t2 hours ago\tAndy",
+    "* | 67a6bb9\t\t\tfeat(keys): update\t3 hours ago\tAndy",
+  ].join("\n");
+
+  const api = {
+    spaces: () => [{ id: "s1", active: true, folder: "/repo" }],
+    panes: () => [{ pane: "p1", space: "s1", cwd: "/repo" }],
+    focused: () => ({ pane: "p1", cwd: "/repo" }),
+    exec: async (cmd, args) => {
+      events.push(["exec", cmd, args]);
+      if (args.includes("rev-parse") && args.includes("--show-toplevel")) {
+        return { code: 0, stdout: "/repo\n" };
+      }
+      if (args.includes("rev-parse") && args.includes("--verify")) {
+        return { code: 0, stdout: "283ef88\n" };
+      }
+      if (args.includes("status")) {
+        return { code: 0, stdout: fakeStatusOutput };
+      }
+      if (args.includes("--numstat")) {
+        return { code: 0, stdout: fakeNumstat };
+      }
+      if (args.includes("log") && args.includes("--graph")) {
+        return { code: 0, stdout: fakeLogGraph };
+      }
+      return { code: 0, stdout: "" };
+    },
+    readTextFile: async () => null,
+    closeOverlay: () => {},
+    openOverlay: () => "overlay-1",
+    theme: () => ({
+      surface: "#181825",
+      background: "#1e1e2e",
+      popover: "#181825",
+      border: "#313244",
+      foreground: "#cdd6f4",
+      muted: "#a6adc8",
+      dim: "#6c7086",
+      accent: "#89b4fa",
+      raised: "#313244",
+      hover: "#45475a",
+      selected: "#45475a",
+      ansi1: "#f38ba8",
+      ansi2: "#a6e3a1",
+      solid: "#cdd6f4",
+      solid_foreground: "#1e1e2e",
+    }),
+    settings: () => ({ font_family: "JetBrains Mono" }),
+    setShared: () => {},
+    shared: () => null,
+    run: () => {},
+    watchFolder: async () => {},
+  };
+
+  const context = vm.createContext({});
+  const synthetic = (values) =>
+    new vm.SyntheticModule(
+      Object.keys(values),
+      function () {
+        for (const [name, value] of Object.entries(values)) this.setExport(name, value);
+      },
+      { context }
+    );
+
+  const herdr = synthetic(api);
+  const gitCode = await readFile(new URL("../mods/enhanced-git/git.js", import.meta.url), "utf8");
+  const gitMod = new vm.SourceTextModule(gitCode, { context });
+  await gitMod.link((name) => ({ "herdr": herdr }[name]));
+  await gitMod.evaluate();
+
+  const element = new Proxy({}, { get: () => () => element });
+  const kit = synthetic({
+    View: class {},
+    div: () => element,
+    image: () => element,
+  });
+  const base = synthetic({
+    v_flex: () => element,
+    h_flex: () => element,
+    InputState: { new: () => ({ on: () => {}, value: () => "", set_value: () => {} }) },
+    Input: { new: () => element },
+  });
+
+  const mainCode = await readFile(new URL("../mods/enhanced-git/main.js", import.meta.url), "utf8");
+  const mainMod = new vm.SourceTextModule(mainCode, { context });
+  await mainMod.link((name) => ({
+    "herdr": herdr,
+    "gpui-kit": kit,
+    "gpui-base": base,
+    "./git.js": gitMod,
+  }[name]));
+  await mainMod.evaluate();
+
+  const cx = {
+    focus_handle: () => ({ focus: () => {} }),
+    notify: () => {},
+    spawn: (fn) => fn(cx),
+    timer: { every: () => {} },
+  };
+
+  return { git: gitMod.namespace, View: mainMod.namespace.default, cx, events };
+}
+
+test("parseBranchHeader parses branch and ahead/behind info", async () => {
+  const { git } = await harness();
+  const res1 = git.parseBranchHeader("## main...origin/main [ahead 2, behind 1]");
+  assert.equal(res1.branch, "main");
+  assert.equal(res1.upstream, "origin/main");
+  assert.equal(res1.ahead, 2);
+  assert.equal(res1.behind, 1);
+
+  const res2 = git.parseBranchHeader("## feature-xyz");
+  assert.equal(res2.branch, "feature-xyz");
+  assert.equal(res2.ahead, 0);
+  assert.equal(res2.behind, 0);
+});
+
+test("getGitStatus separates staged and unstaged files with diff counts", async () => {
+  const { git } = await harness();
+  const status = await git.getGitStatus("/repo", null);
+
+  assert.equal(status.isRepo, true);
+  assert.equal(status.branch, "main");
+  assert.equal(status.ahead, 1);
+  assert.equal(status.behind, 0);
+
+  assert.equal(status.stagedFiles.length, 1);
+  assert.equal(status.stagedFiles[0].path, "staged-file.js");
+  assert.ok(status.stagedFiles[0].add > 0);
+
+  assert.equal(status.unstagedFiles.length, 2);
+  assert.equal(status.unstagedFiles[0].path, "unstaged-file.js");
+  assert.equal(status.unstagedFiles[1].path, "new-file.txt");
+  assert.equal(status.unstagedFiles[1].fresh, true);
+});
+
+test("parseGraphRow parses commit node and branch routing lines", async () => {
+  const { git } = await harness();
+
+  const row1 = git.parseGraphRow("* 283ef88\t2a5a99e\t (HEAD -> main, v1.0)\tfeat: init\t5m ago\tAndy");
+  assert.equal(row1.isCommit, true);
+  assert.equal(row1.hash, "283ef88");
+  assert.deepEqual([...row1.refs], ["HEAD -> main", "v1.0"]);
+  assert.equal(row1.subject, "feat: init");
+  assert.equal(row1.author, "Andy");
+
+  const row2 = git.parseGraphRow("| \\");
+  assert.equal(row2.isCommit, false);
+  assert.equal(row2.graph, "| \\");
+});
+
+test("EnhancedGit view initializes in panel and dialog modes and switches tabs", async () => {
+  const { View, cx } = await harness();
+
+  const panel = new View();
+  panel.init({ role: "panel" }, cx);
+  assert.equal(panel.role, "panel");
+  assert.equal(panel.tab, "changes");
+
+  const dialog = new View();
+  dialog.init({ role: "dialog", tab: "graph" }, cx);
+  assert.equal(dialog.role, "dialog");
+  assert.equal(dialog.tab, "graph");
+});
