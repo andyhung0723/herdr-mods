@@ -2,7 +2,7 @@
 """Install Herdr Scratchpad mod and register shortcut (Ctrl+B s).
 
 Includes validation, safe backups, copying mod to ~/.config/herdr-app/mods/scratchpad,
-and registering shortcut in keys.json.
+configuring controller in main-popup.json, and registering shortcut in keys.json.
 """
 
 from __future__ import annotations
@@ -19,7 +19,7 @@ from typing import Any
 
 MOD_NAME = "scratchpad"
 SHORTCUT_KEY = "ctrl-b s"
-ACTION_OPEN = f"mod.open:{MOD_NAME}"
+ACTION_OPEN = f"{MOD_NAME}.toggle"
 
 
 class InstallError(RuntimeError):
@@ -128,6 +128,66 @@ def update_keys(home: Path, dry_run: bool) -> bool:
     return True
 
 
+def update_layout(home: Path, dry_run: bool) -> bool:
+    layout_path = home / "layouts" / "main-popup.json"
+    if not layout_path.exists():
+        return False
+    data = read_json_dict(layout_path)
+    root = data if (data.get("id") == "root" or "children" in data) else data.get("root", data)
+    if not isinstance(root, dict):
+        return False
+    children = root.get("children")
+    if not isinstance(children, list):
+        return False
+
+    # 1. Remove any visible block with mod: "scratchpad"
+    original_len = len(children)
+    children = [c for c in children if not (isinstance(c, dict) and c.get("content", {}).get("mod") == MOD_NAME)]
+    root["children"] = children
+    removed = len(children) < original_len
+
+    # 2. Inject 0px scratchpad-controller next to popup-terminal-controller
+    controller_spec = {
+        "id": "scratchpad-controller",
+        "type": "block",
+        "content": {
+            "mod": MOD_NAME,
+            "props": {
+                "role": "controller"
+            }
+        },
+        "size": {
+            "px": 0
+        },
+        "min": 0,
+        "max": 0
+    }
+
+    def inject_controller(node: Any) -> bool:
+        if not isinstance(node, dict):
+            return False
+        sub_children = node.get("children")
+        if isinstance(sub_children, list):
+            for sc in sub_children:
+                if isinstance(sc, dict) and sc.get("id") == "scratchpad-controller":
+                    return False
+            for idx, sc in enumerate(sub_children):
+                if isinstance(sc, dict) and sc.get("id") == "popup-terminal-controller":
+                    sub_children.insert(idx + 1, controller_spec)
+                    return True
+            for sc in sub_children:
+                if inject_controller(sc):
+                    return True
+        return False
+
+    injected = inject_controller(root)
+    if removed or injected:
+        write_json_dict(layout_path, data, dry_run)
+        print(f"Updated layout {layout_path.name}: removed visible panel, injected 0px controller")
+        return True
+    return False
+
+
 def copy_mod_files(source_dir: Path, target_dir: Path, dry_run: bool) -> None:
     if dry_run:
         print(f"[dry-run] copy mod tree: {source_dir} -> {target_dir}")
@@ -168,8 +228,11 @@ def main(argv: list[str]) -> int:
     # Step 2: Backup files
     files_to_backup: list[Path] = []
     keys_path = home / "keys.json"
+    layout_path = home / "layouts" / "main-popup.json"
     if keys_path.exists():
         files_to_backup.append(keys_path)
+    if layout_path.exists():
+        files_to_backup.append(layout_path)
     if target_mod_dir.exists():
         files_to_backup.append(target_mod_dir)
 
@@ -182,7 +245,10 @@ def main(argv: list[str]) -> int:
     # Step 4: Update keys.json
     update_keys(home, args.dry_run)
 
-    # Step 5: Post-check target mod
+    # Step 5: Update layout (remove right-hand block, inject 0px controller)
+    update_layout(home, args.dry_run)
+
+    # Step 6: Post-check target mod
     if not args.dry_run:
         run_mod_check(target_mod_dir, home)
 

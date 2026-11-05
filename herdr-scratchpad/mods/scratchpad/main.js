@@ -1,19 +1,49 @@
 // Scratchpad (随手筆記 / 剪貼暫存區) Mod for Herdr
 import { View, div } from "gpui-kit";
 import { v_flex, h_flex, Editor, EditorState, InputState, Input } from "gpui-base";
-import { theme, settings, props, closeOverlay, run } from "herdr";
+import {
+  theme, settings, props, closeOverlay, openOverlay, run,
+  nextCommand, shared, setShared
+} from "herdr";
 import { loadStore, saveStore, createDefaultTab, getDefaultStore } from "./storage.js";
+
+const OPEN_OVERLAY = "scratchpad.open-overlay";
+const STORE_KEY = "scratchpad.store";
 
 export default class Scratchpad extends View {
   init(initialProps, cx) {
     const p = initialProps ?? props() ?? {};
     this.overlayId = p.overlay ?? null;
+    this.role = p.role ?? (this.overlayId ? "dialog" : "controller");
 
-    const def = getDefaultStore();
-    this.tabs = def.tabs;
-    this.activeTabId = def.activeTabId;
+    if (this.role === "controller") {
+      setShared(OPEN_OVERLAY, null);
+      cx.spawn(async (cx) => {
+        for (;;) {
+          const command = await nextCommand();
+          if (command !== "toggle") continue;
+          try {
+            this.toggle(cx);
+          } catch (e) {
+            console.error("Scratchpad toggle failed:", e);
+          }
+        }
+      });
+      return;
+    }
 
-    this.loading = true;
+    // Dialog mode
+    const cached = shared(STORE_KEY);
+    if (cached && Array.isArray(cached.tabs) && cached.tabs.length > 0) {
+      this.tabs = cached.tabs;
+      this.activeTabId = cached.activeTabId || this.tabs[0].id;
+    } else {
+      const def = getDefaultStore();
+      this.tabs = def.tabs;
+      this.activeTabId = def.activeTabId;
+    }
+
+    this.loading = false;
     this.copied = false;
     this.pastedToTerminal = false;
     this.saveTimeout = null;
@@ -29,24 +59,38 @@ export default class Scratchpad extends View {
     this.load(cx);
   }
 
-  async load(cx) {
-    this.loading = true;
-    cx.notify();
+  toggle(cx) {
+    const current = shared(OPEN_OVERLAY);
+    if (current) {
+      closeOverlay(current);
+      setShared(OPEN_OVERLAY, null);
+      return;
+    }
 
+    const id = openOverlay({
+      mod: "scratchpad",
+      kind: "dialog",
+      modal: true,
+      width: 800,
+      height: 560,
+      props: { role: "dialog" },
+    });
+    setShared(OPEN_OVERLAY, id);
+  }
+
+  async load(cx) {
     cx.spawn(async (cx) => {
       try {
         const store = await loadStore();
-        this.tabs = store.tabs || [createDefaultTab()];
-        this.activeTabId = store.activeTabId || this.tabs[0].id;
-      } catch {
-        const def = getDefaultStore();
-        this.tabs = def.tabs;
-        this.activeTabId = def.activeTabId;
-      } finally {
-        this.loading = false;
-        this.setupEditor(this.getActiveTab(), cx);
-        cx.notify();
-      }
+        if (store && Array.isArray(store.tabs) && store.tabs.length > 0) {
+          // If disk store has newer or loaded data
+          this.tabs = store.tabs;
+          this.activeTabId = store.activeTabId || this.tabs[0].id;
+          setShared(STORE_KEY, store);
+          this.setupEditor(this.getActiveTab(), cx);
+          cx.notify();
+        }
+      } catch {}
     });
   }
 
@@ -86,6 +130,11 @@ export default class Scratchpad extends View {
       if (activeTab && this.editor) {
         activeTab.content = this.editor.value();
         activeTab.updatedAt = Date.now();
+        // Immediately sync to shared memory (0ms delay, survives immediate close)
+        setShared(STORE_KEY, {
+          activeTabId: this.activeTabId,
+          tabs: this.tabs,
+        });
         this.scheduleSave();
       }
     });
@@ -98,11 +147,26 @@ export default class Scratchpad extends View {
       clearTimeout(this.saveTimeout);
     }
     this.saveTimeout = setTimeout(() => {
-      saveStore({
-        activeTabId: this.activeTabId,
-        tabs: this.tabs,
-      });
+      this.saveNow();
     }, 300);
+  }
+
+  saveNow() {
+    if (this.saveTimeout) {
+      clearTimeout(this.saveTimeout);
+      this.saveTimeout = null;
+    }
+    const currentTab = this.getActiveTab();
+    if (currentTab && this.editor) {
+      currentTab.content = this.editor.value();
+      currentTab.updatedAt = Date.now();
+    }
+    const store = {
+      activeTabId: this.activeTabId,
+      tabs: this.tabs,
+    };
+    setShared(STORE_KEY, store);
+    saveStore(store);
   }
 
   switchTab(tabId, cx) {
@@ -116,12 +180,11 @@ export default class Scratchpad extends View {
 
     this.activeTabId = tabId;
     this.setupEditor(this.getActiveTab(), cx);
-    this.scheduleSave();
+    this.saveNow();
     cx.notify();
   }
 
   addTab(cx) {
-    // Commit current editor state
     const currentTab = this.getActiveTab();
     if (currentTab && this.editor) {
       currentTab.content = this.editor.value();
@@ -134,13 +197,12 @@ export default class Scratchpad extends View {
     this.activeTabId = newId;
 
     this.setupEditor(newTab, cx);
-    this.scheduleSave();
+    this.saveNow();
     cx.notify();
   }
 
   closeTab(tabId, cx) {
     if (this.tabs.length <= 1) {
-      // Clear current tab instead of closing the last tab
       this.clearCurrent(cx);
       return;
     }
@@ -155,7 +217,7 @@ export default class Scratchpad extends View {
       this.setupEditor(this.getActiveTab(), cx);
     }
 
-    this.scheduleSave();
+    this.saveNow();
     cx.notify();
   }
 
@@ -175,7 +237,7 @@ export default class Scratchpad extends View {
       }
       this.renamingTabId = null;
       this.renameInput = null;
-      this.scheduleSave();
+      this.saveNow();
       cx.notify();
     }
   }
@@ -233,12 +295,17 @@ export default class Scratchpad extends View {
       active.content = "";
       active.updatedAt = Date.now();
     }
-    this.scheduleSave();
+    this.saveNow();
     cx.notify();
   }
 
   close() {
-    if (this.overlayId) {
+    this.saveNow();
+    const current = shared(OPEN_OVERLAY);
+    if (current) {
+      closeOverlay(current);
+      setShared(OPEN_OVERLAY, null);
+    } else if (this.overlayId) {
       closeOverlay(this.overlayId);
     }
   }
@@ -439,6 +506,10 @@ export default class Scratchpad extends View {
   }
 
   render(cx) {
+    if (this.role === "controller") {
+      return div().size(0);
+    }
+
     const t = theme();
 
     return v_flex()

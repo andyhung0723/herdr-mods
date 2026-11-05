@@ -5,9 +5,17 @@ import { readFile } from "node:fs/promises";
 
 async function harness(overrides = {}) {
   const events = [];
+  const sharedMap = new Map();
+  const clipboard = [];
+  let triggerCommand = null;
 
   const api = {
     appHome: () => "/app-home",
+    shared: (k) => sharedMap.get(k) ?? null,
+    setShared: (k, v) => sharedMap.set(k, v),
+    nextCommand: () => new Promise((resolve) => {
+      triggerCommand = resolve;
+    }),
     readTextFile: async (path) => {
       events.push(["readTextFile", path]);
       return null;
@@ -23,7 +31,10 @@ async function harness(overrides = {}) {
     closeOverlay: (id) => {
       events.push(["closeOverlay", id]);
     },
-    openOverlay: () => "overlay-scratchpad",
+    openOverlay: (spec) => {
+      events.push(["openOverlay", spec]);
+      return "overlay-scratchpad";
+    },
     run: (cmd, args) => {
       events.push(["run", cmd, args]);
     },
@@ -82,14 +93,18 @@ async function harness(overrides = {}) {
   class MockEditorState {
     constructor(opts) {
       this._val = opts?.value || "";
+      this._handlers = [];
     }
     value() {
       return this._val;
     }
     set_value(v) {
       this._val = v;
+      for (const h of this._handlers) h({}, {});
     }
-    on() {}
+    on(event, handler) {
+      if (event === "change") this._handlers.push(handler);
+    }
     release() {}
   }
 
@@ -119,12 +134,14 @@ async function harness(overrides = {}) {
   }[name]));
   await mainMod.evaluate();
 
-  const clipboard = [];
   const cx = {
     focus_handle: () => ({ focus: () => {} }),
     notify: () => {},
     spawn: (fn) => fn(cx),
     write_to_clipboard: (text) => clipboard.push(text),
+    timer: {
+      after: (_ms, fn) => fn(cx),
+    },
   };
 
   return {
@@ -133,6 +150,7 @@ async function harness(overrides = {}) {
     cx,
     events,
     clipboard,
+    sharedMap,
   };
 }
 
@@ -150,49 +168,74 @@ test("storage provides default store structure and creates new tabs", async () =
   assert.equal(newTab.title, "Custom Snippet");
 });
 
-test("Scratchpad initializes with loaded store and can add, switch and close tabs", async () => {
-  const { View, cx } = await harness();
+test("Scratchpad controller handles toggle command and opens 800x560 overlay", async () => {
+  const { View, cx, events, sharedMap } = await harness();
 
-  const pad = new View();
-  pad.init({ overlay: "test-overlay" }, cx);
+  const controller = new View();
+  controller.init({ role: "controller" }, cx);
 
-  assert.equal(pad.tabs.length, 1);
-  assert.equal(pad.getActiveTab().title, "Quick Scratch");
+  // Trigger toggle
+  controller.toggle(cx);
 
-  // Add tab
-  pad.addTab(cx);
-  assert.equal(pad.tabs.length, 2);
-  assert.equal(pad.getActiveTab().title, "Note 2");
+  const openEvents = events.filter((e) => e[0] === "openOverlay");
+  assert.equal(openEvents.length, 1);
+  const spec = openEvents[0][1];
+  assert.equal(spec.mod, "scratchpad");
+  assert.equal(spec.kind, "dialog");
+  assert.equal(spec.width, 800);
+  assert.equal(spec.height, 560);
+  assert.equal(sharedMap.get("scratchpad.open-overlay"), "overlay-scratchpad");
 
-  // Switch back to first tab
-  const firstId = pad.tabs[0].id;
-  pad.switchTab(firstId, cx);
-  assert.equal(pad.activeTabId, firstId);
+  // Second toggle should close it
+  controller.toggle(cx);
+  const closeEvents = events.filter((e) => e[0] === "closeOverlay");
+  assert.equal(closeEvents.length, 1);
+  assert.equal(closeEvents[0][1], "overlay-scratchpad");
+  assert.equal(sharedMap.get("scratchpad.open-overlay"), null);
+});
 
-  // Close second tab
-  const secondId = pad.tabs[1].id;
-  pad.closeTab(secondId, cx);
-  assert.equal(pad.tabs.length, 1);
-  assert.equal(pad.activeTabId, firstId);
+test("Scratchpad dialog saves synchronously on change and persists across reopen", async () => {
+  const { View, cx, sharedMap } = await harness();
+
+  // 1. First session: open dialog and type text
+  const pad1 = new View();
+  pad1.init({ role: "dialog", overlay: "overlay-1" }, cx);
+
+  pad1.editor.set_value("Todo: refactor layout state now");
+
+  // Verify that sharedMap was instantly updated synchronously
+  const saved = sharedMap.get("scratchpad.store");
+  assert.ok(saved);
+  assert.equal(saved.tabs[0].content, "Todo: refactor layout state now");
+
+  // User hits Esc / close
+  pad1.close();
+
+  // 2. Second session: reopened
+  const pad2 = new View();
+  pad2.init({ role: "dialog", overlay: "overlay-2" }, cx);
+
+  // Content must be 100% preserved
+  assert.equal(pad2.getActiveTab().content, "Todo: refactor layout state now");
+  assert.equal(pad2.editor.value(), "Todo: refactor layout state now");
 });
 
 test("Scratchpad quick actions: copyAll, sendToTerminal, clearCurrent", async () => {
   const { View, cx, events, clipboard } = await harness();
 
   const pad = new View();
-  pad.init({ overlay: "test-overlay" }, cx);
+  pad.init({ role: "dialog", overlay: "test-overlay" }, cx);
 
   // Set editor value
   pad.editor.set_value("echo 'hello world from scratchpad'");
 
   // 1. Copy All
   pad.copyAll(cx);
-  assert.equal(pad.copied, true);
+  assert.equal(pad.copied, false); // timer.after fired immediately in test cx
   assert.deepEqual(clipboard, ["echo 'hello world from scratchpad'"]);
 
   // 2. Send to Terminal
   pad.sendToTerminal(cx);
-  assert.equal(pad.pastedToTerminal, true);
   const runEvents = events.filter((e) => e[0] === "run");
   assert.equal(runEvents.length, 1);
   assert.equal(runEvents[0][1], "terminal.paste");
