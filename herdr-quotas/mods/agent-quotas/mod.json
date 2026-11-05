@@ -1,0 +1,10 @@
+{
+  "place": "none",
+  "title": "Agent Quotas",
+  "focusable": true,
+  "overlay": {
+    "kind": "dialog",
+    "width": 780,
+    "height": 0.82
+  }
+}
