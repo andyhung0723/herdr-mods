@@ -1,0 +1,11 @@
+# Python
+__pycache__/
+*.pyc
+
+# OS
+.DS_Store
+
+# Tool caches
+.playwright-mcp/
+node_modules/
+*.log
