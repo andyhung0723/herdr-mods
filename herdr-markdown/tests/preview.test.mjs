@@ -261,30 +261,33 @@ test("buildFileTree builds hierarchical tree with folders first and README on to
   assert.equal(apiChildren[1].name, "endpoints.md");
 });
 
-test("markdown-preview dialog resizing and maximize toggle", async () => {
-  const { instance, cx, sharedMap } = await harness({ overlay: "test-overlay" });
+test("markdown-preview dialog size switching (standard, full, large)", async () => {
+  const { instance, cx, sharedMap, events } = await harness({ overlay: "test-overlay" });
   instance.init({ overlay: "test-overlay" }, cx);
   await new Promise((r) => setImmediate(r));
 
-  assert.equal(instance.dialogWidth, 940);
-  assert.equal(instance.dialogHeight, 660);
-  assert.equal(instance.isMaximized, false);
+  assert.equal(instance.sizeMode, "large");
 
-  // Toggle maximize
-  instance.toggleMaximize(cx);
-  assert.equal(instance.dialogWidth, 1420);
-  assert.equal(instance.dialogHeight, 920);
-  assert.equal(instance.isMaximized, true);
-  const saved = sharedMap.get("markdown-preview.dialog-size");
-  assert.equal(saved?.width, 1420);
-  assert.equal(saved?.height, 920);
-  assert.equal(saved?.isMaximized, true);
+  // Switch to standard (960x680)
+  instance.switchSize("standard", cx);
+  assert.equal(instance.sizeMode, "standard");
+  assert.equal(sharedMap.get("markdown-preview.size-mode"), "standard");
+  const open1 = events.find((e) => e[0] === "openOverlay" && e[1].width === 960);
+  assert(Boolean(open1), "should open overlay with 960 width");
+  assert.equal(open1[1].height, 680);
 
-  // Restore
-  instance.toggleMaximize(cx);
-  assert.equal(instance.dialogWidth, 940);
-  assert.equal(instance.dialogHeight, 660);
-  assert.equal(instance.isMaximized, false);
+  // Switch to full (96% x 95%)
+  instance.switchSize("full", cx);
+  assert.equal(instance.sizeMode, "full");
+  assert.equal(sharedMap.get("markdown-preview.size-mode"), "full");
+  const open2 = events.find((e) => e[0] === "openOverlay" && e[1].width === 0.96);
+  assert(Boolean(open2), "should open overlay with 0.96 width");
+  assert.equal(open2[1].height, 0.95);
+
+  // Switch back to large (85%)
+  instance.switchSize("large", cx);
+  assert.equal(instance.sizeMode, "large");
+  assert.equal(sharedMap.get("markdown-preview.size-mode"), "large");
 
   // Folder collapse toggle
   assert.equal(instance.collapsedFolders.has("docs"), false);

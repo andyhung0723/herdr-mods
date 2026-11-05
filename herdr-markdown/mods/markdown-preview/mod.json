@@ -4,6 +4,7 @@
   "focusable": true,
   "overlay": {
     "kind": "dialog",
-    "frame": "none"
+    "width": 0.85,
+    "height": 0.85
   }
 }

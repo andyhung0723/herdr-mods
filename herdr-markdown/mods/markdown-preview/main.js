@@ -4,7 +4,7 @@
 import { View, div } from "gpui-kit";
 import { v_flex, h_flex, TextView, InputState, Input } from "gpui-base";
 import {
-  theme, props, closeOverlay, run, readTextFile, exec,
+  theme, props, closeOverlay, openOverlay, run, readTextFile, exec,
   spaces, focused, panes, shared, setShared
 } from "herdr";
 
@@ -137,21 +137,14 @@ export default class MarkdownPreview extends View {
     this.loading = true;
     this.lastHash = null;
     this.availableFiles = [];
-    this.history = [];
-    this.showSidebar = true;
+    this.history = Array.isArray(p.history) ? [...p.history] : [];
+    this.showSidebar = p.showSidebar !== undefined ? p.showSidebar : true;
     this.filter = "";
     this.currentCwd = "";
 
-    // Dialog resize state
-    const savedSize = (typeof shared === "function" ? shared("markdown-preview.dialog-size") : null) || {};
-    this.dialogWidth = savedSize.width || 940;
-    this.dialogHeight = savedSize.height || 660;
-    this.isMaximized = Boolean(savedSize.isMaximized);
-    this.resizing = false;
-    this.dragStart = null;
-    this.preMaxWidth = this.isMaximized ? 940 : this.dialogWidth;
-    this.preMaxHeight = this.isMaximized ? 660 : this.dialogHeight;
-    this.collapsedFolders = new Set();
+    // Size mode state (standard = 960x680, large = 85%, full = 96%)
+    this.sizeMode = p.sizeMode || (typeof shared === "function" ? shared("markdown-preview.size-mode") : null) || "large";
+    this.collapsedFolders = new Set(Array.isArray(p.collapsedFolders) ? p.collapsedFolders : []);
 
     // Search filter input
     this.input = InputState.new({ placeholder: "Search .md files…" });
@@ -183,25 +176,67 @@ export default class MarkdownPreview extends View {
     cx.notify();
   }
 
-  toggleMaximize(cx) {
-    if (this.isMaximized) {
-      this.dialogWidth = this.preMaxWidth || 940;
-      this.dialogHeight = this.preMaxHeight || 660;
-      this.isMaximized = false;
-    } else {
-      this.preMaxWidth = this.dialogWidth;
-      this.preMaxHeight = this.dialogHeight;
-      this.dialogWidth = 1420;
-      this.dialogHeight = 920;
-      this.isMaximized = true;
-    }
+  renderSizeBtn(mode, label, t, cx) {
+    const active = this.sizeMode === mode;
+    return h_flex()
+      .px(6)
+      .h(20)
+      .rounded(3)
+      .items_center()
+      .justify_center()
+      .cursor_pointer()
+      .when(active, (el) => el.bg(t.raised))
+      .hover((s) => !active && s.bg(t.hover))
+      .on_click((_e, cx) => this.switchSize(mode, cx))
+      .child(
+        div()
+          .text_size(11)
+          .font_semibold()
+          .text_color(active ? t.foreground : t.muted)
+          .child(label)
+      );
+  }
+
+  switchSize(mode, cx) {
+    if (this.sizeMode === mode && this.overlayId) return;
+    this.sizeMode = mode;
     try {
-      setShared("markdown-preview.dialog-size", {
-        width: this.dialogWidth,
-        height: this.dialogHeight,
-        isMaximized: this.isMaximized,
-      });
+      setShared("markdown-preview.size-mode", mode);
     } catch {}
+
+    if (this.overlayId) {
+      let width = 0.85;
+      let height = 0.85;
+      if (mode === "standard") {
+        width = 960;
+        height = 680;
+      } else if (mode === "full") {
+        width = 0.96;
+        height = 0.95;
+      }
+
+      const currentOverlay = this.overlayId;
+      try {
+        const newOverlay = openOverlay({
+          mod: "markdown-preview",
+          kind: "dialog",
+          width,
+          height,
+          props: {
+            overlay: currentOverlay,
+            file: this.filePath || this.initialFile || null,
+            history: this.history,
+            showSidebar: this.showSidebar,
+            sizeMode: mode,
+            collapsedFolders: Array.from(this.collapsedFolders),
+          },
+        });
+        closeOverlay(currentOverlay);
+        this.overlayId = newOverlay;
+      } catch (err) {
+        console.error("Failed to switch overlay size:", err);
+      }
+    }
     cx.notify();
   }
 
@@ -527,6 +562,7 @@ export default class MarkdownPreview extends View {
     const root = v_flex()
       .id("markdown-preview-root")
       .track_focus(this.handle)
+      .size_full()
       .bg(t.background)
       .border_1()
       .border_color(t.border)
@@ -537,40 +573,6 @@ export default class MarkdownPreview extends View {
           cx.stop_propagation();
         }
       });
-
-    if (isOverlay) {
-      root
-        .relative()
-        .w(this.dialogWidth)
-        .h(this.dialogHeight)
-        .rounded(12)
-        .shadow_lg()
-        .on_mouse_move((e, cx) => {
-          if (this.resizing && this.dragStart) {
-            const dx = e.position.x - this.dragStart.x;
-            const dy = e.position.y - this.dragStart.y;
-            this.dialogWidth = Math.max(540, Math.min(2400, this.dragStart.w + dx));
-            this.dialogHeight = Math.max(380, Math.min(1600, this.dragStart.h + dy));
-            this.isMaximized = false;
-            try {
-              setShared("markdown-preview.dialog-size", {
-                width: this.dialogWidth,
-                height: this.dialogHeight,
-                isMaximized: false,
-              });
-            } catch {}
-            cx.notify();
-          }
-        })
-        .on_mouse_up("left", (_e, cx) => {
-          if (this.resizing) {
-            this.resizing = false;
-            cx.notify();
-          }
-        });
-    } else {
-      root.size_full();
-    }
 
     return root
       // Top Master Toolbar (Height 40px)
@@ -678,25 +680,21 @@ export default class MarkdownPreview extends View {
                 .child(div().text_size(12).text_color(t.muted).child("⧉ Split"))
             )
           )
-          // Maximize / Restore button (in Overlay mode)
+          // Size switcher buttons (in Overlay mode)
           .when(isOverlay, (el) =>
             el.child(
               h_flex()
-                .px(6)
                 .h(24)
                 .rounded(4)
+                .bg(t.background)
+                .border_1()
+                .border_color(t.border)
+                .px(2)
+                .gap(2)
                 .items_center()
-                .cursor_pointer()
-                .hover((s) => s.bg(t.hover))
-                .on_click((_e, cx) => {
-                  this.toggleMaximize(cx);
-                })
-                .child(
-                  div()
-                    .text_size(12)
-                    .text_color(t.muted)
-                    .child(this.isMaximized ? "⤡ Restore" : "⤢ Maximize")
-                )
+                .child(this.renderSizeBtn("standard", "960px", t, cx))
+                .child(this.renderSizeBtn("large", "85%", t, cx))
+                .child(this.renderSizeBtn("full", "全螢幕", t, cx))
             )
           )
           // Close button (if overlay)
@@ -820,44 +818,6 @@ export default class MarkdownPreview extends View {
                 )
               )
           )
-      )
-      // Resize grip in bottom-right corner (only in Overlay mode)
-      .when(isOverlay, (el) =>
-        el.child(
-          div()
-            .id("md-resize-grip")
-            .absolute()
-            .bottom(0)
-            .right(0)
-            .w(24)
-            .h(24)
-            .rounded_tl(6)
-            .bg(t.raised)
-            .border_t(1)
-            .border_l(1)
-            .border_color(t.border)
-            .items_center()
-            .justify_center()
-            .cursor_nwse_resize()
-            .hover((s) => s.bg(t.hover))
-            .on_mouse_down("left", (e, cx) => {
-              this.resizing = true;
-              this.dragStart = {
-                x: e.position.x,
-                y: e.position.y,
-                w: this.dialogWidth,
-                h: this.dialogHeight,
-              };
-              cx.stop_propagation();
-            })
-            .child(
-              div()
-                .text_size(12)
-                .font_semibold()
-                .text_color(t.muted)
-                .child("⤡")
-            )
-        )
       );
   }
 }
