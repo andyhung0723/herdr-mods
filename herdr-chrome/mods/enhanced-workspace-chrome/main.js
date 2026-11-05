@@ -1,4 +1,4 @@
-import { View, div, svg } from "gpui-kit";
+import { View, div, svg, image } from "gpui-kit";
 import { h_flex, v_flex } from "gpui-base";
 import {
   theme,
@@ -187,8 +187,9 @@ export default class EnhancedWorkspaceChrome extends View {
               div()
                 .pl(dog.offset || 0)
                 .child(
-                  svg(`mods/enhanced-workspace-chrome/${dog.svg}`)
-                    .size(24)
+                  image(`mods/enhanced-workspace-chrome/${dog.svg}`)
+                    .w(28)
+                    .h(18)
                     .flex_none()
                 )
             )
