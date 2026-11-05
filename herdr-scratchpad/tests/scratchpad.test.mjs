@@ -6,6 +6,7 @@ import { readFile } from "node:fs/promises";
 async function harness(overrides = {}) {
   const events = [];
   const sharedMap = new Map();
+  const fileMap = new Map();
   const clipboard = [];
   let triggerCommand = null;
 
@@ -18,10 +19,11 @@ async function harness(overrides = {}) {
     }),
     readTextFile: async (path) => {
       events.push(["readTextFile", path]);
-      return null;
+      return fileMap.get(path) ?? null;
     },
     writeTextFile: async (path, content) => {
       events.push(["writeTextFile", path, content]);
+      fileMap.set(path, content);
       return null;
     },
     exec: async (cmd, args) => {
@@ -98,6 +100,7 @@ async function harness(overrides = {}) {
       this._handlers = [];
       this.focused = false;
       this.softWrap = false;
+      this.selectedRange = null;
     }
     value() {
       return this._val;
@@ -108,6 +111,9 @@ async function harness(overrides = {}) {
     }
     set_soft_wrap(w) {
       this.softWrap = w;
+    }
+    set_selected_range(range) {
+      this.selectedRange = range;
     }
     focus() {
       this.focused = true;
@@ -242,10 +248,13 @@ test("Scratchpad dialog saves synchronously on change and persists across reopen
   await new Promise((r) => setTimeout(r, 10));
   assert.equal(pad2.getActiveTab().content, "Todo: refactor layout state now");
   assert.equal(pad2.editor.value(), "Todo: refactor layout state now");
+  // Cursor must be positioned at the end of the text (length = 31)
+  assert.equal(pad2.editor.selectedRange?.start, 31);
+  assert.equal(pad2.editor.selectedRange?.end, 31);
 });
 
-test("Scratchpad quick actions: copyAll, sendToTerminal, clearCurrent", async () => {
-  const { View, cx, events, clipboard } = await harness();
+test("Scratchpad quick actions: copyAll, clearCurrent", async () => {
+  const { View, cx, clipboard } = await harness();
 
   const pad = new View();
   pad.init({ role: "dialog", overlay: "test-overlay" }, cx);
@@ -258,14 +267,7 @@ test("Scratchpad quick actions: copyAll, sendToTerminal, clearCurrent", async ()
   assert.equal(pad.copied, false); // timer.after fired immediately in test cx
   assert.deepEqual(clipboard, ["echo 'hello world from scratchpad'"]);
 
-  // 2. Send to Terminal
-  pad.sendToTerminal(cx);
-  const runEvents = events.filter((e) => e[0] === "run");
-  assert.equal(runEvents.length, 1);
-  assert.equal(runEvents[0][1], "terminal.paste");
-  assert.equal(runEvents[0][2].text, "echo 'hello world from scratchpad'");
-
-  // 3. Clear Current
+  // 2. Clear Current
   pad.clearCurrent(cx);
   assert.equal(pad.editor.value(), "");
   assert.equal(pad.getActiveTab().content, "");

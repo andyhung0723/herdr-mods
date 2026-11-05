@@ -2,7 +2,7 @@
 import { View, div } from "gpui-kit";
 import { v_flex, h_flex, Textarea, TextareaState, InputState, Input } from "gpui-base";
 import {
-  theme, settings, props, closeOverlay, openOverlay, run,
+  theme, settings, props, closeOverlay, openOverlay,
   nextCommand, shared, setShared
 } from "herdr";
 import { loadStore, saveStore, createDefaultTab, getDefaultStore } from "./storage.js";
@@ -51,7 +51,6 @@ export default class Scratchpad extends View {
 
     this.loading = false;
     this.copied = false;
-    this.pastedToTerminal = false;
     this.saveTimeout = null;
     this.renamingTabId = null;
     this.renameInput = null;
@@ -59,18 +58,27 @@ export default class Scratchpad extends View {
     this.editor = null;
     this.handle = cx.focus_handle();
 
-    // Setup initial editor immediately & request focus directly onto the textarea
+    // Setup initial editor immediately & request focus directly onto the end of text
     this.setupEditor(this.getActiveTab(), cx);
-    this.editor?.focus();
+    this.focusToEnd();
     if (cx.timer?.after) {
-      cx.timer.after(30, () => this.editor?.focus());
-      cx.timer.after(100, () => this.editor?.focus());
+      cx.timer.after(30, () => this.focusToEnd());
+      cx.timer.after(100, () => this.focusToEnd());
     } else {
-      setTimeout(() => this.editor?.focus(), 30);
-      setTimeout(() => this.editor?.focus(), 100);
+      setTimeout(() => this.focusToEnd(), 30);
+      setTimeout(() => this.focusToEnd(), 100);
     }
 
     this.load(cx);
+  }
+
+  focusToEnd() {
+    if (!this.editor) return;
+    try {
+      this.editor.focus();
+      const len = this.editor.value()?.length || 0;
+      this.editor.set_selected_range({ start: len, end: len });
+    } catch {}
   }
 
   toggle(cx) {
@@ -161,9 +169,7 @@ export default class Scratchpad extends View {
       });
     } catch {}
 
-    try {
-      this.editor.focus();
-    } catch {}
+    this.focusToEnd();
 
     cx.notify();
   }
@@ -286,28 +292,6 @@ export default class Scratchpad extends View {
     } else {
       setTimeout(() => {
         this.copied = false;
-        cx.notify();
-      }, 1500);
-    }
-  }
-
-  sendToTerminal(cx) {
-    const active = this.getActiveTab();
-    const text = this.editor ? this.editor.value() : active?.content || "";
-    try {
-      run("terminal.paste", { text });
-    } catch {}
-
-    this.pastedToTerminal = true;
-    cx.notify();
-    if (cx.timer?.after) {
-      cx.timer.after(1500, (cx) => {
-        this.pastedToTerminal = false;
-        cx.notify();
-      });
-    } else {
-      setTimeout(() => {
-        this.pastedToTerminal = false;
         cx.notify();
       }, 1500);
     }
@@ -462,22 +446,6 @@ export default class Scratchpad extends View {
               .on_click((_e, cx) => this.copyAll(cx))
               .child(this.copied ? "✓ Copied" : "📋 Copy All")
           )
-          // Send to Terminal
-          .child(
-            div()
-              .px(8)
-              .py(3)
-              .rounded(5)
-              .cursor_pointer()
-              .bg(this.pastedToTerminal ? t.ansi4 : t.background)
-              .border_1()
-              .border_color(t.border)
-              .hover((s) => s.bg(t.hover))
-              .text_size(11)
-              .text_color(this.pastedToTerminal ? t.solid_foreground : t.foreground)
-              .on_click((_e, cx) => this.sendToTerminal(cx))
-              .child(this.pastedToTerminal ? "⚡ Sent" : "⚡ To Terminal")
-          )
           // Clear
           .child(
             div()
@@ -568,7 +536,7 @@ export default class Scratchpad extends View {
           .bg(t.surface)
           .cursor_text()
           .on_click(() => {
-            try { this.editor?.focus(); } catch {}
+            this.focusToEnd();
           })
           .when(Boolean(this.editor), (el) =>
             el.child(

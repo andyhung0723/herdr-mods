@@ -9,7 +9,7 @@ export function createDefaultTab(id = "tab-1", title = "Quick Scratch") {
     title,
     content: "",
     language: "markdown",
-    updatedAt: Date.now(),
+    updatedAt: 0,
   };
 }
 
@@ -25,11 +25,11 @@ export async function loadStore() {
   try {
     const fullPath = `${appHome()}/${REL_PATH}`;
     const raw = await readTextFile(fullPath);
-    if (!raw) return getDefaultStore();
+    if (!raw) return null;
 
     const data = JSON.parse(raw);
     if (!Array.isArray(data.tabs) || data.tabs.length === 0) {
-      return getDefaultStore();
+      return null;
     }
 
     // Ensure activeTabId is valid
@@ -40,7 +40,7 @@ export async function loadStore() {
 
     return data;
   } catch {
-    return getDefaultStore();
+    return null;
   }
 }
 
