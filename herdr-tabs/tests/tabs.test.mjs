@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 
-test("enhanced-tabs - main.js renders Git button with icons/git.svg", () => {
+test("enhanced-tabs - main.js renders Git and Music buttons", () => {
   const mainPath = path.resolve(
     import.meta.dirname,
     "../mods/enhanced-tabs/main.js"
@@ -19,6 +19,12 @@ test("enhanced-tabs - main.js renders Git button with icons/git.svg", () => {
   assert.doesNotMatch(
     content,
     /panelButton\("changes",\s*"Changes",\s*"mods\/changes\/changes\.svg"\)/
+  );
+
+  // Verify Music button is present
+  assert.match(
+    content,
+    /panelButton\("music",\s*"Music",\s*"mods\/enhanced-music\/music\.svg"\)/
   );
 });
 
