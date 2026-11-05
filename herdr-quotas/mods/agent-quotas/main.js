@@ -21,8 +21,8 @@ export default class AgentQuotas extends View {
     const p = initialProps ?? props() ?? {};
     this.overlayId = p.overlay ?? null;
     this.role = p.role ?? (this.overlayId ? "dialog" : "dialog");
-    this.data = null;
-    this.loading = true;
+    this.data = p.initialData ?? null;
+    this.loading = !this.data;
     this.error = null;
 
     this.handle = cx.focus_handle();
@@ -64,7 +64,10 @@ export default class AgentQuotas extends View {
     }
     const id = openOverlay({
       mod: "agent-quotas",
-      props: { role: "dialog" },
+      kind: "dialog",
+      width: 780,
+      height: 620,
+      props: { role: "dialog", initialData: this.data },
     });
     setShared(OVERLAY_KEY, id);
   }
@@ -225,6 +228,8 @@ export default class AgentQuotas extends View {
     return v_flex()
       .id("agent-quotas-dialog")
       .track_focus(this.handle)
+      .w(780)
+      .h(620)
       .size_full()
       .bg(t.popover)
       .rounded(12)
