@@ -1,6 +1,6 @@
 // Agent Quotas mod for Herdr
 // Dual-mode: Compact Sidebar Widget or Detailed Popup Dialog for Claude Code and Codex.
-import { View, div } from "gpui-kit";
+import { View, div, image } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
 import {
   theme, props, closeOverlay, openOverlay,
@@ -106,9 +106,9 @@ export default class AgentQuotas extends View {
           .justify_between()
           .child(
             h_flex()
-              .gap(5)
+              .gap(6)
               .items_center()
-              .child(div().text_size(12).child("📊"))
+              .child(image("icons/claude.svg").w(14).h(14).flex_none())
               .child(div().font_semibold().text_size(11.5).text_color(t.foreground).child("Agent Quotas"))
           )
           .child(
@@ -128,9 +128,9 @@ export default class AgentQuotas extends View {
               .justify_between()
               .child(
                 h_flex()
-                  .gap(4)
+                  .gap(5)
                   .items_center()
-                  .child(div().w(6).h(6).rounded(3).bg("#da7756"))
+                  .child(image("icons/claude.svg").w(12).h(12).flex_none())
                   .child(div().text_size(11).font_medium().text_color(t.foreground).child("Claude Code"))
               )
               .child(
@@ -174,9 +174,9 @@ export default class AgentQuotas extends View {
               .justify_between()
               .child(
                 h_flex()
-                  .gap(4)
+                  .gap(5)
                   .items_center()
-                  .child(div().w(6).h(6).rounded(3).bg("#10a37f"))
+                  .child(image("icons/codex.svg").w(12).h(12).flex_none())
                   .child(div().text_size(11).font_medium().text_color(t.foreground).child(`Codex (${codex?.plan || "PROLITE"})`))
               )
               .child(
@@ -248,7 +248,7 @@ export default class AgentQuotas extends View {
           .bg(t.surface)
           .border_b(1)
           .border_color(t.border)
-          .child(div().text_size(16).child("📊"))
+          .child(image("icons/claude.svg").w(20).h(20).flex_none())
           .child(
             div()
               .font_semibold()
@@ -309,7 +309,7 @@ export default class AgentQuotas extends View {
                     h_flex()
                       .gap(8)
                       .items_center()
-                      .child(div().w(10).h(10).rounded(5).bg("#da7756"))
+                      .child(image("icons/claude.svg").w(18).h(18).flex_none())
                       .child(div().font_semibold().text_size(14).text_color(t.foreground).child("Claude Code"))
                       .child(
                         div()
@@ -457,7 +457,7 @@ export default class AgentQuotas extends View {
                     h_flex()
                       .gap(8)
                       .items_center()
-                      .child(div().w(10).h(10).rounded(5).bg("#10a37f"))
+                      .child(image("icons/codex.svg").w(18).h(18).flex_none())
                       .child(div().font_semibold().text_size(14).text_color(t.foreground).child("Codex"))
                       .child(
                         div()

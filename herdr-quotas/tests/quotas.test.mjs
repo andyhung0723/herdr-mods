@@ -102,6 +102,8 @@ async function harness() {
   const kit = synthetic({
     View: class {},
     div: () => element,
+    image: () => element,
+    svg: () => element,
   });
 
   const base = synthetic({
