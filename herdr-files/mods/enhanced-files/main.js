@@ -504,6 +504,8 @@ export default class EnhancedFiles extends View {
               .bg(t.background)
               .text_size(12)
               .text_color(t.foreground)
+              .on_click((_e, cx) => cx.stop_propagation())
+              .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
           )
       );
     }
@@ -531,6 +533,7 @@ export default class EnhancedFiles extends View {
         .when(!isSelected, el => el.hover(s => s.bg(t.hover)))
         .when(isCut, el => el.opacity(0.45))
         .on_click((_e, cx) => {
+          if (isRenaming) return;
           this.selectedPath = path;
           if (entry.dir) this.toggle(path, cx);
           else this.show(path, cx);
@@ -567,6 +570,9 @@ export default class EnhancedFiles extends View {
             .bg(t.background)
             .text_size(12)
             .text_color(t.foreground)
+            .on_click((_e, cx) => cx.stop_propagation())
+            .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
+            .on_mouse_down("right", (_e, cx) => cx.stop_propagation())
         );
       } else {
         row.child(div().flex_1().min_w(0).truncate().child(entry.name));
