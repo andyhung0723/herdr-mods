@@ -75,26 +75,50 @@ export default class EnhancedFiles extends View {
   refresh(cx) {
     const { cwd, on } = location(), next = key();
     if (next !== this.context?.key) {
-      if (this.context) this.saved.set(this.context.key, { folders: this.folders, file: this.file });
+      if (this.context && this.entries?.size > 0) {
+        this.saved.set(this.context.key, {
+          folders: new Set(this.folders),
+          file: this.file,
+          entries: new Map(this.entries),
+          marks: { ...this.marks },
+        });
+        // Limit cache to 8 sessions to ensure minimal memory usage (< 400KB)
+        if (this.saved.size > 8) {
+          const oldestKey = this.saved.keys().next().value;
+          this.saved.delete(oldestKey);
+        }
+      }
       const saved = this.saved.get(next);
       this.context = { key: next, cwd, on };
       this.root = cwd;
       this.on = on;
-      this.entries = new Map();
-      this.folders = new Set(saved?.folders);
-      this.pending = new Set();
-      this.marks = {};
-      this.show(null);
       this.watched = null;
       this.error = null;
       this.limited = false;
-      this.loading = false;
-      if (saved?.file) this.show(saved.file, cx);
+
+      // Stale-While-Revalidate: Instant render from cache if available
+      if (saved && saved.entries && saved.entries.size > 0) {
+        this.entries = new Map(saved.entries);
+        this.folders = new Set(saved.folders);
+        this.marks = { ...(saved.marks || {}) };
+        this.loading = false;
+        if (saved.file) this.show(saved.file, cx);
+      } else {
+        this.entries = new Map();
+        this.folders = new Set(saved?.folders);
+        this.pending = new Set();
+        this.marks = {};
+        this.show(null);
+        this.loading = true;
+        if (saved?.file) this.show(saved.file, cx);
+      }
     }
     if (!cwd) return;
     const context = this.context;
-    this.loading = true;
-    cx.notify();
+    if (!this.entries?.size) {
+      this.loading = true;
+      cx.notify();
+    }
     cx.spawn(async cx => {
       try {
         await this.loadFolder("", context);
@@ -121,7 +145,18 @@ export default class EnhancedFiles extends View {
       } catch (e) {
         if (this.current(context)) this.error = String(e);
       } finally {
-        if (this.context === context) this.loading = false;
+        if (this.context === context) {
+          this.loading = false;
+          // Update cache with latest revalidated data
+          if (this.entries?.size > 0) {
+            this.saved.set(context.key, {
+              folders: new Set(this.folders),
+              file: this.file,
+              entries: new Map(this.entries),
+              marks: { ...this.marks },
+            });
+          }
+        }
         cx.notify();
       }
     });

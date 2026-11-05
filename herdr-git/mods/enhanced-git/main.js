@@ -55,6 +55,10 @@ export default class EnhancedGit extends View {
     this.selectedCommitFile = null;
     this.commitDiffLines = [];
 
+    // Session cache & lazy loading
+    this.gitCache = new Map();
+    this.lastKey = null;
+
     this.handle = cx.focus_handle();
     this.refresh(cx);
 
@@ -62,12 +66,79 @@ export default class EnhancedGit extends View {
     cx.timer.every(10000, (cx) => this.refresh(cx));
   }
 
-  async refresh(cx) {
-    if (this.loading || this.busy) return;
+  updateCache() {
+    if (!this.lastKey || !this.status?.isRepo) return;
+    this.gitCache.set(this.lastKey, {
+      status: this.status,
+      graphRows: this.graphRows,
+      selectedFile: this.selectedFile,
+      selectedIsStaged: this.selectedIsStaged,
+      diffLines: this.diffLines,
+    });
+    // Cap at 8 sessions to ensure minimal memory usage (< 500KB)
+    if (this.gitCache.size > 8) {
+      const oldestKey = this.gitCache.keys().next().value;
+      this.gitCache.delete(oldestKey);
+    }
+  }
+
+  fetchGraph(cx) {
+    if (!this.cwd || !this.status?.isRepo) return;
+    const cwd = this.cwd, on = this.on;
+    cx.spawn(async (cx) => {
+      try {
+        const graphData = await getGitGraph(cwd, on, 40);
+        if (this.cwd === cwd) {
+          this.graphRows = graphData.rows || [];
+          this.updateCache();
+          cx.notify();
+        }
+      } catch (err) {
+        // Non-fatal, graph load error is ignored
+      }
+    });
+  }
+
+  async refresh(cx, force = false) {
+    if (this.busy) return;
     const { cwd, on } = resolveLocation();
     if (!cwd) {
       this.error = "No workspace folder selected";
       cx.notify();
+      return;
+    }
+
+    const currentKey = `${on || ""}:${cwd}`;
+    const isNewSession = currentKey !== this.lastKey;
+
+    if (isNewSession) {
+      this.updateCache();
+
+      const cached = this.gitCache.get(currentKey);
+      this.lastKey = currentKey;
+      this.cwd = cwd;
+      this.on = on;
+
+      if (cached && !force) {
+        // Stale-While-Revalidate: instant render from cache (0ms)
+        this.status = cached.status;
+        this.graphRows = cached.graphRows || [];
+        this.selectedFile = cached.selectedFile || null;
+        this.selectedIsStaged = cached.selectedIsStaged || false;
+        this.diffLines = cached.diffLines || [];
+        this.error = null;
+        this.loading = false;
+        cx.notify();
+      } else {
+        this.status = null;
+        this.graphRows = [];
+        this.selectedFile = null;
+        this.diffLines = [];
+        this.error = null;
+        this.loading = true;
+        cx.notify();
+      }
+    } else if (this.loading && !force) {
       return;
     }
 
@@ -77,10 +148,16 @@ export default class EnhancedGit extends View {
 
     cx.spawn(async (cx) => {
       try {
-        const [statusData, graphData] = await Promise.all([
-          getGitStatus(cwd, on),
-          getGitGraph(cwd, on, 40),
-        ]);
+        // Lazy load graph: only fetch git graph if on graph tab or in full dialog
+        const needGraph = this.tab === "graph" || this.role === "dialog";
+        const tasks = [getGitStatus(cwd, on)];
+        if (needGraph) {
+          tasks.push(getGitGraph(cwd, on, 40));
+        }
+
+        const [statusData, graphData] = await Promise.all(tasks);
+
+        if (this.cwd !== cwd) return; // Stale request, user switched session
 
         if (!statusData.isRepo) {
           this.status = null;
@@ -90,7 +167,9 @@ export default class EnhancedGit extends View {
         }
 
         this.status = statusData;
-        this.graphRows = graphData.rows || [];
+        if (graphData) {
+          this.graphRows = graphData.rows || [];
+        }
         this.error = null;
 
         // Auto-select first changed file if none selected
@@ -101,10 +180,16 @@ export default class EnhancedGit extends View {
             this.selectFile(statusData.unstagedFiles[0].path, false, cx);
           }
         }
+
+        this.updateCache();
       } catch (err) {
-        this.error = String(err);
+        if (this.cwd === cwd) {
+          this.error = String(err);
+        }
       } finally {
-        this.loading = false;
+        if (this.cwd === cwd) {
+          this.loading = false;
+        }
         cx.notify();
       }
     });
@@ -895,8 +980,11 @@ export default class EnhancedGit extends View {
               .when(this.tab !== "graph", (el) => el.text_color(t.dim).hover((s) => s.text_color(t.foreground)))
               .text_size(11.5)
               .font_medium()
-              .on_click(() => {
+              .on_click((_e, cx) => {
                 this.tab = "graph";
+                if (!this.graphRows || this.graphRows.length === 0) {
+                  this.fetchGraph(cx);
+                }
                 cx.notify();
               })
               .child("🌿 Graph")
@@ -945,6 +1033,12 @@ export default class EnhancedGit extends View {
   }
 
   render(cx) {
+    const loc = resolveLocation();
+    const curKey = `${loc.on || ""}:${loc.cwd || ""}`;
+    if (loc.cwd && curKey !== this.lastKey) {
+      this.refresh(cx);
+    }
+
     const t = theme();
 
     if (this.error) {

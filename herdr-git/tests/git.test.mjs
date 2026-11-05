@@ -184,3 +184,24 @@ test("EnhancedGit view initializes in panel and dialog modes and switches tabs",
   assert.equal(dialog.role, "dialog");
   assert.equal(dialog.tab, "graph");
 });
+
+test("EnhancedGit caches git status per session and enforces 8-session LRU limit", async () => {
+  const { View, cx } = await harness();
+
+  const view = new View();
+  view.init({ role: "panel" }, cx);
+
+  // Simulate multiple sessions
+  for (let i = 1; i <= 10; i++) {
+    view.lastKey = `:session-${i}`;
+    view.status = { isRepo: true, stagedFiles: [], unstagedFiles: [] };
+    view.updateCache();
+  }
+
+  // Should have max 8 items in cache
+  assert.equal(view.gitCache.size, 8);
+  // Oldest sessions (1 and 2) should be evicted
+  assert.equal(view.gitCache.has(":session-1"), false);
+  assert.equal(view.gitCache.has(":session-2"), false);
+  assert.equal(view.gitCache.has(":session-10"), true);
+});
