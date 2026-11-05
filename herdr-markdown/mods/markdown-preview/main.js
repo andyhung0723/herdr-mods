@@ -13,14 +13,16 @@ function resolveLocation() {
   const allSpaces = spaces();
   const space = allSpaces.find((s) => s.id === f?.space) ?? allSpaces.find((s) => s.active) ?? allSpaces[0];
   const allPanes = panes();
-  const spacePanes = allPanes.filter((p) => p.cwd);
-  const pane = (f?.pane ? allPanes.find((p) => p.pane === f.pane) : null)
-    ?? allPanes.find((p) => p.tab === f?.tab && p.cwd)
-    ?? (f?.cwd ? { cwd: f.cwd } : null)
-    ?? spacePanes.find((p) => p.focused && p.cwd)
-    ?? spacePanes.find((p) => p.cwd);
+  const tabs = new Set((space?.tabs ?? []).map((t) => t.id));
+  
+  // Find pane in current space or active tab
+  const cwd = allPanes.find((p) => tabs.has(p.tab) && p.cwd)?.cwd
+    || (f?.pane ? allPanes.find((p) => p.pane === f.pane)?.cwd : null)
+    || f?.cwd
+    || space?.folder
+    || ".";
+
   const on = space?.machine ?? null;
-  const cwd = pane?.cwd || f?.cwd || space?.folder || ".";
   return { cwd, on, space: space?.id, spaceName: space?.name || "Workspace" };
 }
 
@@ -38,9 +40,10 @@ export default class MarkdownPreview extends View {
     this.availableFiles = [];
     this.showSidebar = true;
     this.filter = "";
+    this.currentCwd = "";
 
     // Search filter input
-    this.input = InputState.new({ placeholder: "Filter .md files…" });
+    this.input = InputState.new({ placeholder: "Search .md files…" });
     this.input.on("change", (_e, cx) => {
       this.filter = (this.input.value() || "").trim().toLowerCase();
       cx.notify();
@@ -62,7 +65,16 @@ export default class MarkdownPreview extends View {
 
   async discoverFiles(cwd, on) {
     try {
-      const script = 'cd "$1" 2>/dev/null || exit 0; find . -maxdepth 3 \\( -name "*.md" -o -name "*.markdown" \\) -not -path "*/.*" -not -path "*/node_modules/*" -not -path "*/Library/*" 2>/dev/null | sort | head -n 60';
+      const script = `
+        TARGET="$1"
+        [ -d "$TARGET" ] && cd "$TARGET"
+        find . -maxdepth 3 \\( -name "*.md" -o -name "*.markdown" \\) \\
+          -not -path "*/.*" \\
+          -not -path "*/node_modules/*" \\
+          -not -path "*/Library/*" \\
+          -not -path "*/Pictures/*" \\
+          2>/dev/null | sort | head -n 60
+      `;
       const r = await exec("sh", ["-c", script, "sh", cwd], { on });
       const raw = (r?.stdout || "").trim();
       if (raw) {
@@ -87,8 +99,8 @@ export default class MarkdownPreview extends View {
       // Fallback
     }
 
-    // Direct fallback check if find returned nothing
-    const fallbacks = ["README.md", "readme.md", "AGENTS.md", "CLAUDE.md", "README.txt"];
+    // Direct fallback probe for common files
+    const fallbacks = ["README.md", "readme.md", "AGENTS.md", "CLAUDE.md", "CONTRIBUTING.md", "README.txt"];
     const found = [];
     for (const fb of fallbacks) {
       try {
@@ -107,6 +119,7 @@ export default class MarkdownPreview extends View {
     cx.spawn(async (cx) => {
       try {
         const { cwd, on } = resolveLocation();
+        this.currentCwd = cwd;
         const files = await this.discoverFiles(cwd, on);
         this.availableFiles = files;
 
@@ -124,7 +137,7 @@ export default class MarkdownPreview extends View {
           await this.loadFileContent(selected, cwd, on);
         } else {
           this.loading = false;
-          this.error = "No Markdown files found in this workspace.";
+          this.error = `No Markdown files found in: ${cwd}`;
           this.content = null;
         }
       } catch (err) {
@@ -162,6 +175,7 @@ export default class MarkdownPreview extends View {
     cx.spawn(async (cx) => {
       try {
         const { cwd, on } = resolveLocation();
+        this.currentCwd = cwd;
         await this.loadFileContent(selected, cwd, on);
       } catch (err) {
         this.loading = false;
@@ -236,7 +250,7 @@ export default class MarkdownPreview extends View {
           cx.stop_propagation();
         }
       })
-      // Top Master Toolbar
+      // Top Master Toolbar (Height 40px)
       .child(
         h_flex()
           .h(40)
@@ -339,31 +353,35 @@ export default class MarkdownPreview extends View {
             )
           )
       )
-      // Main Body: Dual-column layout
+      // Main Body: Dual-column layout (flex_1, items_stretch)
       .child(
         h_flex()
           .flex_1()
           .min_h(0)
+          .items_stretch()
           // Left File List Column
           .when(this.showSidebar, (el) =>
             el.child(
               v_flex()
                 .w(260)
+                .h_full()
                 .flex_none()
                 .bg(t.surface)
                 .border_r(1)
                 .border_color(t.border)
-                // Filter box
+                // Filter box container (Height 44px, pinned to top)
                 .child(
-                  v_flex()
-                    .p(8)
+                  h_flex()
+                    .h(44)
                     .flex_none()
+                    .px(8)
+                    .items_center()
                     .border_b(1)
                     .border_color(t.border)
                     .child(
                       Input.new(this.input)
-                        .h(30)
-                        .flex_none()
+                        .w_full()
+                        .h(28)
                         .px(8)
                         .rounded(6)
                         .border_1()
@@ -384,11 +402,23 @@ export default class MarkdownPreview extends View {
                     .gap(2)
                     .when(files.length === 0, (emptyEl) =>
                       emptyEl.child(
-                        div()
-                          .p(12)
-                          .text_size(12)
-                          .text_color(t.dim)
-                          .child(this.filter ? "No matching files" : "No .md files found")
+                        v_flex()
+                          .p(10)
+                          .gap(4)
+                          .child(
+                            div()
+                              .text_size(12)
+                              .text_color(t.dim)
+                              .child(this.filter ? "No matching files" : "No .md files found")
+                          )
+                          .when(Boolean(this.currentCwd), (cEl) =>
+                            cEl.child(
+                              div()
+                                .text_size(10.5)
+                                .text_color(t.dim)
+                                .child(`in ${this.currentCwd.split("/").pop() || this.currentCwd}`)
+                            )
+                          )
                       )
                     )
                     .children(
@@ -447,6 +477,7 @@ export default class MarkdownPreview extends View {
             v_flex()
               .id("markdown-body")
               .flex_1()
+              .h_full()
               .min_w(0)
               .min_h(0)
               .p(16)
@@ -461,7 +492,7 @@ export default class MarkdownPreview extends View {
                   v_flex()
                     .p(16)
                     .gap(8)
-                    .child(div().text_size(14).font_semibold().text_color(t.ansi1).child("Error"))
+                    .child(div().text_size(14).font_semibold().text_color(t.ansi1).child("Notice"))
                     .child(div().text_size(13).text_color(t.muted).child(this.error))
                 )
               )
