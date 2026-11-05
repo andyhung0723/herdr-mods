@@ -1,0 +1,10 @@
+{
+  "place": "none",
+  "title": "Markdown Preview",
+  "focusable": true,
+  "overlay": {
+    "kind": "dialog",
+    "width": 860,
+    "height": 0.85
+  }
+}
