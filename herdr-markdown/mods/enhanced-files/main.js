@@ -34,6 +34,40 @@ async function directory(path, on) {
   return out;
 }
 
+function resolveRelativePath(currentFilePath, linkUrl) {
+  if (!linkUrl) return null;
+  const cleanUrl = linkUrl.split("#")[0].split("?")[0].trim();
+  if (!cleanUrl) return null;
+
+  let target = cleanUrl;
+  if (target.startsWith("file://")) {
+    target = target.replace(/^file:\/\//, "");
+  }
+  if (target.startsWith("/")) {
+    return target;
+  }
+
+  let currentDir = ".";
+  if (currentFilePath && currentFilePath.includes("/")) {
+    currentDir = currentFilePath.substring(0, currentFilePath.lastIndexOf("/"));
+  }
+
+  const combined = `${currentDir}/${target}`;
+  const parts = combined.split("/");
+  const resolved = [];
+  for (const part of parts) {
+    if (!part || part === ".") continue;
+    if (part === "..") {
+      if (resolved.length > 0) resolved.pop();
+    } else {
+      resolved.push(part);
+    }
+  }
+
+  const isAbsolute = combined.startsWith("/");
+  return (isAbsolute ? "/" : "") + resolved.join("/");
+}
+
 export default class EnhancedFiles extends View {
   init(_props, cx) {
     this.saved = new Map();
@@ -274,6 +308,24 @@ export default class EnhancedFiles extends View {
     });
   }
 
+  handleMarkdownLinkClick(url, cx) {
+    if (!url) return;
+    if (/^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(url) && !url.startsWith("file:")) {
+      try { cx.open_url(url); } catch {}
+      return;
+    }
+    if (url.startsWith("#")) return;
+
+    const base = this.file ? `${this.root}/${this.file}` : this.root;
+    let target = resolveRelativePath(base, url);
+    if (!target) return;
+
+    if (target.startsWith(this.root + "/")) {
+      target = target.slice(this.root.length + 1);
+    }
+    this.show(target, cx);
+  }
+
   render(cx) {
     if (key() !== this.context?.key) this.refresh(cx);
     const t = theme();
@@ -422,7 +474,12 @@ export default class EnhancedFiles extends View {
                 .min_h(0)
                 .p(12)
                 .overflow_y_scrollbar()
-                .child(TextView.markdown("enhanced-file-md", this.rawText ?? "").selectable(true).scrollable(true))
+                .child(
+                  TextView.markdown("enhanced-file-md", this.rawText ?? "")
+                    .selectable(true)
+                    .scrollable(true)
+                    .on_link_click((url, cx) => this.handleMarkdownLinkClick(url, cx))
+                )
             : this.code
             ? Editor.new(this.code).flex_1().min_h(0)
             : div().p(12).text_color(t.dim).child("Loading file…")

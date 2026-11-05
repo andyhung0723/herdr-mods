@@ -60,7 +60,15 @@ async function harness(propsValue = {}) {
   const element = new Proxy(
     {},
     {
-      get: () => () => element,
+      get: (_target, prop) => {
+        if (prop === "when") {
+          return (cond, fn) => {
+            if (cond) fn(element);
+            return element;
+          };
+        }
+        return () => element;
+      },
     }
   );
 
@@ -69,6 +77,8 @@ async function harness(propsValue = {}) {
     div: () => element,
     svg: () => element,
   });
+
+  const linkHandlers = new Map();
 
   const base = synthetic({
     v_flex: () => element,
@@ -84,7 +94,16 @@ async function harness(propsValue = {}) {
     TextView: {
       markdown: (id, text) => {
         events.push(["TextView.markdown", id, text]);
-        return element;
+        const textEl = {
+          selectable: () => textEl,
+          scrollable: () => textEl,
+          on_link_click: (fn) => {
+            events.push(["TextView.on_link_click", id]);
+            linkHandlers.set(id, fn);
+            return textEl;
+          },
+        };
+        return textEl;
       },
     },
   });
@@ -107,9 +126,10 @@ async function harness(propsValue = {}) {
       every: (ms, fn) => events.push(["timer.every", ms]),
     },
     notify: () => events.push(["cx.notify"]),
+    open_url: (url) => events.push(["cx.open_url", url]),
   };
 
-  return { api, View, instance, cx, events, files };
+  return { api, View, instance, cx, events, files, linkHandlers };
 }
 
 test("markdown-preview loads default README.md when no file prop is provided", async () => {
@@ -152,4 +172,53 @@ test("markdown-preview handles missing files with clear error state", async () =
 
   assert.equal(instance.content, null);
   assert(instance.error.includes("File not found"));
+});
+
+test("markdown-preview navigates to relative markdown links and supports going back", async () => {
+  const { instance, cx, linkHandlers } = await harness({});
+  instance.init({}, cx);
+  await new Promise((r) => setImmediate(r));
+
+  assert.equal(instance.fileName, "README.md");
+  assert.equal(instance.filePath, "/repo/README.md");
+
+  // Call render to trigger TextView.markdown and bind on_link_click
+  instance.render(cx);
+  const clickHandler = linkHandlers.get("preview-text");
+  assert.ok(clickHandler, "Link click handler must be registered");
+
+  // Click a relative link: ./docs/guide.md
+  clickHandler("./docs/guide.md", cx);
+  await new Promise((r) => setImmediate(r));
+
+  assert.equal(instance.fileName, "docs/guide.md");
+  assert.equal(instance.filePath, "/repo/docs/guide.md");
+  assert(instance.content.includes("Detailed documentation"));
+  assert.equal(instance.history.length, 1);
+  assert.equal(instance.history[0], "/repo/README.md");
+
+  // Go Back
+  instance.goBack(cx);
+  await new Promise((r) => setImmediate(r));
+
+  assert.equal(instance.fileName, "README.md");
+  assert.equal(instance.filePath, "/repo/README.md");
+  assert.equal(instance.history.length, 0);
+});
+
+test("markdown-preview delegates external URLs to cx.open_url", async () => {
+  const { instance, cx, events, linkHandlers } = await harness({});
+  instance.init({}, cx);
+  await new Promise((r) => setImmediate(r));
+
+  instance.render(cx);
+  const clickHandler = linkHandlers.get("preview-text");
+  assert.ok(clickHandler);
+
+  // Click external URL
+  clickHandler("https://github.com/project/docs", cx);
+
+  const openEvents = events.filter((e) => e[0] === "cx.open_url");
+  assert.equal(openEvents.length, 1);
+  assert.equal(openEvents[0][1], "https://github.com/project/docs");
 });

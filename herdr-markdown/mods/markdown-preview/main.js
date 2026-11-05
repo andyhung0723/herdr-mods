@@ -26,6 +26,44 @@ function resolveLocation() {
   return { cwd, on, space: space?.id, spaceName: space?.name || "Workspace" };
 }
 
+export function resolveRelativePath(currentFilePath, linkUrl) {
+  if (!linkUrl) return null;
+  // Strip fragment (#heading) and query params (?foo=bar)
+  const cleanUrl = linkUrl.split("#")[0].split("?")[0].trim();
+  if (!cleanUrl) return null;
+
+  let target = cleanUrl;
+  if (target.startsWith("file://")) {
+    target = target.replace(/^file:\/\//, "");
+  }
+
+  // If already absolute path
+  if (target.startsWith("/")) {
+    return target;
+  }
+
+  // Base directory of current file
+  let currentDir = ".";
+  if (currentFilePath && currentFilePath.includes("/")) {
+    currentDir = currentFilePath.substring(0, currentFilePath.lastIndexOf("/"));
+  }
+
+  const combined = `${currentDir}/${target}`;
+  const parts = combined.split("/");
+  const resolved = [];
+  for (const part of parts) {
+    if (!part || part === ".") continue;
+    if (part === "..") {
+      if (resolved.length > 0) resolved.pop();
+    } else {
+      resolved.push(part);
+    }
+  }
+
+  const isAbsolute = combined.startsWith("/");
+  return (isAbsolute ? "/" : "") + resolved.join("/");
+}
+
 export default class MarkdownPreview extends View {
   init(initialProps, cx) {
     const p = initialProps ?? props() ?? {};
@@ -38,6 +76,7 @@ export default class MarkdownPreview extends View {
     this.loading = true;
     this.lastHash = null;
     this.availableFiles = [];
+    this.history = [];
     this.showSidebar = true;
     this.filter = "";
     this.currentCwd = "";
@@ -150,8 +189,19 @@ export default class MarkdownPreview extends View {
   }
 
   async loadFileContent(selected, cwd, on) {
-    const fullPath = selected.startsWith("/") ? selected : `${cwd}/${selected}`;
-    const text = await readTextFile(fullPath, { on });
+    let fullPath = selected.startsWith("/") ? selected : `${cwd}/${selected}`;
+    let text = await readTextFile(fullPath, { on });
+
+    // If not found and selected doesn't have an extension, try appending .md
+    if (text === null && !fullPath.includes(".")) {
+      const withMd = `${fullPath}.md`;
+      const textWithMd = await readTextFile(withMd, { on });
+      if (textWithMd !== null) {
+        fullPath = withMd;
+        text = textWithMd;
+        selected = `${selected}.md`;
+      }
+    }
 
     if (text === null) {
       this.loading = false;
@@ -159,15 +209,29 @@ export default class MarkdownPreview extends View {
       this.content = null;
     } else {
       this.filePath = fullPath;
-      this.fileName = selected;
+      let relName = selected;
+      if (fullPath.startsWith(cwd + "/")) {
+        relName = fullPath.slice(cwd.length + 1);
+      } else if (selected.startsWith("/")) {
+        relName = selected.split("/").pop();
+      }
+      this.fileName = relName;
       this.content = text;
       this.lastHash = text.length + ":" + text.slice(0, 80);
       this.loading = false;
       this.error = null;
+
+      if (!this.availableFiles.includes(relName)) {
+        this.availableFiles.unshift(relName);
+      }
     }
   }
 
-  loadFile(selected, cx) {
+  loadFile(selected, cx, pushHistory = false) {
+    if (pushHistory && this.filePath && this.filePath !== selected) {
+      this.history.push(this.filePath);
+    }
+
     this.loading = true;
     this.error = null;
     cx.notify();
@@ -184,6 +248,45 @@ export default class MarkdownPreview extends View {
         cx.notify();
       }
     });
+  }
+
+  navigateTo(targetPath, cx) {
+    if (this.filePath && this.filePath !== targetPath) {
+      this.history.push(this.filePath);
+    }
+    this.loadFile(targetPath, cx, false);
+  }
+
+  goBack(cx) {
+    if (this.history.length === 0) return;
+    const prev = this.history.pop();
+    this.loadFile(prev, cx, false);
+  }
+
+  handleLinkClick(url, cx) {
+    if (!url) return;
+
+    // 1. External URL (http://, https://, mailto:)
+    if (/^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(url) && !url.startsWith("file:")) {
+      try {
+        cx.open_url(url);
+      } catch (err) {
+        console.error("Failed to open external url:", err);
+      }
+      return;
+    }
+
+    // 2. Pure anchor link on the same document (#section)
+    if (url.startsWith("#")) {
+      return;
+    }
+
+    // 3. Resolve relative or absolute file path
+    const base = this.filePath || this.currentCwd || ".";
+    const resolved = resolveRelativePath(base, url);
+    if (!resolved) return;
+
+    this.navigateTo(resolved, cx);
   }
 
   pollChanges(cx) {
@@ -288,6 +391,24 @@ export default class MarkdownPreview extends View {
                     .child(String(this.availableFiles.length))
                 )
               )
+          )
+          // Back button (if navigation history exists)
+          .when(this.history.length > 0, (el) =>
+            el.child(
+              h_flex()
+                .px(7)
+                .h(24)
+                .rounded(4)
+                .items_center()
+                .gap(4)
+                .cursor_pointer()
+                .bg(t.raised)
+                .border_1()
+                .border_color(t.border)
+                .hover((s) => s.bg(t.hover))
+                .on_click((_e, cx) => this.goBack(cx))
+                .child(div().text_size(11.5).font_semibold().text_color(t.accent).child("← Back"))
+            )
           )
           // Live status dot
           .child(
@@ -501,6 +622,7 @@ export default class MarkdownPreview extends View {
                   TextView.markdown("preview-text", this.content || "*Empty file*")
                     .selectable(true)
                     .scrollable(true)
+                    .on_link_click((url, cx) => this.handleLinkClick(url, cx))
                 )
               )
           )
