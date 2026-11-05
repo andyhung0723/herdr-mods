@@ -243,15 +243,56 @@ export function parseGraphRow(rawLine) {
 export async function getGitGraph(cwd, on, limit = 50) {
   if (!cwd) return { rows: [], error: "No folder" };
 
-  const res = await exec("git", [
+  // Resolve to repository root if possible
+  let repoCwd = cwd;
+  try {
+    const topRes = await exec("git", ["rev-parse", "--show-toplevel"], { cwd, on });
+    if (topRes.code === 0 && topRes.stdout.trim()) {
+      repoCwd = topRes.stdout.trim();
+    }
+  } catch {}
+
+  const fmt = `--format=format:%h%x09%p%x09%d%x09%s%x09%cr%x09%an`;
+
+  // 1. Try full graph with all refs and date order
+  let res = await exec("git", [
     ...READ_FLAGS,
     "log",
     "--graph",
     "--all",
-    `--format=format:%h%x09%p%x09%d%x09%s%x09%cr%x09%an`,
-    `-n`,
+    "--date-order",
+    fmt,
+    "-n",
     String(limit),
-  ], { cwd, on });
+  ], { cwd: repoCwd, on });
+
+  // 2. If --all fails (e.g. huge DAG, invalid remote ref), fallback to HEAD and local branches
+  if (res.code !== 0) {
+    res = await exec("git", [
+      ...READ_FLAGS,
+      "log",
+      "--graph",
+      "HEAD",
+      "--branches",
+      "--date-order",
+      fmt,
+      "-n",
+      String(limit),
+    ], { cwd: repoCwd, on });
+  }
+
+  // 3. If still fails, fallback to current HEAD only
+  if (res.code !== 0) {
+    res = await exec("git", [
+      ...READ_FLAGS,
+      "log",
+      "--graph",
+      "HEAD",
+      fmt,
+      "-n",
+      String(limit),
+    ], { cwd: repoCwd, on });
+  }
 
   if (res.code !== 0) {
     return { rows: [], error: res.stderr || "Failed to load log graph" };

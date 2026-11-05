@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import vm from "node:vm";
 import { readFile } from "node:fs/promises";
 
-async function harness() {
+async function harness(overrides = {}) {
   const events = [];
 
   const fakeStatusOutput = [
@@ -72,6 +72,7 @@ async function harness() {
     shared: () => null,
     run: () => {},
     watchFolder: async () => {},
+    ...overrides,
   };
 
   const context = vm.createContext({});
@@ -204,4 +205,32 @@ test("EnhancedGit caches git status per session and enforces 8-session LRU limit
   assert.equal(view.gitCache.has(":session-1"), false);
   assert.equal(view.gitCache.has(":session-2"), false);
   assert.equal(view.gitCache.has(":session-10"), true);
+});
+
+test("getGitGraph falls back to HEAD and branches if --all fails", async () => {
+  let callCount = 0;
+  const { git } = await harness({
+    exec: async (_cmd, args) => {
+      callCount++;
+      if (args.includes("rev-parse")) {
+        return { code: 0, stdout: "/repo", stderr: "" };
+      }
+      if (args.includes("--all")) {
+        // Simulate failure on --all (e.g. huge DAG timeout or bad ref)
+        return { code: 1, stdout: "", stderr: "fatal: bad ref" };
+      }
+      return {
+        code: 0,
+        stdout: "* abc1234\t\t (HEAD -> main)\tfallback commit\t1m ago\tAndy",
+        stderr: "",
+      };
+    },
+  });
+
+  const res = await git.getGitGraph("/repo", null, 40);
+  assert.equal(res.error, null);
+  assert.equal(res.rows.length, 1);
+  assert.equal(res.rows[0].hash, "abc1234");
+  assert.equal(res.rows[0].subject, "fallback commit");
+  assert.ok(callCount >= 2);
 });

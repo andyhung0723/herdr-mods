@@ -54,6 +54,8 @@ export default class EnhancedGit extends View {
     this.commitFiles = [];
     this.selectedCommitFile = null;
     this.commitDiffLines = [];
+    this.graphLoading = false;
+    this.graphError = null;
 
     // Session cache & lazy loading
     this.gitCache = new Map();
@@ -71,6 +73,7 @@ export default class EnhancedGit extends View {
     this.gitCache.set(this.lastKey, {
       status: this.status,
       graphRows: this.graphRows,
+      graphError: this.graphError,
       selectedFile: this.selectedFile,
       selectedIsStaged: this.selectedIsStaged,
       diffLines: this.diffLines,
@@ -83,18 +86,31 @@ export default class EnhancedGit extends View {
   }
 
   fetchGraph(cx) {
-    if (!this.cwd || !this.status?.isRepo) return;
-    const cwd = this.cwd, on = this.on;
+    if (!this.cwd) return;
+    const targetPath = this.status?.root || this.cwd;
+    const on = this.on;
+    this.graphLoading = true;
+    this.graphError = null;
+    cx.notify();
+
     cx.spawn(async (cx) => {
       try {
-        const graphData = await getGitGraph(cwd, on, 40);
-        if (this.cwd === cwd) {
-          this.graphRows = graphData.rows || [];
+        const graphData = await getGitGraph(targetPath, on, 40);
+        if (this.cwd === targetPath || this.status?.root === targetPath || this.cwd) {
+          if (graphData.error) {
+            this.graphError = graphData.error;
+            this.graphRows = [];
+          } else {
+            this.graphRows = graphData.rows || [];
+            this.graphError = null;
+          }
           this.updateCache();
-          cx.notify();
         }
       } catch (err) {
-        // Non-fatal, graph load error is ignored
+        this.graphError = String(err);
+      } finally {
+        this.graphLoading = false;
+        cx.notify();
       }
     });
   }
@@ -123,6 +139,8 @@ export default class EnhancedGit extends View {
         // Stale-While-Revalidate: instant render from cache (0ms)
         this.status = cached.status;
         this.graphRows = cached.graphRows || [];
+        this.graphError = cached.graphError || null;
+        this.graphLoading = false;
         this.selectedFile = cached.selectedFile || null;
         this.selectedIsStaged = cached.selectedIsStaged || false;
         this.diffLines = cached.diffLines || [];
@@ -132,6 +150,8 @@ export default class EnhancedGit extends View {
       } else {
         this.status = null;
         this.graphRows = [];
+        this.graphError = null;
+        this.graphLoading = this.tab === "graph";
         this.selectedFile = null;
         this.diffLines = [];
         this.error = null;
@@ -148,29 +168,37 @@ export default class EnhancedGit extends View {
 
     cx.spawn(async (cx) => {
       try {
-        // Lazy load graph: only fetch git graph if on graph tab or in full dialog
         const needGraph = this.tab === "graph" || this.role === "dialog";
-        const tasks = [getGitStatus(cwd, on)];
-        if (needGraph) {
-          tasks.push(getGitGraph(cwd, on, 40));
-        }
+        if (needGraph) this.graphLoading = true;
 
-        const [statusData, graphData] = await Promise.all(tasks);
+        const statusData = await getGitStatus(cwd, on);
 
         if (this.cwd !== cwd) return; // Stale request, user switched session
 
         if (!statusData.isRepo) {
           this.status = null;
           this.graphRows = [];
+          this.graphError = null;
+          this.graphLoading = false;
           this.error = statusData.error || "Not a git repository";
           return;
         }
 
         this.status = statusData;
-        if (graphData) {
-          this.graphRows = graphData.rows || [];
-        }
         this.error = null;
+
+        if (needGraph) {
+          const repoRoot = statusData.root || cwd;
+          const graphData = await getGitGraph(repoRoot, on, 40);
+          if (graphData.error) {
+            this.graphError = graphData.error;
+            this.graphRows = [];
+          } else {
+            this.graphRows = graphData.rows || [];
+            this.graphError = null;
+          }
+          this.graphLoading = false;
+        }
 
         // Auto-select first changed file if none selected
         if (!this.selectedFile) {
@@ -189,6 +217,7 @@ export default class EnhancedGit extends View {
       } finally {
         if (this.cwd === cwd) {
           this.loading = false;
+          this.graphLoading = false;
         }
         cx.notify();
       }
@@ -675,7 +704,63 @@ export default class EnhancedGit extends View {
 
   // --- View: Git Graph Tab ---
   renderGraphTab(t, cx) {
-    const rows = this.graphRows;
+    const rows = this.graphRows || [];
+
+    if (this.graphLoading && rows.length === 0) {
+      return v_flex()
+        .size_full()
+        .items_center()
+        .justify_center()
+        .gap(8)
+        .p(16)
+        .child(div().text_size(12).text_color(t.dim).child("Loading commit graph…"));
+    }
+
+    if (this.graphError && rows.length === 0) {
+      return v_flex()
+        .size_full()
+        .items_center()
+        .justify_center()
+        .gap(10)
+        .p(16)
+        .child(div().text_size(12).text_color(t.blocked).child(`Error: ${this.graphError}`))
+        .child(
+          div()
+            .px(10)
+            .py(4)
+            .rounded(5)
+            .bg(t.raised)
+            .cursor_pointer()
+            .hover((s) => s.bg(t.hover))
+            .text_size(11)
+            .text_color(t.foreground)
+            .on_click((_e, cx) => this.fetchGraph(cx))
+            .child("↻ Retry")
+        );
+    }
+
+    if (rows.length === 0) {
+      return v_flex()
+        .size_full()
+        .items_center()
+        .justify_center()
+        .gap(10)
+        .p(16)
+        .child(div().text_size(12).text_color(t.dim).child("No commit history found"))
+        .child(
+          div()
+            .px(10)
+            .py(4)
+            .rounded(5)
+            .bg(t.raised)
+            .cursor_pointer()
+            .hover((s) => s.bg(t.hover))
+            .text_size(11)
+            .text_color(t.foreground)
+            .on_click((_e, cx) => this.fetchGraph(cx))
+            .child("↻ Refresh")
+        );
+    }
 
     return v_flex()
       .size_full()
@@ -717,7 +802,7 @@ export default class EnhancedGit extends View {
                 .h(28)
                 .flex_none()
                 .px(6)
-                .gap(8)
+                .gap(6)
                 .items_center()
                 .rounded(6)
                 .cursor_pointer()
@@ -727,30 +812,33 @@ export default class EnhancedGit extends View {
                 // Railway node & hash
                 .child(
                   h_flex()
+                    .flex_none()
                     .gap(5)
                     .items_center()
                     .child(
                       div()
-                        .w(14)
+                        .flex_none()
                         .font_family("JetBrains Mono")
-                        .text_size(12)
+                        .text_size(11)
                         .font_semibold()
                         .text_color(color)
                         .child(row.graph || "●")
                     )
                     .child(
                       div()
+                        .flex_none()
                         .font_family("JetBrains Mono")
                         .text_size(11)
                         .text_color(t.dim)
                         .child(row.hash)
                     )
                 )
-                // Ref Badges (branches/tags)
+                // Ref Badges (branches/tags, capped to first 2 to save space)
                 .children(
-                  row.refs.map((ref) => {
+                  (row.refs || []).slice(0, 2).map((ref) => {
                     const isHead = ref.includes("HEAD");
                     return div()
+                      .flex_none()
                       .px(5)
                       .py(0.5)
                       .rounded(3)
@@ -758,22 +846,38 @@ export default class EnhancedGit extends View {
                       .text_size(10)
                       .font_semibold()
                       .text_color(isHead ? t.accent : t.foreground)
+                      .truncate()
                       .child(ref);
                   })
+                )
+                .when((row.refs || []).length > 2, (el) =>
+                  el.child(
+                    div()
+                      .flex_none()
+                      .px(4)
+                      .py(0.5)
+                      .rounded(3)
+                      .bg(t.raised)
+                      .text_size(9.5)
+                      .text_color(t.dim)
+                      .child(`+${row.refs.length - 2}`)
+                  )
                 )
                 // Commit Subject
                 .child(
                   div()
                     .flex_1()
-                    .min_w(0)
-                    .text_size(12)
+                    .min_w(60)
+                    .text_size(11.5)
                     .text_color(t.foreground)
                     .truncate()
                     .child(row.subject)
                 )
                 // Author & Date
-                .child(div().text_size(10.5).text_color(t.dim).child(row.author))
-                .child(div().text_size(10.5).text_color(t.dim).child(row.relDate));
+                .when(this.role === "dialog", (el) =>
+                  el.child(div().flex_none().text_size(10.5).text_color(t.dim).child(row.author))
+                )
+                .child(div().flex_none().text_size(10.5).text_color(t.dim).child(row.relDate));
             })
           )
       )
