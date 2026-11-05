@@ -64,16 +64,42 @@ export function formatTokenCount(num) {
 
 export async function collectClaudeData() {
   const h = home();
-  let content = await readTextFile(`${h}/.claude-work/.claude.json`);
-  if (!content) {
-    content = await readTextFile(`${h}/.claude/.claude.json`);
+  const candidates = [
+    `${h}/.claude-work/.claude.json`,
+    `${h}/.claude.json`,
+    `${h}/.claude/.claude.json`,
+  ];
+
+  let bestData = null;
+  let bestFetchedAt = -1;
+
+  for (const path of candidates) {
+    try {
+      let raw = await readTextFile(path).catch(() => null);
+      if (!raw && typeof exec === "function") {
+        try {
+          const res = await exec("cat", [path]).catch(() => null);
+          if (res?.code === 0 && res?.stdout) raw = res.stdout;
+        } catch {}
+      }
+      if (!raw) continue;
+      const parsed = JSON.parse(raw);
+      const fetchedAt = parsed.cachedUsageUtilization?.fetchedAtMs ?? 0;
+      if (parsed.cachedUsageUtilization?.utilization) {
+        if (!bestData || fetchedAt > bestFetchedAt) {
+          bestData = parsed;
+          bestFetchedAt = fetchedAt;
+        }
+      }
+    } catch {}
   }
-  if (!content) {
+
+  if (!bestData) {
     return { name: "Claude Code", available: false, error: "Config not found" };
   }
 
   try {
-    const data = JSON.parse(content);
+    const data = bestData;
     const u = data.cachedUsageUtilization?.utilization ?? {};
     const oauth = data.oauthAccount ?? {};
 
@@ -84,10 +110,19 @@ export async function collectClaudeData() {
     const sevenDayResetsAt = u.seven_day?.resets_at ?? null;
 
     const extra = u.extra_usage ?? {};
-    const hasCredit = Boolean(extra.is_enabled);
-    const creditUsed = extra.used_credits ? (extra.used_credits / 100).toFixed(2) : "0.00";
-    const creditLimit = extra.monthly_limit ? (extra.monthly_limit / 100).toFixed(2) : "0.00";
-    const creditPercent = Math.round(extra.utilization ?? 0);
+    const spend = u.spend ?? {};
+
+    const usedCents = extra.used_credits ?? spend.used?.amount_minor ?? 0;
+    const limitCents = extra.monthly_limit ?? spend.limit?.amount_minor ?? 0;
+    const hasCredit = Boolean(extra.is_enabled || spend.enabled || usedCents > 0);
+
+    const creditUsed = (usedCents / 100).toFixed(2);
+    const creditLimit = (limitCents / 100).toFixed(2);
+    const creditPercent = Math.round(
+      extra.utilization ??
+      spend.percent ??
+      (limitCents > 0 ? (usedCents / limitCents) * 100 : 0)
+    );
 
     return {
       name: "Claude Code",
@@ -95,6 +130,7 @@ export async function collectClaudeData() {
       tier: oauth.seatTier ?? "Pro/Team",
       org: oauth.organizationName ?? "Personal",
       email: oauth.emailAddress ?? "",
+      fetchedAtMs: bestFetchedAt > 0 ? bestFetchedAt : null,
       hasFiveHour: true,
       fiveHour: {
         percent: fiveHour,
@@ -112,6 +148,8 @@ export async function collectClaudeData() {
         used: `$${creditUsed}`,
         limit: `$${creditLimit}`,
         percent: creditPercent,
+        rawUsed: usedCents / 100,
+        rawLimit: limitCents / 100,
       },
       primaryPercent: hasCredit ? creditPercent : sevenDay,
     };

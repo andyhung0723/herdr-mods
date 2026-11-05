@@ -35,6 +35,10 @@ async function harness() {
     home: () => "/home/user",
     readTextFile: async (path) => {
       events.push(["readTextFile", path]);
+      if (api.onReadTextFile) {
+        const custom = await api.onReadTextFile(path);
+        if (custom !== undefined) return custom;
+      }
       if (path.includes(".claude")) return fakeClaudeJson;
       if (path.includes(".codex/auth.json")) return fakeCodexAuth;
       if (path.includes(".codex/config.toml")) return 'model = "gpt-5"';
@@ -183,4 +187,37 @@ test("AgentQuotas view initializes and switches between widget and dialog", asyn
   dialogInstance.init({ role: "dialog", overlay: "overlay-test" }, cx);
   await new Promise((r) => setImmediate(r));
   assert.equal(dialogInstance.role, "dialog");
+});
+
+test("collector selects newest Claude profile by fetchedAtMs and parses spend amount", async () => {
+  const { collector, api } = await harness();
+  const olderJson = JSON.stringify({
+    cachedUsageUtilization: {
+      fetchedAtMs: 1000,
+      utilization: {
+        extra_usage: { used_credits: 1000, monthly_limit: 10000, utilization: 10 },
+      },
+    },
+  });
+  const newerJson = JSON.stringify({
+    cachedUsageUtilization: {
+      fetchedAtMs: 2000,
+      utilization: {
+        extra_usage: { used_credits: 14494, monthly_limit: 17000, utilization: 85.25 },
+      },
+    },
+  });
+
+  api.onReadTextFile = async (path) => {
+    if (path.endsWith("/.claude-work/.claude.json")) return newerJson;
+    if (path.endsWith("/.claude.json")) return olderJson;
+    return null;
+  };
+
+  const claude = await collector.collectClaudeData();
+  assert.equal(claude.available, true);
+  assert.equal(claude.credit.used, "$144.94");
+  assert.equal(claude.credit.limit, "$170.00");
+  assert.equal(claude.credit.percent, 85);
+  assert.equal(claude.primaryPercent, 85);
 });

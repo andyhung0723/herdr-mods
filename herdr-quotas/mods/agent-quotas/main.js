@@ -140,7 +140,7 @@ export default class AgentQuotas extends View {
                   .text_color(claudeColor)
                   .child(
                     claude?.hasCredit
-                      ? `Credit: ${claude.credit.used}`
+                      ? `Credit: ${claude.credit.used} (${claude.credit.percent}%)`
                       : claude?.available
                       ? `Week: ${claude.week.percent}%`
                       : "Offline"
@@ -409,36 +409,57 @@ export default class AgentQuotas extends View {
                 )
               )
               // Dimension: credit (shown only if purchased / enabled)
-              .when(Boolean(claude?.hasCredit), (eEl) =>
-                eEl.child(
-                  h_flex()
+              .when(Boolean(claude?.hasCredit), (eEl) => {
+                const creditPercent = claude.credit.percent ?? 0;
+                const creditColor = getBarColor(t, creditPercent);
+                return eEl.child(
+                  v_flex()
                     .p(8)
+                    .gap(6)
                     .rounded(6)
                     .bg(t.background)
-                    .items_center()
-                    .justify_between()
                     .child(
                       h_flex()
-                        .gap(6)
                         .items_center()
-                        .child(div().text_size(11.5).font_semibold().text_color(t.accent).child("Credit Spend:"))
+                        .justify_between()
+                        .child(
+                          h_flex()
+                            .gap(6)
+                            .items_center()
+                            .child(div().text_size(11.5).font_semibold().text_color(t.accent).child("Extra Credit Spend:"))
+                            .child(
+                              div()
+                                .text_size(12)
+                                .font_medium()
+                                .text_color(t.foreground)
+                                .child(`${claude.credit.used} / ${claude.credit.limit}`)
+                            )
+                        )
                         .child(
                           div()
-                            .text_size(12)
+                            .text_size(11.5)
                             .font_medium()
-                            .text_color(t.foreground)
-                            .child(`${claude.credit.used} / ${claude.credit.limit}`)
+                            .text_color(creditColor)
+                            .child(`${creditPercent}% used`)
                         )
                     )
                     .child(
-                      div()
-                        .text_size(11.5)
-                        .font_medium()
-                        .text_color(claude.credit.percent >= 80 ? t.ansi1 : t.foreground)
-                        .child(`${claude.credit.percent}% utilized`)
+                      h_flex()
+                        .h(6)
+                        .w_full()
+                        .rounded(3)
+                        .bg(t.surface)
+                        .overflow_hidden()
+                        .child(
+                          div()
+                            .h_full()
+                            .w(`${Math.max(1, Math.min(100, creditPercent))}%`)
+                            .bg(creditColor)
+                            .rounded(3)
+                        )
                     )
-                )
-              )
+                );
+              })
           )
           // --- Card 2: Codex ---
           .child(
