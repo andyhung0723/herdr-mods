@@ -13,7 +13,7 @@ async function harness() {
     },
     cachedUsageUtilization: {
       utilization: {
-        five_hour: { utilization: 25, resets_at: null },
+        five_hour: { utilization: 15, resets_at: null },
         seven_day: { utilization: 60, resets_at: "2026-11-05T20:00:00Z" },
         extra_usage: {
           is_enabled: true,
@@ -27,7 +27,7 @@ async function harness() {
 
   const fakeCodexAuth = JSON.stringify({
     tokens: {
-      access_token: "header." + Buffer.from(JSON.stringify({ "https://api.openai.com/auth": { chatgpt_plan_type: "pro" } })).toString("base64") + ".sig",
+      access_token: "header." + Buffer.from(JSON.stringify({ "https://api.openai.com/auth": { chatgpt_plan_type: "prolite" } })).toString("base64") + ".sig",
     },
   });
 
@@ -38,14 +38,12 @@ async function harness() {
       if (path.includes(".claude")) return fakeClaudeJson;
       if (path.includes(".codex/auth.json")) return fakeCodexAuth;
       if (path.includes(".codex/config.toml")) return 'model = "gpt-5"';
-      if (path.includes("antigravity-cli/settings.json")) return '{"model":"Gemini 3.8 Flash"}';
       return null;
     },
     exec: async (cmd, args) => {
       events.push(["exec", cmd, args]);
-      return { code: 0, stdout: "1500000 12\n" };
+      return { code: 0, stdout: "1500000,12\n" };
     },
-    agents: () => [{ app: "antigravity", status: "working" }],
     theme: () => ({
       surface: "#181825",
       background: "#1e1e2e",
@@ -135,21 +133,28 @@ test("collector formats tokens and time strings correctly", async () => {
   assert.equal(collector.formatTimeRemaining(null), null);
 });
 
-test("collector parses Claude, Codex, and Antigravity metrics", async () => {
+test("collector parses Claude Code and Codex metrics with 5hr, week, and credit", async () => {
   const { collector } = await harness();
   const res = await collector.collectAllQuotas();
 
   assert.equal(res.claude.available, true);
+  assert.equal(res.claude.name, "Claude Code");
   assert.equal(res.claude.tier, "Team");
-  assert.equal(res.claude.sevenDay.percent, 60);
-  assert.equal(res.claude.extraUsage.used, "50.00");
+  assert.equal(res.claude.hasFiveHour, true);
+  assert.equal(res.claude.fiveHour.percent, 15);
+  assert.equal(res.claude.hasWeek, true);
+  assert.equal(res.claude.week.percent, 60);
+  assert.equal(res.claude.hasCredit, true);
+  assert.equal(res.claude.credit.used, "$50.00");
 
   assert.equal(res.codex.available, true);
-  assert.equal(res.codex.plan, "PRO");
-  assert.equal(res.codex.model, "gpt-5");
-
-  assert.equal(res.antigravity.available, true);
-  assert.equal(res.antigravity.model, "Gemini 3.8 Flash");
+  assert.equal(res.codex.name, "Codex");
+  assert.equal(res.codex.plan, "PROLITE");
+  assert.equal(res.codex.hasFiveHour, false);
+  assert.equal(res.codex.hasWeek, false);
+  assert.equal(res.codex.hasCredit, false);
+  assert.equal(res.codex.tokensToday, 1500000);
+  assert.equal(res.codex.turnsToday, 12);
 });
 
 test("AgentQuotas view initializes and switches between widget and dialog", async () => {

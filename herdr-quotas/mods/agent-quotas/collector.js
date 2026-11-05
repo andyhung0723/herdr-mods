@@ -1,5 +1,5 @@
-// Agent Quota Collector for Claude, Codex, and Antigravity
-import { home, readTextFile, exec, agents } from "herdr";
+// Agent Quota Collector for Claude Code and Codex
+import { home, readTextFile, exec } from "herdr";
 
 function decodeBase64(str) {
   try {
@@ -58,7 +58,7 @@ export async function collectClaudeData() {
     content = await readTextFile(`${h}/.claude/.claude.json`);
   }
   if (!content) {
-    return { name: "Claude", available: false, error: "Config not found" };
+    return { name: "Claude Code", available: false, error: "Config not found" };
   }
 
   try {
@@ -67,14 +67,16 @@ export async function collectClaudeData() {
     const oauth = data.oauthAccount ?? {};
 
     const fiveHour = Math.round(u.five_hour?.utilization ?? 0);
+    const fiveHourResetsAt = u.five_hour?.resets_at ?? null;
+
     const sevenDay = Math.round(u.seven_day?.utilization ?? 0);
     const sevenDayResetsAt = u.seven_day?.resets_at ?? null;
 
     const extra = u.extra_usage ?? {};
-    const extraEnabled = Boolean(extra.is_enabled);
-    const extraUsed = extra.used_credits ? (extra.used_credits / 100).toFixed(2) : "0.00";
-    const extraLimit = extra.monthly_limit ? (extra.monthly_limit / 100).toFixed(2) : "0.00";
-    const extraPercent = Math.round(extra.utilization ?? 0);
+    const hasCredit = Boolean(extra.is_enabled);
+    const creditUsed = extra.used_credits ? (extra.used_credits / 100).toFixed(2) : "0.00";
+    const creditLimit = extra.monthly_limit ? (extra.monthly_limit / 100).toFixed(2) : "0.00";
+    const creditPercent = Math.round(extra.utilization ?? 0);
 
     return {
       name: "Claude Code",
@@ -82,24 +84,25 @@ export async function collectClaudeData() {
       tier: oauth.seatTier ?? "Pro/Team",
       org: oauth.organizationName ?? "Personal",
       email: oauth.emailAddress ?? "",
-      primaryPercent: extraEnabled ? extraPercent : sevenDay,
-      primaryLabel: extraEnabled ? "Monthly Extra" : "7-Day Usage",
+      hasFiveHour: true,
       fiveHour: {
         percent: fiveHour,
-        resetsAt: u.five_hour?.resets_at,
-        timeRemaining: formatTimeRemaining(u.five_hour?.resets_at),
+        resetsAt: fiveHourResetsAt,
+        timeRemaining: formatTimeRemaining(fiveHourResetsAt),
       },
-      sevenDay: {
+      hasWeek: true,
+      week: {
         percent: sevenDay,
         resetsAt: sevenDayResetsAt,
         timeRemaining: formatTimeRemaining(sevenDayResetsAt),
       },
-      extraUsage: {
-        enabled: extraEnabled,
-        used: extraUsed,
-        limit: extraLimit,
-        percent: extraPercent,
+      hasCredit: hasCredit,
+      credit: {
+        used: `$${creditUsed}`,
+        limit: `$${creditLimit}`,
+        percent: creditPercent,
       },
+      primaryPercent: hasCredit ? creditPercent : sevenDay,
     };
   } catch (err) {
     return { name: "Claude Code", available: false, error: String(err) };
@@ -113,7 +116,7 @@ export async function collectCodexData() {
     return { name: "Codex", available: false, error: "Auth not found" };
   }
 
-  let plan = "Pro";
+  let plan = "PROLITE";
   try {
     const auth = JSON.parse(authContent);
     const jwt = decodeJwt(auth.tokens?.access_token);
@@ -137,15 +140,16 @@ export async function collectCodexData() {
   try {
     const dbPath = `${h}/.codex/state_5.sqlite`;
     const res = await exec("sqlite3", [
+      "-csv",
+      "-noheader",
       dbPath,
       "SELECT COALESCE(SUM(tokens_used), 0), COUNT(id) FROM threads WHERE updated_at >= unixepoch('now', 'start of day');",
     ]);
     if (res.code === 0 && res.stdout) {
-      const parts = res.stdout.replace(/[│╭─╮╞═╡├┼┤╰┴╯]/g, "").trim().split(/\s+/).filter(Boolean);
-      const nums = parts.map(Number).filter((n) => !isNaN(n));
-      if (nums.length >= 2) {
-        tokensToday = nums[0];
-        turnsToday = nums[1];
+      const parts = res.stdout.trim().split(",");
+      if (parts.length >= 2) {
+        tokensToday = Number(parts[0]) || 0;
+        turnsToday = Number(parts[1]) || 0;
       }
     }
   } catch {}
@@ -155,64 +159,23 @@ export async function collectCodexData() {
     available: true,
     plan: plan,
     model: model,
+    hasFiveHour: false,
+    hasWeek: false,
+    hasCredit: false,
     tokensToday: tokensToday,
     formattedTokens: formatTokenCount(tokensToday),
     turnsToday: turnsToday,
   };
 }
 
-export async function collectAntigravityData() {
-  const h = home();
-  let model = "Gemini 3.8 Flash";
-  try {
-    const cfg = await readTextFile(`${h}/.gemini/antigravity-cli/settings.json`);
-    if (cfg) {
-      const parsed = JSON.parse(cfg);
-      if (parsed.model) model = parsed.model;
-    }
-  } catch {}
-
-  let convsToday = 0;
-  let stepsToday = 0;
-  try {
-    const dbPath = `${h}/.gemini/antigravity-cli/conversation_summaries.db`;
-    const res = await exec("sqlite3", [
-      dbPath,
-      "SELECT COUNT(conversation_id), COALESCE(SUM(step_count), 0) FROM conversation_summaries WHERE date(last_modified_time) = date('now');",
-    ]);
-    if (res.code === 0 && res.stdout) {
-      const parts = res.stdout.replace(/[│╭─╮╞═╡├┼┤╰┴╯]/g, "").trim().split(/\s+/).filter(Boolean);
-      const nums = parts.map(Number).filter((n) => !isNaN(n));
-      if (nums.length >= 2) {
-        convsToday = nums[0];
-        stepsToday = nums[1];
-      }
-    }
-  } catch {}
-
-  // Check live agent status from Herdr
-  const liveAgent = agents().find((a) => a.app?.toLowerCase().includes("antigravity"));
-
-  return {
-    name: "Antigravity",
-    available: true,
-    model: model,
-    conversationsToday: convsToday,
-    stepsToday: stepsToday,
-    status: liveAgent?.status ?? "active",
-  };
-}
-
 export async function collectAllQuotas() {
-  const [claude, codex, antigravity] = await Promise.all([
+  const [claude, codex] = await Promise.all([
     collectClaudeData(),
     collectCodexData(),
-    collectAntigravityData(),
   ]);
   return {
     claude,
     codex,
-    antigravity,
     updatedAt: new Date(),
   };
 }
