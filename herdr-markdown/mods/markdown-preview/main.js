@@ -1,7 +1,7 @@
 // Markdown Preview mod for Herdr
 // Dual-column layout: Left sidebar for file list & search, right area for rich preview.
 // Supports Pane split, Overlay / Dialog popup, and auto live-refreshing.
-import { View, div } from "gpui-kit";
+import { View, div, svg } from "gpui-kit";
 import { v_flex, h_flex, TextView, InputState, Input } from "gpui-base";
 import {
   theme, props, closeOverlay, run, readTextFile, exec,
@@ -427,14 +427,17 @@ export default class MarkdownPreview extends View {
             .on_click((_e, cx) => this.toggleFolder(node.path, cx))
             // Arrow indicator
             .child(
-              div()
-                .text_size(9)
+              svg(`mods/markdown-preview/icons/chevron-${isCollapsed ? "right" : "down"}.svg`)
+                .size(10)
+                .flex_none()
                 .text_color(t.dim)
-                .w(10)
-                .child(isCollapsed ? "▸" : "▾")
             )
             // Folder icon
-            .child(div().text_size(12).child(isCollapsed ? "📁" : "📂"))
+            .child(
+              svg(`mods/markdown-preview/icons/${isCollapsed ? "folder" : "folder-open"}.svg`)
+                .size(14)
+                .flex_none()
+            )
             // Folder name
             .child(
               div()
@@ -469,8 +472,18 @@ export default class MarkdownPreview extends View {
                 this.loadFile(node.path, cx, true);
               }
             })
-            // File icon
-            .child(div().text_size(11).w(10).child("📄"))
+            // Spacer matching folder arrow width
+            .child(div().w(10).flex_none())
+            // File icon (Material Markdown icon if .md, else file)
+            .child(
+              svg(
+                `mods/markdown-preview/icons/${
+                  node.name.toLowerCase().endsWith(".md") ? "markdown" : "file"
+                }.svg`
+              )
+                .size(14)
+                .flex_none()
+            )
             // File name
             .child(
               div()
