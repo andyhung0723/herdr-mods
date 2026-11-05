@@ -15,7 +15,7 @@ import {
   getNextWallpaper,
 } from "./logic.js";
 
-const DEFAULT_INTERVAL_MS = 10000;
+const DEFAULT_INTERVAL_MS = 30000;
 const SHARED_KEY_PAUSED = "wallpaper-carousel.paused";
 const SHARED_KEY_CURRENT = "wallpaper-carousel.current";
 

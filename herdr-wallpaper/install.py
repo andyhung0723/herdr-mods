@@ -42,8 +42,8 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument(
         "--interval",
         type=int,
-        default=10000,
-        help="Rotation interval in milliseconds (default: 10000ms)",
+        default=30000,
+        help="Rotation interval in milliseconds (default: 30000ms)",
     )
     parser.add_argument(
         "--dry-run",
