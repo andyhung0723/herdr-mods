@@ -4,7 +4,7 @@
 import { View, div } from "gpui-kit";
 import { v_flex, h_flex, TextView, InputState, Input } from "gpui-base";
 import {
-  theme, props, closeOverlay, openOverlay, run, readTextFile, exec,
+  theme, props, closeOverlay, run, readTextFile, exec,
   spaces, focused, panes, shared, setShared
 } from "herdr";
 
@@ -142,8 +142,6 @@ export default class MarkdownPreview extends View {
     this.filter = "";
     this.currentCwd = "";
 
-    // Size mode state (standard = 960x680, large = 85%, full = 96%)
-    this.sizeMode = p.sizeMode || (typeof shared === "function" ? shared("markdown-preview.size-mode") : null) || "large";
     this.collapsedFolders = new Set(Array.isArray(p.collapsedFolders) ? p.collapsedFolders : []);
 
     // Search filter input
@@ -172,70 +170,6 @@ export default class MarkdownPreview extends View {
       this.collapsedFolders.delete(folderPath);
     } else {
       this.collapsedFolders.add(folderPath);
-    }
-    cx.notify();
-  }
-
-  renderSizeBtn(mode, label, t, cx) {
-    const active = this.sizeMode === mode;
-    return h_flex()
-      .px(6)
-      .h(20)
-      .rounded(3)
-      .items_center()
-      .justify_center()
-      .cursor_pointer()
-      .when(active, (el) => el.bg(t.raised))
-      .hover((s) => !active && s.bg(t.hover))
-      .on_click((_e, cx) => this.switchSize(mode, cx))
-      .child(
-        div()
-          .text_size(11)
-          .font_semibold()
-          .text_color(active ? t.foreground : t.muted)
-          .child(label)
-      );
-  }
-
-  switchSize(mode, cx) {
-    if (this.sizeMode === mode && this.overlayId) return;
-    this.sizeMode = mode;
-    try {
-      setShared("markdown-preview.size-mode", mode);
-    } catch {}
-
-    if (this.overlayId) {
-      let width = 0.85;
-      let height = 0.85;
-      if (mode === "standard") {
-        width = 960;
-        height = 680;
-      } else if (mode === "full") {
-        width = 0.96;
-        height = 0.95;
-      }
-
-      const currentOverlay = this.overlayId;
-      try {
-        const newOverlay = openOverlay({
-          mod: "markdown-preview",
-          kind: "dialog",
-          width,
-          height,
-          props: {
-            overlay: currentOverlay,
-            file: this.filePath || this.initialFile || null,
-            history: this.history,
-            showSidebar: this.showSidebar,
-            sizeMode: mode,
-            collapsedFolders: Array.from(this.collapsedFolders),
-          },
-        });
-        closeOverlay(currentOverlay);
-        this.overlayId = newOverlay;
-      } catch (err) {
-        console.error("Failed to switch overlay size:", err);
-      }
     }
     cx.notify();
   }
@@ -678,23 +612,6 @@ export default class MarkdownPreview extends View {
                   this.openInSplit(cx);
                 })
                 .child(div().text_size(12).text_color(t.muted).child("⧉ Split"))
-            )
-          )
-          // Size switcher buttons (in Overlay mode)
-          .when(isOverlay, (el) =>
-            el.child(
-              h_flex()
-                .h(24)
-                .rounded(4)
-                .bg(t.background)
-                .border_1()
-                .border_color(t.border)
-                .px(2)
-                .gap(2)
-                .items_center()
-                .child(this.renderSizeBtn("standard", "960px", t, cx))
-                .child(this.renderSizeBtn("large", "85%", t, cx))
-                .child(this.renderSizeBtn("full", "全螢幕", t, cx))
             )
           )
           // Close button (if overlay)

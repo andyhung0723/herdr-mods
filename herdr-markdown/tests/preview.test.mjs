@@ -261,33 +261,12 @@ test("buildFileTree builds hierarchical tree with folders first and README on to
   assert.equal(apiChildren[1].name, "endpoints.md");
 });
 
-test("markdown-preview dialog size switching (standard, full, large)", async () => {
-  const { instance, cx, sharedMap, events } = await harness({ overlay: "test-overlay" });
+test("markdown-preview folder collapsing toggle and overlay state", async () => {
+  const { instance, cx } = await harness({ overlay: "test-overlay" });
   instance.init({ overlay: "test-overlay" }, cx);
   await new Promise((r) => setImmediate(r));
 
-  assert.equal(instance.sizeMode, "large");
-
-  // Switch to standard (960x680)
-  instance.switchSize("standard", cx);
-  assert.equal(instance.sizeMode, "standard");
-  assert.equal(sharedMap.get("markdown-preview.size-mode"), "standard");
-  const open1 = events.find((e) => e[0] === "openOverlay" && e[1].width === 960);
-  assert(Boolean(open1), "should open overlay with 960 width");
-  assert.equal(open1[1].height, 680);
-
-  // Switch to full (96% x 95%)
-  instance.switchSize("full", cx);
-  assert.equal(instance.sizeMode, "full");
-  assert.equal(sharedMap.get("markdown-preview.size-mode"), "full");
-  const open2 = events.find((e) => e[0] === "openOverlay" && e[1].width === 0.96);
-  assert(Boolean(open2), "should open overlay with 0.96 width");
-  assert.equal(open2[1].height, 0.95);
-
-  // Switch back to large (85%)
-  instance.switchSize("large", cx);
-  assert.equal(instance.sizeMode, "large");
-  assert.equal(sharedMap.get("markdown-preview.size-mode"), "large");
+  assert.equal(instance.overlayId, "test-overlay");
 
   // Folder collapse toggle
   assert.equal(instance.collapsedFolders.has("docs"), false);
