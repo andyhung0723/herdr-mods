@@ -6,7 +6,8 @@ import { View, div, svg } from "gpui-kit";
 import { v_flex, h_flex, Editor, EditorState, TextView, InputState, Input } from "gpui-base";
 import {
   spaces, panes, focused, exec, readTextFile, watchFolder,
-  theme, settings, window, run, notify
+  theme, settings, window, run, notify, openOverlay, closeOverlay,
+  props, shared, setShared
 } from "herdr";
 import {
   cleanRelativePath, generateCopyName, createFile, createFolder,
@@ -79,27 +80,52 @@ function resolveRelativePath(currentFilePath, linkUrl) {
 }
 
 export default class EnhancedFiles extends View {
-  init(_props, cx) {
+  init(initialProps, cx) {
+    this.options = initialProps ?? props() ?? {};
+    this.handle = cx.focus_handle();
+
+    // If instantiated as a popup context menu overlay
+    if (this.options.role === "context-menu") {
+      this.handle.focus();
+      return;
+    }
+
     this.saved = new Map();
     this.entries = new Map();
     this.folders = new Set();
     this.pending = new Set();
     this.marks = {};
-    this.viewMode = "preview"; // "preview" | "code"
+    this.viewMode = "preview";
     this.isMarkdown = false;
     this.rawText = null;
 
-    // Interactive state for VS Code Explorer features
     this.selectedPath = null;
-    this.clipboard = null; // { action: "cut"|"copy", path, isDir, name }
-    this.contextMenu = null; // { path, isDir, name, x, y }
-    this.creating = null; // { type: "file"|"folder", parentDir }
+    this.creating = null;
     this.createInput = null;
-    this.renaming = null; // { path, isDir, originalName }
+    this.renaming = null;
     this.renameInput = null;
-    this.confirmDelete = null; // { path, isDir, name }
+    this.confirmDelete = null;
+    this.lastRefreshedAt = 0;
 
-    this.handle = cx.focus_handle();
+    // Listen for actions dispatched from popup overlay
+    cx.timer.every(250, (timerCx) => {
+      const act = shared("files.action");
+      if (act) {
+        setShared("files.action", null);
+        if (act.type === "rename") {
+          this.startRename(act.path, act.isDir, timerCx);
+        } else if (act.type === "delete") {
+          this.promptDelete(act.path, act.isDir, timerCx);
+        } else if (act.type === "create") {
+          this.startCreate(act.itemType, act.parentDir, timerCx);
+        }
+      }
+      const ref = shared("files.refresh");
+      if (ref && ref !== this.lastRefreshedAt) {
+        this.lastRefreshedAt = ref;
+        this.refresh(timerCx);
+      }
+    });
 
     this.refresh(cx);
     cx.timer.every(10000, cx => this.refresh(cx));
@@ -151,7 +177,6 @@ export default class EnhancedFiles extends View {
       this.error = null;
       this.limited = false;
 
-      // Stale-While-Revalidate: Instant render from cache
       if (saved && saved.entries && saved.entries.size > 0) {
         this.entries = new Map(saved.entries);
         this.folders = new Set(saved.folders);
@@ -287,8 +312,23 @@ export default class EnhancedFiles extends View {
 
   // --- VS Code File Operations ---
 
+  openContextMenu(path, isDir, name, cx) {
+    openOverlay({
+      mod: "enhanced-files",
+      kind: "popup",
+      width: 210,
+      props: {
+        role: "context-menu",
+        path,
+        isDir,
+        name,
+        root: this.root,
+        on: this.on,
+      },
+    });
+  }
+
   startCreate(type, parentDir, cx) {
-    this.contextMenu = null;
     this.renaming = null;
     this.confirmDelete = null;
     const cleanParent = parentDir ? cleanRelativePath(parentDir) : "";
@@ -336,7 +376,6 @@ export default class EnhancedFiles extends View {
   }
 
   startRename(path, isDir, cx) {
-    this.contextMenu = null;
     this.creating = null;
     this.confirmDelete = null;
     const originalName = path.split("/").pop();
@@ -380,7 +419,6 @@ export default class EnhancedFiles extends View {
   }
 
   promptDelete(path, isDir, cx) {
-    this.contextMenu = null;
     this.creating = null;
     this.renaming = null;
     const name = path.split("/").pop();
@@ -404,74 +442,6 @@ export default class EnhancedFiles extends View {
     } finally {
       cx.notify();
     }
-  }
-
-  cutItem(path, isDir, cx) {
-    this.contextMenu = null;
-    const name = path.split("/").pop();
-    this.clipboard = { action: "cut", path, isDir, name };
-    notify({ title: "已剪下", body: name, level: "info" });
-    cx.notify();
-  }
-
-  copyItem(path, isDir, cx) {
-    this.contextMenu = null;
-    const name = path.split("/").pop();
-    this.clipboard = { action: "copy", path, isDir, name };
-    notify({ title: "已複製", body: name, level: "info" });
-    cx.notify();
-  }
-
-  async pasteItem(targetFolder, cx) {
-    this.contextMenu = null;
-    if (!this.clipboard) return;
-    const { action, path: srcPath, name } = this.clipboard;
-    const cleanTarget = targetFolder ? cleanRelativePath(targetFolder) : "";
-    let dstPath = cleanTarget ? `${cleanTarget}/${name}` : name;
-
-    try {
-      if (action === "copy") {
-        if (cleanTarget === (srcPath.includes("/") ? srcPath.slice(0, srcPath.lastIndexOf("/")) : "")) {
-          // Duplicating in same directory
-          const existing = (this.entries.get(cleanTarget) ?? []).map(e => e.name);
-          const copyName = generateCopyName(existing, name);
-          dstPath = cleanTarget ? `${cleanTarget}/${copyName}` : copyName;
-        }
-        await copyPath(this.root, srcPath, dstPath, exec, { on: this.on });
-        notify({ title: "複製完成", body: dstPath, level: "success" });
-      } else if (action === "cut") {
-        await movePath(this.root, srcPath, dstPath, exec, { on: this.on });
-        this.clipboard = null; // Clear after move
-        notify({ title: "搬移完成", body: dstPath, level: "success" });
-      }
-      if (cleanTarget && !this.folders.has(cleanTarget)) {
-        this.folders.add(cleanTarget);
-      }
-      this.refresh(cx);
-    } catch (err) {
-      notify({ title: "貼上失敗", body: String(err), level: "error" });
-    } finally {
-      cx.notify();
-    }
-  }
-
-  copyPathToClipboard(path, absolute, cx) {
-    this.contextMenu = null;
-    const text = absolute ? `${this.root}/${path}` : path;
-    try {
-      cx.write_to_clipboard(text);
-      notify({ title: "已複製路徑到剪貼簿", body: text, level: "info" });
-    } catch {
-      exec("sh", ["-c", 'printf "%s" "$1" | pbcopy', "sh", text]).catch(() => null);
-      notify({ title: "已複製路徑到剪貼簿", body: text, level: "info" });
-    }
-  }
-
-  async revealPathFinder(path, cx) {
-    this.contextMenu = null;
-    const full = path ? `${this.root}/${path}` : this.root;
-    notify({ title: "正在 Path Finder 中開啟…", body: full, level: "info" });
-    await revealInPathFinder(full, exec, { on: this.on });
   }
 
   splitMarkdownPane() {
@@ -544,7 +514,7 @@ export default class EnhancedFiles extends View {
       const open = this.folders.has(path);
       const mark = this.marks[`${this.root}/${path}`];
       const isSelected = this.selectedPath === path;
-      const isCut = this.clipboard?.action === "cut" && this.clipboard?.path === path;
+      const isCut = shared("files.clipboard")?.action === "cut" && shared("files.clipboard")?.path === path;
       const isRenaming = this.renaming?.path === path;
 
       const row = h_flex()
@@ -562,25 +532,13 @@ export default class EnhancedFiles extends View {
         .when(isCut, el => el.opacity(0.45))
         .on_click((_e, cx) => {
           this.selectedPath = path;
-          this.contextMenu = null;
           if (entry.dir) this.toggle(path, cx);
           else this.show(path, cx);
         })
-        .on_mouse_down("right", (e, cx) => {
-          try {
-            cx.stop_propagation();
-            this.selectedPath = path;
-            this.contextMenu = {
-              path,
-              isDir: entry.dir,
-              name: entry.name,
-              x: e.position?.x ?? 40,
-              y: e.position?.y ?? 100,
-            };
-            cx.notify();
-          } catch (err) {
-            notify({ title: "選單開啟異常", body: String(err), level: "error" });
-          }
+        .on_mouse_down("right", (_e, cx) => {
+          cx.stop_propagation();
+          this.selectedPath = path;
+          this.openContextMenu(path, entry.dir, entry.name, cx);
         })
         .child(
           entry.dir
@@ -626,84 +584,137 @@ export default class EnhancedFiles extends View {
     return out;
   }
 
-  renderContextMenu(t, cx) {
-    if (!this.contextMenu) return null;
-    const { path, isDir, name } = this.contextMenu;
-    const parentFolder = isDir ? (path || "") : (path.includes("/") ? path.slice(0, path.lastIndexOf("/")) : "");
+  // --- Render Context Menu as a native Popup Overlay ---
+
+  renderContextMenuPopup(t, cx) {
+    const p = props() ?? {};
+    const path = p.path ?? "";
+    const isDir = Boolean(p.isDir);
+    const name = p.name ?? "root";
+    const root = p.root || this.root;
+    const on = p.on || this.on;
+    const parentFolder = isDir ? path : (path.includes("/") ? path.slice(0, path.lastIndexOf("/")) : "");
+    const clipboard = shared("files.clipboard");
 
     const item = (iconName, label, shortcut, action, danger = false, disabled = false) =>
       h_flex()
-        .h(26)
+        .h(28)
         .px(8)
-        .gap(8)
+        .gap(9)
         .items_center()
-        .rounded(4)
+        .rounded(6)
         .cursor_pointer()
         .when(disabled, el => el.opacity(0.35))
         .when(!disabled, el => el.hover(s => s.bg(t.hover)))
         .on_click((_e, cx) => {
           if (!disabled) {
-            cx.stop_propagation();
+            closeOverlay(p.overlay);
             action();
           }
         })
         .child(svg(`mods/enhanced-files/${iconName}.svg`).size(13).flex_none().text_color(danger ? t.ansi1 : t.dim))
-        .child(div().flex_1().text_size(12).text_color(danger ? t.ansi1 : t.foreground).child(label))
+        .child(div().flex_1().text_size(12.5).text_color(danger ? t.ansi1 : t.foreground).child(label))
         .when(Boolean(shortcut), el => el.child(div().text_size(10.5).text_color(t.dim).child(shortcut)));
 
     const divider = () => div().h(1).my(3).bg(t.border);
 
     return v_flex()
-      .id("files-context-menu")
-      .absolute()
-      .top(36)
-      .left(12)
-      .w(210)
+      .id("files-popup-menu")
+      .track_focus(this.handle)
+      .w_full()
+      .min_h(0)
       .p(4)
       .rounded(8)
       .border_1()
       .border_color(t.border)
       .bg(t.popover)
-      .on_mouse_down_out((_e, cx) => {
-        this.contextMenu = null;
-        cx.notify();
+      .on_key_down((e, cx) => {
+        if (e.key === "escape") {
+          closeOverlay(p.overlay);
+        }
       })
-      .child(item("file-plus", "New File…", "", () => this.startCreate("file", parentFolder, cx)))
-      .child(item("folder-plus", "New Folder…", "", () => this.startCreate("folder", parentFolder, cx)))
+      .child(item("file-plus", "New File…", "", () => {
+        setShared("files.action", { type: "create", itemType: "file", parentDir: parentFolder });
+      }))
+      .child(item("folder-plus", "New Folder…", "", () => {
+        setShared("files.action", { type: "create", itemType: "folder", parentDir: parentFolder });
+      }))
       .child(divider())
       .when(Boolean(path), el =>
         el
-          .child(item("cut", "Cut", "⌘X", () => this.cutItem(path, isDir, cx)))
-          .child(item("copy", "Copy", "⌘C", () => this.copyItem(path, isDir, cx)))
+          .child(item("cut", "Cut", "⌘X", () => {
+            setShared("files.clipboard", { action: "cut", path, isDir, name });
+            notify({ title: "已剪下", body: name, level: "info" });
+          }))
+          .child(item("copy", "Copy", "⌘C", () => {
+            setShared("files.clipboard", { action: "copy", path, isDir, name });
+            notify({ title: "已複製", body: name, level: "info" });
+          }))
       )
       .child(
-        item("paste", "Paste", "⌘V", () => this.pasteItem(parentFolder, cx), false, !this.clipboard)
+        item("paste", "Paste", "⌘V", async () => {
+          if (!clipboard) return;
+          const { action, path: srcPath, name: clipName } = clipboard;
+          const cleanTarget = parentFolder ? cleanRelativePath(parentFolder) : "";
+          let dstPath = cleanTarget ? `${cleanTarget}/${clipName}` : clipName;
+          try {
+            if (action === "copy") {
+              await copyPath(root, srcPath, dstPath, exec, { on });
+              notify({ title: "複製完成", body: dstPath, level: "success" });
+            } else if (action === "cut") {
+              await movePath(root, srcPath, dstPath, exec, { on });
+              setShared("files.clipboard", null);
+              notify({ title: "搬移完成", body: dstPath, level: "success" });
+            }
+            setShared("files.refresh", Date.now());
+          } catch (err) {
+            notify({ title: "貼上失敗", body: String(err), level: "error" });
+          }
+        }, false, !clipboard)
       )
       .child(divider())
       .when(Boolean(path), el =>
         el
-          .child(item("copy", "Copy Path", "", () => this.copyPathToClipboard(path, true, cx)))
-          .child(item("copy", "Copy Relative Path", "", () => this.copyPathToClipboard(path, false, cx)))
+          .child(item("copy", "Copy Path", "", () => {
+            const full = `${root}/${path}`;
+            try { cx.write_to_clipboard(full); } catch { exec("sh", ["-c", 'printf "%s" "$1" | pbcopy', "sh", full]).catch(() => null); }
+            notify({ title: "已複製路徑到剪貼簿", body: full, level: "info" });
+          }))
+          .child(item("copy", "Copy Relative Path", "", () => {
+            try { cx.write_to_clipboard(path); } catch { exec("sh", ["-c", 'printf "%s" "$1" | pbcopy', "sh", path]).catch(() => null); }
+            notify({ title: "已複製路徑到剪貼簿", body: path, level: "info" });
+          }))
           .child(divider())
-          .child(item("edit", "Rename…", "F2", () => this.startRename(path, isDir, cx)))
-          .child(item("trash", "Delete", "⌫", () => this.promptDelete(path, isDir, cx), true))
+          .child(item("edit", "Rename…", "F2", () => {
+            setShared("files.action", { type: "rename", path, isDir, name });
+          }))
+          .child(item("trash", "Delete", "⌫", () => {
+            setShared("files.action", { type: "delete", path, isDir, name });
+          }, true))
           .child(divider())
       )
-      .child(item("pathfinder", "Reveal in Path Finder", "", () => this.revealPathFinder(path, cx)))
-      .child(divider())
-      .child(item("refresh", "Close Menu", "Esc", () => { this.contextMenu = null; cx.notify(); }));
+      .child(item("pathfinder", "Reveal in Path Finder", "", async () => {
+        const full = path ? `${root}/${path}` : root;
+        notify({ title: "正在 Path Finder 中開啟…", body: full, level: "info" });
+        await revealInPathFinder(full, exec, { on });
+      }));
   }
 
   render(cx) {
-    if (key() !== this.context?.key) this.refresh(cx);
     const t = theme();
+
+    // If this instance is running as a popup context menu overlay
+    if (this.options?.role === "context-menu") {
+      return this.renderContextMenuPopup(t, cx);
+    }
+
+    if (key() !== this.context?.key) this.refresh(cx);
 
     return v_flex()
       .id("enhanced-files")
       .track_focus(this.handle)
       .on_key_down((e, cx) => {
         if (e.key === "escape") {
-          this.contextMenu = null;
           this.creating = null;
           this.renaming = null;
           this.confirmDelete = null;
@@ -931,19 +942,8 @@ export default class EnhancedFiles extends View {
             .min_h(0)
             .overflow_y_scrollbar()
             .p(6)
-            .on_mouse_down("right", (e, cx) => {
-              try {
-                this.contextMenu = {
-                  path: null,
-                  isDir: true,
-                  name: "root",
-                  x: e.position?.x ?? 40,
-                  y: e.position?.y ?? 100,
-                };
-                cx.notify();
-              } catch (err) {
-                notify({ title: "選單開啟異常", body: String(err), level: "error" });
-              }
+            .on_mouse_down("right", (_e, cx) => {
+              this.openContextMenu("", true, "root", cx);
             })
             .children(this.rows("", 0, [], t, cx))
             .when(Boolean(this.error) || !this.entries.get("")?.length, el =>
@@ -958,7 +958,6 @@ export default class EnhancedFiles extends View {
             .when(this.limited, el =>
               el.child(div().p(8).text_size(11).text_color(t.dim).child("File list limited to 500 entries per folder and 5,000 total"))
             )
-            .when(Boolean(this.contextMenu), el => el.child(this.renderContextMenu(t, cx)))
         )
       )
       // File Preview
