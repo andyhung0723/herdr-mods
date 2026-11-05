@@ -1,6 +1,6 @@
 // Agent Quotas mod for Herdr
 // Dual-mode: Compact Sidebar Widget or Detailed Popup Dialog for Claude Code and Codex.
-import { View, div, image } from "gpui-kit";
+import { View, div, image, svg } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
 import {
   theme, props, closeOverlay, openOverlay,
@@ -108,7 +108,7 @@ export default class AgentQuotas extends View {
             h_flex()
               .gap(6)
               .items_center()
-              .child(image("custom-icons/claude.svg").w(14).h(14).flex_none())
+              .child(svg("mods/agent-quotas/gauge.svg").size(14).flex_none().text_color(t.accent))
               .child(div().font_semibold().text_size(11.5).text_color(t.foreground).child("Agent Quotas"))
           )
           .child(
@@ -248,7 +248,7 @@ export default class AgentQuotas extends View {
           .bg(t.surface)
           .border_b(1)
           .border_color(t.border)
-          .child(image("custom-icons/claude.svg").w(20).h(20).flex_none())
+          .child(svg("mods/agent-quotas/gauge.svg").size(19).flex_none().text_color(t.accent))
           .child(
             div()
               .font_semibold()
