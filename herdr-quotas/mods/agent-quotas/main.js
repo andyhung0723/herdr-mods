@@ -84,6 +84,9 @@ export default class AgentQuotas extends View {
     const claudePercent = claude?.primaryPercent ?? 0;
     const claudeColor = getBarColor(t, claudePercent);
 
+    const codexPercent = codex?.primaryPercent ?? 0;
+    const codexColor = getBarColor(t, codexPercent);
+
     return v_flex()
       .id("agent-quotas-widget")
       .size_full()
@@ -163,21 +166,50 @@ export default class AgentQuotas extends View {
       )
       // Row 2: Codex
       .child(
-        h_flex()
-          .items_center()
-          .justify_between()
+        v_flex()
+          .gap(2)
           .child(
             h_flex()
-              .gap(4)
               .items_center()
-              .child(div().w(6).h(6).rounded(3).bg("#10a37f"))
-              .child(div().text_size(11).font_medium().text_color(t.foreground).child(`Codex (${codex?.plan || "PRO"})`))
+              .justify_between()
+              .child(
+                h_flex()
+                  .gap(4)
+                  .items_center()
+                  .child(div().w(6).h(6).rounded(3).bg("#10a37f"))
+                  .child(div().text_size(11).font_medium().text_color(t.foreground).child(`Codex (${codex?.plan || "PROLITE"})`))
+              )
+              .child(
+                div()
+                  .text_size(10.5)
+                  .font_medium()
+                  .text_color(codex?.hasWeek ? codexColor : t.muted)
+                  .child(
+                    codex?.hasWeek
+                      ? `Week: ${codex.week.percent}%`
+                      : codex?.formattedTokens
+                      ? `${codex.formattedTokens} tok`
+                      : "-"
+                  )
+              )
           )
-          .child(
-            div()
-              .text_size(10.5)
-              .text_color(t.muted)
-              .child(codex?.formattedTokens ? `${codex.formattedTokens} tok` : "-")
+          // Progress bar track if hasWeek
+          .when(Boolean(codex?.hasWeek), (el) =>
+            el.child(
+              h_flex()
+                .h(4)
+                .w_full()
+                .rounded(2)
+                .bg(t.background)
+                .overflow_hidden()
+                .child(
+                  div()
+                    .h_full()
+                    .w(`${Math.max(2, Math.min(100, codexPercent))}%`)
+                    .bg(codexColor)
+                    .rounded(2)
+                )
+            )
           )
       );
   }
@@ -445,7 +477,83 @@ export default class AgentQuotas extends View {
                       .child(`Model: ${codex?.model || "GPT-5"}`)
                   )
               )
-              // Metrics line (Codex has no 5hr or credit, so only token and turn metrics are displayed)
+              // Week Quota line (if hasWeek)
+              .when(Boolean(codex?.hasWeek), (wEl) =>
+                wEl.child(
+                  v_flex()
+                    .gap(4)
+                    .child(
+                      h_flex()
+                        .items_center()
+                        .justify_between()
+                        .child(
+                          h_flex()
+                            .gap(6)
+                            .items_center()
+                            .child(div().text_size(12).font_medium().text_color(t.foreground).child("7-Day Rolling Usage"))
+                            .child(
+                              div()
+                                .text_size(11)
+                                .text_color(t.dim)
+                                .child(codex.week.timeRemaining ? `(resets ${codex.week.timeRemaining})` : "")
+                            )
+                        )
+                        .child(
+                          div()
+                            .text_size(12)
+                            .font_semibold()
+                            .text_color(getBarColor(t, codex.week.percent))
+                            .child(`${codex.week.percent}%`)
+                        )
+                    )
+                    .child(
+                      h_flex()
+                        .h(6)
+                        .w_full()
+                        .rounded(3)
+                        .bg(t.background)
+                        .overflow_hidden()
+                        .child(
+                          div()
+                            .h_full()
+                            .w(`${Math.max(2, Math.min(100, codex.week.percent))}%`)
+                            .bg(getBarColor(t, codex.week.percent))
+                            .rounded(3)
+                        )
+                    )
+                )
+              )
+              // Reset credits banner (if available)
+              .when(Boolean(codex?.resetCredits && codex.resetCredits > 0), (rEl) =>
+                rEl.child(
+                  h_flex()
+                    .p(8)
+                    .rounded(6)
+                    .bg(t.background)
+                    .items_center()
+                    .justify_between()
+                    .child(
+                      h_flex()
+                        .gap(6)
+                        .items_center()
+                        .child(div().text_size(11.5).font_semibold().text_color(t.ansi2).child("✨ Free Resets:"))
+                        .child(
+                          div()
+                            .text_size(12)
+                            .font_medium()
+                            .text_color(t.foreground)
+                            .child(`${codex.resetCredits} available`)
+                        )
+                    )
+                    .child(
+                      div()
+                        .text_size(11)
+                        .text_color(t.dim)
+                        .child("Full quota reset granted")
+                    )
+                )
+              )
+              // Metrics line
               .child(
                 h_flex()
                   .gap(10)

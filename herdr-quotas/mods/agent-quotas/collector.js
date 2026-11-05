@@ -31,14 +31,25 @@ function decodeJwt(token) {
   }
 }
 
-export function formatTimeRemaining(isoDateString) {
-  if (!isoDateString) return null;
-  const target = new Date(isoDateString).getTime();
+export function formatTimeRemaining(isoOrTimestamp) {
+  if (!isoOrTimestamp) return null;
+  const target =
+    typeof isoOrTimestamp === "number"
+      ? (isoOrTimestamp < 1e11 ? isoOrTimestamp * 1000 : isoOrTimestamp)
+      : !isNaN(Number(isoOrTimestamp)) && String(isoOrTimestamp).length <= 10
+      ? Number(isoOrTimestamp) * 1000
+      : new Date(isoOrTimestamp).getTime();
+
   const now = Date.now();
   const diffMs = target - now;
   if (diffMs <= 0) return "Resets soon";
   const hours = Math.floor(diffMs / (1000 * 60 * 60));
   const mins = Math.floor((diffMs % (1000 * 60 * 60)) / (1000 * 60));
+  if (hours >= 24) {
+    const days = Math.floor(hours / 24);
+    const remHours = hours % 24;
+    return `in ${days}d ${remHours}h`;
+  }
   if (hours > 0) return `in ${hours}h ${mins}m`;
   return `in ${mins}m`;
 }
@@ -154,17 +165,48 @@ export async function collectCodexData() {
     }
   } catch {}
 
+  // Fetch real-time rate limits (7-day window & reset credits)
+  let weekPercent = 0;
+  let weekResetsAt = null;
+  let hasWeek = false;
+  let resetCredits = 0;
+
+  try {
+    let scriptPath = `${h}/.config/herdr-app/mods/agent-quotas/codex_limits.py`;
+    const exists = await readTextFile(scriptPath);
+    if (!exists) {
+      scriptPath = `${h}/Workspace/side-project/herdr-customized/herdr-quotas/mods/agent-quotas/codex_limits.py`;
+    }
+    const res = await exec("python3", [scriptPath]);
+    if (res.code === 0 && res.stdout) {
+      const parsed = JSON.parse(res.stdout.trim());
+      if (parsed && typeof parsed.usedPercent === "number") {
+        hasWeek = true;
+        weekPercent = Math.round(parsed.usedPercent);
+        weekResetsAt = parsed.resetsAt;
+        resetCredits = parsed.resetCredits || 0;
+      }
+    }
+  } catch {}
+
   return {
     name: "Codex",
     available: true,
     plan: plan,
     model: model,
     hasFiveHour: false,
-    hasWeek: false,
+    hasWeek: hasWeek,
+    week: {
+      percent: weekPercent,
+      resetsAt: weekResetsAt,
+      timeRemaining: formatTimeRemaining(weekResetsAt),
+    },
+    resetCredits: resetCredits,
     hasCredit: false,
     tokensToday: tokensToday,
     formattedTokens: formatTokenCount(tokensToday),
     turnsToday: turnsToday,
+    primaryPercent: hasWeek ? weekPercent : 0,
   };
 }
 

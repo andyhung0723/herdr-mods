@@ -42,6 +42,17 @@ async function harness() {
     },
     exec: async (cmd, args) => {
       events.push(["exec", cmd, args]);
+      if (cmd === "python3") {
+        return {
+          code: 0,
+          stdout: JSON.stringify({
+            usedPercent: 54,
+            resetsAt: 1794277917,
+            windowDurationMins: 10080,
+            resetCredits: 2,
+          }),
+        };
+      }
       return { code: 0, stdout: "1500000,12\n" };
     },
     theme: () => ({
@@ -151,7 +162,9 @@ test("collector parses Claude Code and Codex metrics with 5hr, week, and credit"
   assert.equal(res.codex.name, "Codex");
   assert.equal(res.codex.plan, "PROLITE");
   assert.equal(res.codex.hasFiveHour, false);
-  assert.equal(res.codex.hasWeek, false);
+  assert.equal(res.codex.hasWeek, true);
+  assert.equal(res.codex.week.percent, 54);
+  assert.equal(res.codex.resetCredits, 2);
   assert.equal(res.codex.hasCredit, false);
   assert.equal(res.codex.tokensToday, 1500000);
   assert.equal(res.codex.turnsToday, 12);
