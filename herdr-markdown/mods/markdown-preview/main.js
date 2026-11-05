@@ -9,10 +9,17 @@ import {
 } from "herdr";
 
 function resolveLocation() {
-  const space = spaces().find((s) => s.active) ?? spaces()[0];
   const f = focused();
-  const pane = f?.pane ? panes().find((p) => p.pane === f.pane) : null;
-  const on = f?.pane === null ? (f?.terminal?.includes("/") ? f.terminal.split("/")[0] : null) : space?.machine ?? null;
+  const allSpaces = spaces();
+  const space = allSpaces.find((s) => s.id === f?.space) ?? allSpaces.find((s) => s.active) ?? allSpaces[0];
+  const allPanes = panes();
+  const spacePanes = allPanes.filter((p) => p.cwd);
+  const pane = (f?.pane ? allPanes.find((p) => p.pane === f.pane) : null)
+    ?? allPanes.find((p) => p.tab === f?.tab && p.cwd)
+    ?? (f?.cwd ? { cwd: f.cwd } : null)
+    ?? spacePanes.find((p) => p.focused && p.cwd)
+    ?? spacePanes.find((p) => p.cwd);
+  const on = space?.machine ?? null;
   const cwd = pane?.cwd || f?.cwd || space?.folder || ".";
   return { cwd, on, space: space?.id, spaceName: space?.name || "Workspace" };
 }
@@ -55,15 +62,16 @@ export default class MarkdownPreview extends View {
 
   async discoverFiles(cwd, on) {
     try {
-      const script = 'find . -maxdepth 3 \\( -name "*.md" -o -name "*.markdown" \\) -not -path "*/.*" -not -path "*/node_modules/*" 2>/dev/null | sort | head -n 60';
-      const r = await exec("sh", ["-c", script], { cwd, on });
-      if (r.code === 0 && r.stdout) {
-        const list = r.stdout
+      const script = 'cd "$1" 2>/dev/null || exit 0; find . -maxdepth 3 \\( -name "*.md" -o -name "*.markdown" \\) -not -path "*/.*" -not -path "*/node_modules/*" -not -path "*/Library/*" 2>/dev/null | sort | head -n 60';
+      const r = await exec("sh", ["-c", script, "sh", cwd], { on });
+      const raw = (r?.stdout || "").trim();
+      if (raw) {
+        const list = raw
           .split("\n")
           .map((line) => line.trim().replace(/^\.\//, ""))
           .filter(Boolean);
 
-        // Put README.md first if present
+        // Put README.md or AGENTS.md first if present
         list.sort((a, b) => {
           const aBase = a.toLowerCase();
           const bBase = b.toLowerCase();
@@ -73,12 +81,22 @@ export default class MarkdownPreview extends View {
           if (bBase === "agents.md") return 1;
           return a.localeCompare(b);
         });
-        return list;
+        if (list.length > 0) return list;
       }
     } catch {
       // Fallback
     }
-    return [];
+
+    // Direct fallback check if find returned nothing
+    const fallbacks = ["README.md", "readme.md", "AGENTS.md", "CLAUDE.md", "README.txt"];
+    const found = [];
+    for (const fb of fallbacks) {
+      try {
+        const check = await readTextFile(`${cwd}/${fb}`, { on });
+        if (check !== null) found.push(fb);
+      } catch {}
+    }
+    return found;
   }
 
   bootstrap(targetFile, cx) {
@@ -96,22 +114,13 @@ export default class MarkdownPreview extends View {
         if (!selected) {
           if (files.length > 0) {
             selected = files[0];
-          } else {
-            // Check direct README.md
-            for (const cand of ["README.md", "readme.md", "AGENTS.md"]) {
-              const check = await readTextFile(`${cwd}/${cand}`, { on });
-              if (check !== null) {
-                selected = cand;
-                if (!this.availableFiles.includes(cand)) {
-                  this.availableFiles.unshift(cand);
-                }
-                break;
-              }
-            }
           }
         }
 
         if (selected) {
+          if (!this.availableFiles.includes(selected)) {
+            this.availableFiles.unshift(selected);
+          }
           await this.loadFileContent(selected, cwd, on);
         } else {
           this.loading = false;
