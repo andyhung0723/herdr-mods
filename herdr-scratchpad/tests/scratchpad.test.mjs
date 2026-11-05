@@ -134,8 +134,13 @@ async function harness(overrides = {}) {
   }[name]));
   await mainMod.evaluate();
 
+  let focusCalls = 0;
   const cx = {
-    focus_handle: () => ({ focus: () => {} }),
+    focus_handle: () => ({
+      focus: () => {
+        focusCalls++;
+      },
+    }),
     notify: () => {},
     spawn: (fn) => fn(cx),
     write_to_clipboard: (text) => clipboard.push(text),
@@ -151,6 +156,7 @@ async function harness(overrides = {}) {
     events,
     clipboard,
     sharedMap,
+    getFocusCalls: () => focusCalls,
   };
 }
 
@@ -195,11 +201,14 @@ test("Scratchpad controller handles toggle command and opens 800x560 overlay", a
 });
 
 test("Scratchpad dialog saves synchronously on change and persists across reopen", async () => {
-  const { View, cx, sharedMap } = await harness();
+  const { View, cx, sharedMap, getFocusCalls } = await harness();
 
   // 1. First session: open dialog and type text
   const pad1 = new View();
   pad1.init({ role: "dialog", overlay: "overlay-1" }, cx);
+
+  // Focus should have been called for auto-focus
+  assert.ok(getFocusCalls() > 0, "Editor focus must be triggered automatically on open");
 
   pad1.editor.set_value("Todo: refactor layout state now");
 
@@ -209,13 +218,14 @@ test("Scratchpad dialog saves synchronously on change and persists across reopen
   assert.equal(saved.tabs[0].content, "Todo: refactor layout state now");
 
   // User hits Esc / close
-  pad1.close();
+  await pad1.close(cx);
 
   // 2. Second session: reopened
   const pad2 = new View();
   pad2.init({ role: "dialog", overlay: "overlay-2" }, cx);
 
-  // Content must be 100% preserved
+  // Content must be 100% preserved even after loadStore runs
+  await new Promise((r) => setTimeout(r, 10));
   assert.equal(pad2.getActiveTab().content, "Todo: refactor layout state now");
   assert.equal(pad2.editor.value(), "Todo: refactor layout state now");
 });

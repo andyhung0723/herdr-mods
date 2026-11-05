@@ -55,13 +55,25 @@ export async function saveStore(store) {
     // Ensure data directory exists
     await exec("mkdir", ["-p", dir], { on: null }).catch(() => {});
 
-    const existing = await readTextFile(fullPath);
-    await writeTextFile(fullPath, serialized, existing);
-    return true;
-  } catch (err) {
-    // If optimistic concurrency mismatch or writeTextFile error, fallback to shell write
+    let existing = null;
     try {
-      await exec("sh", ["-c", `cat > "$1"`, "save", fullPath], { on: null });
+      existing = await readTextFile(fullPath);
+    } catch {}
+
+    try {
+      await writeTextFile(fullPath, serialized, existing);
+      return true;
+    } catch {
+      // If optimistic concurrency mismatch or writeTextFile error, try re-reading
+      const freshExisting = await readTextFile(fullPath).catch(() => null);
+      await writeTextFile(fullPath, serialized, freshExisting);
+      return true;
+    }
+  } catch (err) {
+    // If writeTextFile fails, fallback to shell printf
+    try {
+      const escaped = serialized.replace(/'/g, `'\\''`);
+      await exec("sh", ["-c", `printf '%s' '${escaped}' > "${fullPath}"`], { on: null });
       return true;
     } catch {
       return false;

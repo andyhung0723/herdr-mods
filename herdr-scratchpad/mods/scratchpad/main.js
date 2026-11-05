@@ -34,6 +34,7 @@ export default class Scratchpad extends View {
 
     // Dialog mode
     const cached = shared(STORE_KEY);
+    this.isCleanDefault = false;
     if (cached && Array.isArray(cached.tabs) && cached.tabs.length > 0) {
       this.tabs = cached.tabs;
       this.activeTabId = cached.activeTabId || this.tabs[0].id;
@@ -41,6 +42,11 @@ export default class Scratchpad extends View {
       const def = getDefaultStore();
       this.tabs = def.tabs;
       this.activeTabId = def.activeTabId;
+      this.isCleanDefault = true;
+    }
+
+    if (this.overlayId) {
+      setShared(OPEN_OVERLAY, this.overlayId);
     }
 
     this.loading = false;
@@ -51,11 +57,20 @@ export default class Scratchpad extends View {
     this.renameInput = null;
 
     this.editor = null;
+    this.editorHandle = cx.focus_handle();
     this.handle = cx.focus_handle();
-    this.handle.focus();
 
-    // Setup initial editor immediately
+    // Setup initial editor immediately & request focus
     this.setupEditor(this.getActiveTab(), cx);
+    this.editorHandle.focus();
+    if (cx.timer?.after) {
+      cx.timer.after(30, () => this.editorHandle?.focus());
+      cx.timer.after(100, () => this.editorHandle?.focus());
+    } else {
+      setTimeout(() => this.editorHandle?.focus(), 30);
+      setTimeout(() => this.editorHandle?.focus(), 100);
+    }
+
     this.load(cx);
   }
 
@@ -83,12 +98,20 @@ export default class Scratchpad extends View {
       try {
         const store = await loadStore();
         if (store && Array.isArray(store.tabs) && store.tabs.length > 0) {
-          // If disk store has newer or loaded data
-          this.tabs = store.tabs;
-          this.activeTabId = store.activeTabId || this.tabs[0].id;
-          setShared(STORE_KEY, store);
-          this.setupEditor(this.getActiveTab(), cx);
-          cx.notify();
+          const diskMax = Math.max(...store.tabs.map((t) => t.updatedAt || 0), 0);
+          const currentMax = Math.max(...this.tabs.map((t) => t.updatedAt || 0), 0);
+
+          const currentContent = this.getActiveTab()?.content || "";
+          const isClean = this.isCleanDefault && !currentContent;
+
+          // Only overwrite if this view was clean default OR disk is strictly newer
+          if (isClean || diskMax > currentMax) {
+            this.tabs = store.tabs;
+            this.activeTabId = store.activeTabId || this.tabs[0].id;
+            setShared(STORE_KEY, store);
+            this.setupEditor(this.getActiveTab(), cx);
+            cx.notify();
+          }
         }
       } catch {}
     });
@@ -125,19 +148,34 @@ export default class Scratchpad extends View {
       },
     });
 
-    this.editor.on("change", (_e, _cx) => {
+    const onUpdate = () => {
       const activeTab = this.getActiveTab();
       if (activeTab && this.editor) {
         activeTab.content = this.editor.value();
         activeTab.updatedAt = Date.now();
-        // Immediately sync to shared memory (0ms delay, survives immediate close)
+        this.isCleanDefault = false;
+        // Immediately sync to shared memory (0ms delay, survives immediate close/Esc)
         setShared(STORE_KEY, {
           activeTabId: this.activeTabId,
           tabs: this.tabs,
         });
         this.scheduleSave();
       }
-    });
+    };
+
+    this.editor.on("change", onUpdate);
+    try {
+      this.editor.on("paste_other", onUpdate);
+    } catch {}
+    try {
+      this.editor.on("blur", () => {
+        this.saveNow();
+      });
+    } catch {}
+
+    if (this.editorHandle) {
+      this.editorHandle.focus();
+    }
 
     cx.notify();
   }
@@ -148,7 +186,7 @@ export default class Scratchpad extends View {
     }
     this.saveTimeout = setTimeout(() => {
       this.saveNow();
-    }, 300);
+    }, 200);
   }
 
   saveNow() {
@@ -160,13 +198,14 @@ export default class Scratchpad extends View {
     if (currentTab && this.editor) {
       currentTab.content = this.editor.value();
       currentTab.updatedAt = Date.now();
+      this.isCleanDefault = false;
     }
     const store = {
       activeTabId: this.activeTabId,
       tabs: this.tabs,
     };
     setShared(STORE_KEY, store);
-    saveStore(store);
+    return saveStore(store);
   }
 
   switchTab(tabId, cx) {
@@ -299,14 +338,18 @@ export default class Scratchpad extends View {
     cx.notify();
   }
 
-  close() {
-    this.saveNow();
+  async close(cx) {
+    await this.saveNow();
     const current = shared(OPEN_OVERLAY);
+    setShared(OPEN_OVERLAY, null);
     if (current) {
-      closeOverlay(current);
-      setShared(OPEN_OVERLAY, null);
+      try {
+        closeOverlay(current);
+      } catch {}
     } else if (this.overlayId) {
-      closeOverlay(this.overlayId);
+      try {
+        closeOverlay(this.overlayId);
+      } catch {}
     }
   }
 
@@ -524,7 +567,7 @@ export default class Scratchpad extends View {
       .overflow_hidden()
       .on_key_down((e, cx) => {
         if (e.key === "escape") {
-          this.close();
+          this.close(cx);
           cx.stop_propagation();
         }
       })
@@ -535,7 +578,15 @@ export default class Scratchpad extends View {
           .min_h(0)
           .p(6)
           .bg(t.surface)
-          .when(Boolean(this.editor), (el) => el.child(Editor.new(this.editor)))
+          .cursor_text()
+          .on_click(() => this.editorHandle?.focus())
+          .when(Boolean(this.editor), (el) =>
+            el.child(
+              Editor.new(this.editor)
+                .track_focus(this.editorHandle)
+                .size_full()
+            )
+          )
       )
       .child(this.renderFooter(t));
   }
