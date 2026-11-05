@@ -5,7 +5,7 @@ import { View, div } from "gpui-kit";
 import { v_flex, h_flex, TextView, InputState, Input } from "gpui-base";
 import {
   theme, props, closeOverlay, run, readTextFile, exec,
-  spaces, focused, panes
+  spaces, focused, panes, shared, setShared
 } from "herdr";
 
 function resolveLocation() {
@@ -64,6 +64,67 @@ export function resolveRelativePath(currentFilePath, linkUrl) {
   return (isAbsolute ? "/" : "") + resolved.join("/");
 }
 
+export function buildFileTree(fileList) {
+  const root = { name: "", path: "", isDir: true, children: [] };
+
+  for (const filePath of fileList) {
+    const parts = filePath.split("/").filter(Boolean);
+    let curr = root;
+    let accumulatedPath = "";
+
+    for (let i = 0; i < parts.length; i++) {
+      const part = parts[i];
+      accumulatedPath = accumulatedPath ? `${accumulatedPath}/${part}` : part;
+      const isLast = i === parts.length - 1;
+
+      if (isLast) {
+        curr.children.push({
+          name: part,
+          path: filePath,
+          isDir: false,
+        });
+      } else {
+        let folder = curr.children.find((c) => c.isDir && c.name === part);
+        if (!folder) {
+          folder = {
+            name: part,
+            path: accumulatedPath,
+            isDir: true,
+            children: [],
+          };
+          curr.children.push(folder);
+        }
+        curr = folder;
+      }
+    }
+  }
+
+  function sortNodes(nodes) {
+    nodes.sort((a, b) => {
+      if (a.isDir && !b.isDir) return -1;
+      if (!a.isDir && b.isDir) return 1;
+      if (!a.isDir && !b.isDir) {
+        const aLow = a.name.toLowerCase();
+        const bLow = b.name.toLowerCase();
+        if (aLow.startsWith("readme")) return -1;
+        if (bLow.startsWith("readme")) return 1;
+        if (aLow.startsWith("agents")) return -1;
+        if (bLow.startsWith("agents")) return 1;
+      }
+      return a.name.localeCompare(b.name);
+    });
+
+    for (const node of nodes) {
+      if (node.isDir) {
+        sortNodes(node.children);
+      }
+    }
+  }
+
+  sortNodes(root.children);
+  return root.children;
+}
+
 export default class MarkdownPreview extends View {
   init(initialProps, cx) {
     const p = initialProps ?? props() ?? {};
@@ -80,6 +141,17 @@ export default class MarkdownPreview extends View {
     this.showSidebar = true;
     this.filter = "";
     this.currentCwd = "";
+
+    // Dialog resize state
+    const savedSize = (typeof shared === "function" ? shared("markdown-preview.dialog-size") : null) || {};
+    this.dialogWidth = savedSize.width || 940;
+    this.dialogHeight = savedSize.height || 660;
+    this.isMaximized = Boolean(savedSize.isMaximized);
+    this.resizing = false;
+    this.dragStart = null;
+    this.preMaxWidth = 940;
+    this.preMaxHeight = 660;
+    this.collapsedFolders = new Set();
 
     // Search filter input
     this.input = InputState.new({ placeholder: "Search .md files…" });
@@ -102,17 +174,48 @@ export default class MarkdownPreview extends View {
     });
   }
 
+  toggleFolder(folderPath, cx) {
+    if (this.collapsedFolders.has(folderPath)) {
+      this.collapsedFolders.delete(folderPath);
+    } else {
+      this.collapsedFolders.add(folderPath);
+    }
+    cx.notify();
+  }
+
+  toggleMaximize(cx) {
+    if (this.isMaximized) {
+      this.dialogWidth = this.preMaxWidth || 940;
+      this.dialogHeight = this.preMaxHeight || 660;
+      this.isMaximized = false;
+    } else {
+      this.preMaxWidth = this.dialogWidth;
+      this.preMaxHeight = this.dialogHeight;
+      this.dialogWidth = 1420;
+      this.dialogHeight = 920;
+      this.isMaximized = true;
+    }
+    try {
+      setShared("markdown-preview.dialog-size", {
+        width: this.dialogWidth,
+        height: this.dialogHeight,
+        isMaximized: this.isMaximized,
+      });
+    } catch {}
+    cx.notify();
+  }
+
   async discoverFiles(cwd, on) {
     try {
       const script = `
         TARGET="$1"
         [ -d "$TARGET" ] && cd "$TARGET"
-        find . -maxdepth 3 \\( -name "*.md" -o -name "*.markdown" \\) \\
+        find . -maxdepth 5 \\( -name "*.md" -o -name "*.markdown" \\) \\
           -not -path "*/.*" \\
           -not -path "*/node_modules/*" \\
           -not -path "*/Library/*" \\
           -not -path "*/Pictures/*" \\
-          2>/dev/null | sort | head -n 60
+          2>/dev/null | sort | head -n 150
       `;
       const r = await exec("sh", ["-c", script, "sh", cwd], { on });
       const raw = (r?.stdout || "").trim();
@@ -122,7 +225,6 @@ export default class MarkdownPreview extends View {
           .map((line) => line.trim().replace(/^\.\//, ""))
           .filter(Boolean);
 
-        // Put README.md or AGENTS.md first if present
         list.sort((a, b) => {
           const aBase = a.toLowerCase();
           const bBase = b.toLowerCase();
@@ -333,17 +435,99 @@ export default class MarkdownPreview extends View {
     return this.availableFiles.filter((f) => f.toLowerCase().includes(this.filter));
   }
 
+  renderTreeNodes(nodes, depth, t, cx) {
+    const rows = [];
+
+    for (const node of nodes) {
+      const indent = 6 + depth * 14;
+
+      if (node.isDir) {
+        const isCollapsed = this.collapsedFolders.has(node.path) && !this.filter;
+
+        rows.push(
+          h_flex()
+            .id(`tree-folder-${node.path}`)
+            .h(26)
+            .pl(indent)
+            .pr(8)
+            .gap(5)
+            .items_center()
+            .cursor_pointer()
+            .rounded(4)
+            .hover((s) => s.bg(t.hover))
+            .on_click((_e, cx) => this.toggleFolder(node.path, cx))
+            // Arrow indicator
+            .child(
+              div()
+                .text_size(9)
+                .text_color(t.dim)
+                .w(10)
+                .child(isCollapsed ? "▸" : "▾")
+            )
+            // Folder icon
+            .child(div().text_size(12).child(isCollapsed ? "📁" : "📂"))
+            // Folder name
+            .child(
+              div()
+                .text_size(11.5)
+                .font_semibold()
+                .text_color(t.foreground)
+                .truncate()
+                .child(node.name)
+            )
+        );
+
+        if (!isCollapsed && node.children.length > 0) {
+          rows.push(...this.renderTreeNodes(node.children, depth + 1, t, cx));
+        }
+      } else {
+        const isSelected = node.path === this.fileName;
+
+        rows.push(
+          h_flex()
+            .id(`tree-file-${node.path}`)
+            .h(26)
+            .pl(indent)
+            .pr(8)
+            .gap(6)
+            .items_center()
+            .cursor_pointer()
+            .rounded(4)
+            .when(isSelected, (s) => s.bg(t.raised))
+            .when(!isSelected, (s) => s.hover((h) => h.bg(t.hover)))
+            .on_click((_e, cx) => {
+              if (node.path !== this.fileName) {
+                this.loadFile(node.path, cx, true);
+              }
+            })
+            // File icon
+            .child(div().text_size(11).w(10).child("📄"))
+            // File name
+            .child(
+              div()
+                .text_size(12)
+                .font_medium()
+                .text_color(isSelected ? t.accent : t.foreground)
+                .truncate()
+                .child(node.name)
+            )
+        );
+      }
+    }
+
+    return rows;
+  }
+
   render(cx) {
     const t = theme();
     const isOverlay = Boolean(this.overlayId);
     const files = this.filteredFiles();
+    const fileTree = buildFileTree(files);
 
-    return v_flex()
+    const root = v_flex()
       .id("markdown-preview-root")
       .track_focus(this.handle)
-      .size_full()
       .bg(t.background)
-      .when(isOverlay, (el) => el.rounded(12))
       .border_1()
       .border_color(t.border)
       .overflow_hidden()
@@ -352,7 +536,41 @@ export default class MarkdownPreview extends View {
           this.close();
           cx.stop_propagation();
         }
-      })
+      });
+
+    if (isOverlay) {
+      root
+        .w(this.dialogWidth)
+        .h(this.dialogHeight)
+        .rounded(12)
+        .on_mouse_move((e, cx) => {
+          if (this.resizing && this.dragStart) {
+            const dx = e.position.x - this.dragStart.x;
+            const dy = e.position.y - this.dragStart.y;
+            this.dialogWidth = Math.max(540, Math.min(2400, this.dragStart.w + dx));
+            this.dialogHeight = Math.max(380, Math.min(1600, this.dragStart.h + dy));
+            this.isMaximized = false;
+            try {
+              setShared("markdown-preview.dialog-size", {
+                width: this.dialogWidth,
+                height: this.dialogHeight,
+                isMaximized: false,
+              });
+            } catch {}
+            cx.notify();
+          }
+        })
+        .on_mouse_up("left", (_e, cx) => {
+          if (this.resizing) {
+            this.resizing = false;
+            cx.notify();
+          }
+        });
+    } else {
+      root.size_full();
+    }
+
+    return root
       // Top Master Toolbar (Height 40px)
       .child(
         h_flex()
@@ -458,6 +676,27 @@ export default class MarkdownPreview extends View {
                 .child(div().text_size(12).text_color(t.muted).child("⧉ Split"))
             )
           )
+          // Maximize / Restore button (in Overlay mode)
+          .when(isOverlay, (el) =>
+            el.child(
+              h_flex()
+                .px(6)
+                .h(24)
+                .rounded(4)
+                .items_center()
+                .cursor_pointer()
+                .hover((s) => s.bg(t.hover))
+                .on_click((_e, cx) => {
+                  this.toggleMaximize(cx);
+                })
+                .child(
+                  div()
+                    .text_size(12)
+                    .text_color(t.muted)
+                    .child(this.isMaximized ? "⤡ Restore" : "⤢ Maximize")
+                )
+            )
+          )
           // Close button (if overlay)
           .when(isOverlay, (el) =>
             el.child(
@@ -542,54 +781,7 @@ export default class MarkdownPreview extends View {
                           )
                       )
                     )
-                    .children(
-                      files.map((file) => {
-                        const isSelected = file === this.fileName;
-                        const parts = file.split("/");
-                        const base = parts.pop();
-                        const dir = parts.length > 0 ? parts.join("/") + "/" : "";
-
-                        return h_flex()
-                          .id(`md-file-${file}`)
-                          .p(6)
-                          .rounded(6)
-                          .gap(6)
-                          .items_center()
-                          .cursor_pointer()
-                          .when(isSelected, (s) => s.bg(t.raised))
-                          .when(!isSelected, (s) => s.hover((h) => h.bg(t.hover)))
-                          .on_click((_e, cx) => {
-                            if (file !== this.fileName) {
-                              this.loadFile(file, cx);
-                            }
-                          })
-                          // File icon
-                          .child(div().text_size(13).child("📄"))
-                          // File name & directory path
-                          .child(
-                            v_flex()
-                              .flex_1()
-                              .min_w(0)
-                              .child(
-                                div()
-                                  .truncate()
-                                  .text_size(12)
-                                  .font_medium()
-                                  .text_color(isSelected ? t.accent : t.foreground)
-                                  .child(base)
-                              )
-                              .when(Boolean(dir), (dirEl) =>
-                                dirEl.child(
-                                  div()
-                                    .truncate()
-                                    .text_size(10.5)
-                                    .text_color(t.dim)
-                                    .child(dir)
-                                )
-                              )
-                          );
-                      })
-                    )
+                    .children(this.renderTreeNodes(fileTree, 0, t, cx))
                 )
             )
           )
@@ -626,6 +818,36 @@ export default class MarkdownPreview extends View {
                 )
               )
           )
+      )
+      // Resize grip in bottom-right corner (only in Overlay mode)
+      .when(isOverlay, (el) =>
+        el.child(
+          div()
+            .absolute()
+            .bottom(2)
+            .right(2)
+            .w(16)
+            .h(16)
+            .items_center()
+            .justify_center()
+            .cursor_nwse_resize()
+            .on_mouse_down("left", (e, cx) => {
+              this.resizing = true;
+              this.dragStart = {
+                x: e.position.x,
+                y: e.position.y,
+                w: this.dialogWidth,
+                h: this.dialogHeight,
+              };
+              cx.stop_propagation();
+            })
+            .child(
+              div()
+                .text_size(11)
+                .text_color(t.dim)
+                .child("⌟")
+            )
+        )
       );
   }
 }

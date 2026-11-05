@@ -5,6 +5,7 @@ import vm from "node:vm";
 
 async function harness(propsValue = {}) {
   const events = [];
+  const sharedMap = new Map();
   const files = new Map([
     ["/repo/README.md", "# Hello Project\n\nThis is a test readme."],
     ["/repo/docs/guide.md", "# Guide\n\nDetailed documentation."],
@@ -45,6 +46,8 @@ async function harness(propsValue = {}) {
     },
     notify: (n) => events.push(["notify", n]),
     settings: () => ({ font_family: "monospace" }),
+    shared: (k) => sharedMap.get(k) ?? null,
+    setShared: (k, v) => sharedMap.set(k, v),
   };
 
   const context = vm.createContext({});
@@ -129,7 +132,9 @@ async function harness(propsValue = {}) {
     open_url: (url) => events.push(["cx.open_url", url]),
   };
 
-  return { api, View, instance, cx, events, files, linkHandlers };
+  const buildFileTree = main.namespace.buildFileTree;
+
+  return { api, View, instance, cx, events, files, linkHandlers, sharedMap, buildFileTree };
 }
 
 test("markdown-preview loads default README.md when no file prop is provided", async () => {
@@ -221,4 +226,70 @@ test("markdown-preview delegates external URLs to cx.open_url", async () => {
   const openEvents = events.filter((e) => e[0] === "cx.open_url");
   assert.equal(openEvents.length, 1);
   assert.equal(openEvents[0][1], "https://github.com/project/docs");
+});
+
+test("buildFileTree builds hierarchical tree with folders first and README on top", async () => {
+  const { buildFileTree } = await harness({});
+
+  const list = [
+    "docs/api/endpoints.md",
+    "README.md",
+    "docs/guide.md",
+    "docs/api/auth.md",
+    "CHANGELOG.md",
+  ];
+
+  const tree = buildFileTree(list);
+  assert.equal(tree.length, 3); // docs (dir), README.md (file), CHANGELOG.md (file)
+  assert.equal(tree[0].name, "docs");
+  assert.equal(tree[0].isDir, true);
+  assert.equal(tree[1].name, "README.md");
+  assert.equal(tree[1].isDir, false);
+  assert.equal(tree[2].name, "CHANGELOG.md");
+
+  // Inside docs
+  const docsChildren = tree[0].children;
+  assert.equal(docsChildren.length, 2); // api (dir), guide.md (file)
+  assert.equal(docsChildren[0].name, "api");
+  assert.equal(docsChildren[0].isDir, true);
+  assert.equal(docsChildren[1].name, "guide.md");
+
+  // Inside docs/api
+  const apiChildren = docsChildren[0].children;
+  assert.equal(apiChildren.length, 2);
+  assert.equal(apiChildren[0].name, "auth.md");
+  assert.equal(apiChildren[1].name, "endpoints.md");
+});
+
+test("markdown-preview dialog resizing and maximize toggle", async () => {
+  const { instance, cx, sharedMap } = await harness({ overlay: "test-overlay" });
+  instance.init({ overlay: "test-overlay" }, cx);
+  await new Promise((r) => setImmediate(r));
+
+  assert.equal(instance.dialogWidth, 940);
+  assert.equal(instance.dialogHeight, 660);
+  assert.equal(instance.isMaximized, false);
+
+  // Toggle maximize
+  instance.toggleMaximize(cx);
+  assert.equal(instance.dialogWidth, 1420);
+  assert.equal(instance.dialogHeight, 920);
+  assert.equal(instance.isMaximized, true);
+  const saved = sharedMap.get("markdown-preview.dialog-size");
+  assert.equal(saved?.width, 1420);
+  assert.equal(saved?.height, 920);
+  assert.equal(saved?.isMaximized, true);
+
+  // Restore
+  instance.toggleMaximize(cx);
+  assert.equal(instance.dialogWidth, 940);
+  assert.equal(instance.dialogHeight, 660);
+  assert.equal(instance.isMaximized, false);
+
+  // Folder collapse toggle
+  assert.equal(instance.collapsedFolders.has("docs"), false);
+  instance.toggleFolder("docs", cx);
+  assert.equal(instance.collapsedFolders.has("docs"), true);
+  instance.toggleFolder("docs", cx);
+  assert.equal(instance.collapsedFolders.has("docs"), false);
 });
