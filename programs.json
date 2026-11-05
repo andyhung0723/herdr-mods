@@ -1,0 +1,24 @@
+{
+  "programs": {
+    "claude": {
+      "icon": "custom-icons/claude.svg",
+      "tint": false
+    },
+    "claude-code": {
+      "icon": "custom-icons/claude.svg",
+      "tint": false
+    },
+    "codex": {
+      "icon": "custom-icons/codex.svg",
+      "tint": false
+    },
+    "antigravity": {
+      "icon": "custom-icons/antigravity.svg",
+      "tint": false
+    },
+    "agy": {
+      "icon": "custom-icons/antigravity.svg",
+      "tint": false
+    }
+  }
+}
