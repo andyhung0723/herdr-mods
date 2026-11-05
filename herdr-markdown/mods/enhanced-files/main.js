@@ -293,7 +293,7 @@ export default class EnhancedFiles extends View {
                     .rounded(4)
                     .items_center()
                     .cursor_pointer()
-                    .bg(this.viewMode === "preview" ? t.raised : "transparent")
+                    .when(this.viewMode === "preview", el => el.bg(t.raised))
                     .hover(s => s.bg(t.hover))
                     .on_click((_e, cx) => {
                       this.viewMode = "preview";
@@ -314,7 +314,7 @@ export default class EnhancedFiles extends View {
                     .rounded(4)
                     .items_center()
                     .cursor_pointer()
-                    .bg(this.viewMode === "code" ? t.raised : "transparent")
+                    .when(this.viewMode === "code", el => el.bg(t.raised))
                     .hover(s => s.bg(t.hover))
                     .on_click((_e, cx) => {
                       this.viewMode = "code";
