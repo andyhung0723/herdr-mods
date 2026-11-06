@@ -281,9 +281,9 @@ export async function collectAntigravityData() {
   let email = "";
   let tier = "Antigravity";
   let hasFiveHour = false;
-  let fiveHour = { percent: 0, resetsAt: null, timeRemaining: null };
+  let fiveHour = { percent: 0, remainingPercent: 100, resetsAt: null, timeRemaining: null, modelId: "" };
   let hasWeek = false;
-  let week = { percent: 0, resetsAt: null, timeRemaining: null };
+  let week = { percent: 0, remainingPercent: 100, resetsAt: null, timeRemaining: null, displayName: "Weekly Limit" };
 
   try {
     let scriptPath = `${h}/.config/herdr-app/mods/agent-quotas/antigravity_limits.py`;
@@ -297,13 +297,16 @@ export async function collectAntigravityData() {
       if (parsed && !parsed.error) {
         if (parsed.email) email = parsed.email;
         if (parsed.tier) tier = parsed.tier;
+        if (parsed.model) model = parsed.model;
 
         if (parsed.fiveHour && typeof parsed.fiveHour.percent === "number") {
           hasFiveHour = true;
           fiveHour = {
             percent: parsed.fiveHour.percent,
+            remainingPercent: parsed.fiveHour.remainingPercent ?? (100 - parsed.fiveHour.percent),
             resetsAt: parsed.fiveHour.resetTime,
             timeRemaining: formatTimeRemaining(parsed.fiveHour.resetTime),
+            modelId: parsed.fiveHour.modelId || "",
           };
         }
 
@@ -311,8 +314,10 @@ export async function collectAntigravityData() {
           hasWeek = true;
           week = {
             percent: parsed.weekly.percent,
+            remainingPercent: parsed.weekly.remainingPercent ?? (100 - parsed.weekly.percent),
             resetsAt: parsed.weekly.resetTime,
             timeRemaining: formatTimeRemaining(parsed.weekly.resetTime),
+            displayName: parsed.weekly.displayName || "Weekly Limit",
           };
         }
       }

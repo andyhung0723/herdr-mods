@@ -55,15 +55,20 @@ async function harness() {
             stdout: JSON.stringify({
               email: "test@example.com",
               tier: "Antigravity",
+              model: "Gemini 3.8 Flash (Medium)",
               fiveHour: {
                 percent: 25,
+                remainingPercent: 75,
                 remainingFraction: 0.75,
                 resetTime: "2026-11-06T15:00:00Z",
+                modelId: "gemini-3.8-flash-tiered",
               },
               weekly: {
                 percent: 40,
+                remainingPercent: 60,
                 remainingFraction: 0.6,
                 resetTime: "2026-11-13T03:00:00Z",
+                displayName: "Weekly Limit Remaining",
               },
             }),
           };
@@ -219,8 +224,12 @@ test("collector parses Claude Code, Codex, and Antigravity metrics with 5hr, wee
   assert.equal(res.antigravity.model, "Gemini 3.8 Flash (Medium)");
   assert.equal(res.antigravity.hasFiveHour, true);
   assert.equal(res.antigravity.fiveHour.percent, 25);
+  assert.equal(res.antigravity.fiveHour.remainingPercent, 75);
+  assert.equal(res.antigravity.fiveHour.modelId, "gemini-3.8-flash-tiered");
   assert.equal(res.antigravity.hasWeek, true);
   assert.equal(res.antigravity.week.percent, 40);
+  assert.equal(res.antigravity.week.remainingPercent, 60);
+  assert.equal(res.antigravity.week.displayName, "Weekly Limit Remaining");
   assert.equal(res.antigravity.primaryPercent, 40);
   assert.equal(res.antigravity.stepsToday, 4500);
   assert.equal(res.antigravity.formattedSteps, "4.5k");

@@ -241,7 +241,7 @@ export default class AgentQuotas extends View {
                   .text_color(antigravityColor)
                   .child(
                     antigravity?.hasFiveHour
-                      ? `5h: ${antigravity.fiveHour.percent}%`
+                      ? `5h: ${antigravity.fiveHour.percent}% (${antigravity.fiveHour.remainingPercent}% left)`
                       : antigravity?.hasWeek
                       ? `Week: ${antigravity.week.percent}%`
                       : antigravity?.formattedSteps
@@ -694,7 +694,7 @@ export default class AgentQuotas extends View {
                     div()
                       .text_size(11)
                       .text_color(t.dim)
-                      .child(antigravity?.email ? antigravity.email : `Model: ${antigravity?.model || "Gemini"}`)
+                      .child(antigravity?.email ? `${antigravity.email} • ${antigravity.model || "Gemini"}` : `Model: ${antigravity?.model || "Gemini"}`)
                   )
               )
               // 5-Hour Limit Quota line (if hasFiveHour)
@@ -710,7 +710,7 @@ export default class AgentQuotas extends View {
                           h_flex()
                             .gap(6)
                             .items_center()
-                            .child(div().text_size(12).font_medium().text_color(t.foreground).child("5-Hour Rolling Limit"))
+                            .child(div().text_size(12).font_medium().text_color(t.foreground).child(`${antigravity?.model || "Gemini"} 5-Hour Limit`))
                             .child(
                               div()
                                 .text_size(11)
@@ -723,7 +723,7 @@ export default class AgentQuotas extends View {
                             .text_size(12)
                             .font_semibold()
                             .text_color(getBarColor(t, antigravity.fiveHour.percent))
-                            .child(`${antigravity.fiveHour.percent}%`)
+                            .child(`${antigravity.fiveHour.percent}% (${antigravity.fiveHour.remainingPercent}% left)`)
                         )
                     )
                     .child(
@@ -756,7 +756,7 @@ export default class AgentQuotas extends View {
                           h_flex()
                             .gap(6)
                             .items_center()
-                            .child(div().text_size(12).font_medium().text_color(t.foreground).child("Weekly Rolling Usage"))
+                            .child(div().text_size(12).font_medium().text_color(t.foreground).child(antigravity.week.displayName || "Claude & GPT Weekly Limit"))
                             .child(
                               div()
                                 .text_size(11)
@@ -769,7 +769,7 @@ export default class AgentQuotas extends View {
                             .text_size(12)
                             .font_semibold()
                             .text_color(getBarColor(t, antigravity.week.percent))
-                            .child(`${antigravity.week.percent}%`)
+                            .child(`${antigravity.week.percent}% (${antigravity.week.remainingPercent}% left)`)
                         )
                     )
                     .child(
