@@ -1,4 +1,4 @@
-// Enhanced Git Manager for Herdr with interactive Git Graph and Staged/Unstaged management
+// Enhanced Git Manager for Herdr with Fork-style Sidebar, Subway Git Graph, and LRU Cache
 import { View, div, image } from "gpui-kit";
 import { v_flex, h_flex, InputState, Input } from "gpui-base";
 import {
@@ -9,29 +9,35 @@ import {
   resolveLocation, getGitStatus, getGitGraph, getCommitFiles,
   getFileDiff, getCommitDiff, gitStageFile, gitUnstageFile,
   gitDiscardFile, gitStageAll, gitUnstageAll, gitCommit,
-  gitPush, gitPull, gitFetch, gitStash, gitStashPop
+  gitPush, gitPull, gitFetch, gitStash, gitStashPop,
+  getGitRefs, gitCheckout, gitStashApply, gitStashDrop,
+  parseRefBadge
 } from "./git.js";
 
 const OVERLAY_KEY = "enhanced-git.open-overlay";
 
+// Fork-style vibrant subway track colors
 const TRACK_COLORS = [
-  "#3b82f6", // Blue
-  "#a855f7", // Purple
-  "#10b981", // Emerald
-  "#f59e0b", // Amber
-  "#ec4899", // Pink
+  "#3b82f6", // Blue (Main line)
+  "#10b981", // Emerald Green
+  "#f59e0b", // Amber/Gold
+  "#8b5cf6", // Purple
+  "#ec4899", // Magenta/Pink
   "#06b6d4", // Cyan
   "#f97316", // Orange
+  "#ef4444", // Coral Red
 ];
 
 export default class EnhancedGit extends View {
   init(props, cx) {
     this.role = props?.role || "panel"; // "panel" or "dialog"
     this.overlayId = props?.overlayId || null;
-    this.tab = props?.tab || "changes"; // "changes" | "graph"
+    this.tab = props?.tab || "changes"; // "changes" | "graph" | "branches" | "stashes"
 
     this.status = null;
     this.graphRows = [];
+    this.graphLimit = 50;
+    this.refs = { branches: [], remotes: [], tags: [], stashes: [] };
     this.loading = false;
     this.busy = false;
     this.error = null;
@@ -74,9 +80,14 @@ export default class EnhancedGit extends View {
       status: this.status,
       graphRows: this.graphRows,
       graphError: this.graphError,
+      refs: this.refs,
       selectedFile: this.selectedFile,
       selectedIsStaged: this.selectedIsStaged,
       diffLines: this.diffLines,
+      selectedCommit: this.selectedCommit,
+      commitFiles: this.commitFiles,
+      selectedCommitFile: this.selectedCommitFile,
+      commitDiffLines: this.commitDiffLines,
     });
     // Cap at 8 sessions to ensure minimal memory usage (< 500KB)
     if (this.gitCache.size > 8) {
@@ -95,7 +106,7 @@ export default class EnhancedGit extends View {
 
     cx.spawn(async (cx) => {
       try {
-        const graphData = await getGitGraph(targetPath, on, 40);
+        const graphData = await getGitGraph(targetPath, on, this.graphLimit);
         if (this.cwd === targetPath || this.status?.root === targetPath || this.cwd) {
           if (graphData.error) {
             this.graphError = graphData.error;
@@ -110,6 +121,26 @@ export default class EnhancedGit extends View {
         this.graphError = String(err);
       } finally {
         this.graphLoading = false;
+        cx.notify();
+      }
+    });
+  }
+
+  fetchRefs(cx) {
+    if (!this.cwd) return;
+    const targetPath = this.status?.root || this.cwd;
+    const on = this.on;
+    cx.spawn(async (cx) => {
+      try {
+        const refsData = await getGitRefs(targetPath, on);
+        if (this.cwd === targetPath || this.status?.root === targetPath || this.cwd) {
+          if (!refsData.error) {
+            this.refs = refsData;
+            this.updateCache();
+          }
+        }
+      } catch (e) {
+      } finally {
         cx.notify();
       }
     });
@@ -140,10 +171,15 @@ export default class EnhancedGit extends View {
         this.status = cached.status;
         this.graphRows = cached.graphRows || [];
         this.graphError = cached.graphError || null;
+        this.refs = cached.refs || { branches: [], remotes: [], tags: [], stashes: [] };
         this.graphLoading = false;
         this.selectedFile = cached.selectedFile || null;
         this.selectedIsStaged = cached.selectedIsStaged || false;
         this.diffLines = cached.diffLines || [];
+        this.selectedCommit = cached.selectedCommit || null;
+        this.commitFiles = cached.commitFiles || [];
+        this.selectedCommitFile = cached.selectedCommitFile || null;
+        this.commitDiffLines = cached.commitDiffLines || [];
         this.error = null;
         this.loading = false;
         cx.notify();
@@ -187,9 +223,12 @@ export default class EnhancedGit extends View {
         this.status = statusData;
         this.error = null;
 
+        // Asynchronously fetch refs (branches, remotes, tags, stashes)
+        this.fetchRefs(cx);
+
         if (needGraph) {
           const repoRoot = statusData.root || cwd;
-          const graphData = await getGitGraph(repoRoot, on, 40);
+          const graphData = await getGitGraph(repoRoot, on, this.graphLimit);
           if (graphData.error) {
             this.graphError = graphData.error;
             this.graphRows = [];
@@ -359,11 +398,23 @@ export default class EnhancedGit extends View {
   }
 
   doStash(cx) {
-    this.runAction(() => gitStash(this.cwd, this.on), "Stashed current changes", cx);
+    this.runAction(() => gitStash(this.cwd, this.on, "Herdr stash"), "Stashed current changes", cx);
   }
 
   doStashPop(cx) {
     this.runAction(() => gitStashPop(this.cwd, this.on), "Applied stashed changes", cx);
+  }
+
+  doStashApply(stashId, cx) {
+    this.runAction(() => gitStashApply(this.cwd, this.on, stashId), `Applied ${stashId}`, cx);
+  }
+
+  doStashDrop(stashId, cx) {
+    this.runAction(() => gitStashDrop(this.cwd, this.on, stashId), `Dropped ${stashId}`, cx);
+  }
+
+  doCheckout(branch, cx) {
+    this.runAction(() => gitCheckout(this.cwd, this.on, branch), `Checked out ${branch}`, cx);
   }
 
   openOverlayDialog() {
@@ -377,8 +428,8 @@ export default class EnhancedGit extends View {
         mod: "enhanced-git",
         props: { role: "dialog", tab: this.tab }
       },
-      width: 960,
-      height: 640
+      width: 1000,
+      height: 680
     });
     setShared(OVERLAY_KEY, { overlay: id });
   }
@@ -414,7 +465,7 @@ export default class EnhancedGit extends View {
       );
   }
 
-  // --- View: Changes Tab ---
+  // --- View: Changes Tab (Fork Working Copy Style) ---
   renderChangesTab(t, cx) {
     const status = this.status;
     const staged = status?.stagedFiles || [];
@@ -444,14 +495,15 @@ export default class EnhancedGit extends View {
                     h_flex()
                       .gap(6)
                       .items_center()
-                      .child(div().text_size(11.5).font_semibold().text_color(t.foreground).child("Staged Changes"))
+                      .child(div().text_size(11).font_bold().text_color(t.dim).child("STAGED CHANGES"))
                       .child(
                         div()
-                          .px(5)
+                          .px(6)
                           .py(0.5)
-                          .rounded(3)
+                          .rounded(10)
                           .bg(t.raised)
                           .text_size(10)
+                          .font_semibold()
                           .text_color(t.muted)
                           .child(String(staged.length))
                       )
@@ -518,14 +570,15 @@ export default class EnhancedGit extends View {
                     h_flex()
                       .gap(6)
                       .items_center()
-                      .child(div().text_size(11.5).font_semibold().text_color(t.foreground).child("Changes"))
+                      .child(div().text_size(11).font_bold().text_color(t.dim).child("UNSTAGED CHANGES"))
                       .child(
                         div()
-                          .px(5)
+                          .px(6)
                           .py(0.5)
-                          .rounded(3)
+                          .rounded(10)
                           .bg(t.raised)
                           .text_size(10)
+                          .font_semibold()
                           .text_color(t.muted)
                           .child(String(unstaged.length))
                       )
@@ -560,7 +613,7 @@ export default class EnhancedGit extends View {
                         .w(12)
                         .text_size(10.5)
                         .font_semibold()
-                        .text_color(f.fresh ? t.ansi2 : f.status === "D" ? t.ansi1 : t.blocked)
+                        .text_color(f.fresh ? t.ansi2 : f.status === "D" ? t.ansi1 : "#f59e0b")
                         .child(f.status)
                     )
                     .child(div().flex_1().min_w(0).text_size(11).text_color(t.foreground).truncate().child(f.path))
@@ -586,22 +639,22 @@ export default class EnhancedGit extends View {
                         .px(4)
                         .rounded(3)
                         .hover((s) => s.bg(t.raised))
-                        .text_size(10)
+                        .text_size(11)
                         .text_color(t.dim)
                         .on_click((e, cx) => {
                           e.stop_propagation?.();
                           this.doDiscard(f.path, f.fresh, cx);
                         })
-                        .child("↺")
+                        .child("✕")
                     )
                 )
               )
               .when(unstaged.length === 0, (el) =>
-                el.child(div().px(8).py(4).text_size(11).text_color(t.dim).child("Clean working tree"))
+                el.child(div().px(8).py(4).text_size(11).text_color(t.dim).child("Working tree clean"))
               )
           )
       )
-      // Middle: Diff Viewer
+      // Diff View of Selected File
       .child(
         v_flex()
           .flex_1()
@@ -610,120 +663,88 @@ export default class EnhancedGit extends View {
           .border_1()
           .border_color(t.border)
           .rounded(6)
-          .overflow_y_scrollbar()
+          .overflow_hidden()
+          // Diff Header
           .child(
             h_flex()
-              .h(26)
+              .h(28)
               .flex_none()
               .px(8)
+              .gap(6)
               .items_center()
               .justify_between()
-              .bg(t.raised)
               .border_b(1)
               .border_color(t.border)
+              .bg(t.raised)
               .child(
                 div()
                   .text_size(11)
                   .font_medium()
                   .text_color(t.foreground)
                   .truncate()
-                  .child(this.selectedFile ? `${this.selectedIsStaged ? "Staged: " : ""}${this.selectedFile}` : "Select a file to inspect diff")
+                  .child(this.selectedFile ? `${this.selectedIsStaged ? "[Staged] " : ""}${this.selectedFile}` : "No file selected")
               )
           )
-          .child(this.renderDiffLines(this.diffLines, t))
+          // Diff Content
+          .child(
+            v_flex()
+              .flex_1()
+              .min_h(0)
+              .overflow_y_scrollbar()
+              .child(this.renderDiffLines(this.diffLines, t))
+          )
       )
-      // Bottom: Commit Area & Quick Stash
+      // Commit Input Row
       .child(
-        v_flex()
+        h_flex()
+          .h(34)
           .flex_none()
-          .gap(6)
+          .gap(8)
+          .items_center()
           .child(
-            h_flex()
-              .gap(6)
-              .child(
-                div()
-                  .flex_1()
-                  .min_w(0)
-                  .h(32)
-                  .px(10)
-                  .flex()
-                  .items_center()
-                  .rounded(6)
-                  .bg(t.surface)
-                  .border_1()
-                  .border_color(t.border)
-                  .child(Input.new(this.input).h_full().text_size(12).text_color(t.foreground))
-              )
-              .child(
-                div()
-                  .h(32)
-                  .px(12)
-                  .flex()
-                  .items_center()
-                  .rounded(6)
-                  .bg(Boolean(this.message.trim()) ? t.solid : t.raised)
-                  .text_color(Boolean(this.message.trim()) ? t.solid_foreground : t.dim)
-                  .text_size(12)
-                  .font_medium()
-                  .when(Boolean(this.message.trim()), (el) => el.cursor_pointer().on_click((_e, cx) => this.doCommit(cx)))
-                  .child(this.busy ? "..." : (staged.length > 0 ? "Commit Staged" : "Commit All"))
-              )
+            div()
+              .flex_1()
+              .h(34)
+              .child(Input.new(this.input))
           )
           .child(
-            h_flex()
+            div()
+              .h(34)
+              .px(14)
+              .rounded(6)
+              .bg(t.accent)
+              .hover((s) => s.opacity(0.85))
+              .cursor_pointer()
               .items_center()
-              .justify_between()
-              .child(
-                h_flex()
-                  .gap(8)
-                  .child(
-                    div()
-                      .text_size(11)
-                      .text_color(t.dim)
-                      .cursor_pointer()
-                      .hover((s) => s.text_color(t.foreground))
-                      .on_click((_e, cx) => this.doStash(cx))
-                      .child("📦 Stash")
-                  )
-                  .child(
-                    div()
-                      .text_size(11)
-                      .text_color(t.dim)
-                      .cursor_pointer()
-                      .hover((s) => s.text_color(t.foreground))
-                      .on_click((_e, cx) => this.doStashPop(cx))
-                      .child("Pop")
-                  )
-              )
-              .when(Boolean(this.note), (el) =>
-                el.child(div().text_size(11).text_color(t.accent).truncate().child(this.note))
-              )
+              .justify_center()
+              .text_size(11.5)
+              .font_semibold()
+              .text_color(t.background)
+              .on_click((_e, cx) => this.doCommit(cx))
+              .child("Commit")
           )
       );
   }
 
-  // --- View: Git Graph Tab ---
+  // --- View: Subway Git Graph (Fork Style) ---
   renderGraphTab(t, cx) {
-    const rows = this.graphRows || [];
+    if (this.graphLoading && (!this.graphRows || this.graphRows.length === 0)) {
+      return v_flex()
+        .size_full()
+        .items_center()
+        .justify_center()
+        .gap(8)
+        .child(div().text_size(12).text_color(t.dim).child("Loading Subway Git Graph..."));
+    }
 
-    if (this.graphLoading && rows.length === 0) {
+    if (this.graphError) {
       return v_flex()
         .size_full()
         .items_center()
         .justify_center()
         .gap(8)
         .p(16)
-        .child(div().text_size(12).text_color(t.dim).child("Loading commit graph…"));
-    }
-
-    if (this.graphError && rows.length === 0) {
-      return v_flex()
-        .size_full()
-        .items_center()
-        .justify_center()
-        .gap(10)
-        .p(16)
-        .child(div().text_size(12).text_color(t.blocked).child(`Error: ${this.graphError}`))
+        .child(div().text_size(12).text_color(t.ansi1).child(this.graphError))
         .child(
           div()
             .px(10)
@@ -739,13 +760,14 @@ export default class EnhancedGit extends View {
         );
     }
 
+    const rows = this.graphRows || [];
+
     if (rows.length === 0) {
       return v_flex()
         .size_full()
         .items_center()
         .justify_center()
-        .gap(10)
-        .p(16)
+        .gap(8)
         .child(div().text_size(12).text_color(t.dim).child("No commit history found"))
         .child(
           div()
@@ -786,7 +808,7 @@ export default class EnhancedGit extends View {
               if (!row.isCommit) {
                 // Pure routing line
                 return h_flex()
-                  .h(18)
+                  .h(16)
                   .flex_none()
                   .px(6)
                   .child(
@@ -797,6 +819,10 @@ export default class EnhancedGit extends View {
                       .child(row.graph)
                   );
               }
+
+              const isMerge = row.parents && row.parents.length > 1;
+              const isHeadCommit = (row.refs || []).some((r) => r.includes("HEAD"));
+              const badges = row.badges || (row.refs || []).map(parseRefBadge);
 
               return h_flex()
                 .h(28)
@@ -813,54 +839,101 @@ export default class EnhancedGit extends View {
                 .child(
                   h_flex()
                     .flex_none()
-                    .gap(5)
+                    .gap(6)
                     .items_center()
                     .child(
                       div()
                         .flex_none()
                         .font_family("JetBrains Mono")
-                        .text_size(11)
+                        .text_size(12)
                         .font_semibold()
-                        .text_color(color)
-                        .child(row.graph || "●")
+                        .text_color(isHeadCommit ? t.accent : color)
+                        .child(isHeadCommit ? "◉" : isMerge ? "◎" : "●")
                     )
                     .child(
                       div()
                         .flex_none()
                         .font_family("JetBrains Mono")
-                        .text_size(11)
+                        .text_size(10.5)
                         .text_color(t.dim)
                         .child(row.hash)
                     )
                 )
-                // Ref Badges (branches/tags, capped to first 2 to save space)
+                // Ref Badges (Fork Rounded Pills)
                 .children(
-                  (row.refs || []).slice(0, 2).map((ref) => {
-                    const isHead = ref.includes("HEAD");
+                  badges.slice(0, 3).map((b) => {
+                    if (b.isHead) {
+                      return div()
+                        .flex_none()
+                        .px(6)
+                        .py(1)
+                        .rounded(10)
+                        .bg(t.accent + "26")
+                        .border_1()
+                        .border_color(t.accent + "66")
+                        .text_size(10)
+                        .font_semibold()
+                        .text_color(t.accent)
+                        .truncate()
+                        .child(`⎇ ${b.label}`);
+                    }
+                    if (b.type === "branch") {
+                      return div()
+                        .flex_none()
+                        .px(6)
+                        .py(1)
+                        .rounded(10)
+                        .bg(color + "20")
+                        .border_1()
+                        .border_color(color + "55")
+                        .text_size(10)
+                        .font_medium()
+                        .text_color(color)
+                        .truncate()
+                        .child(`⎇ ${b.label}`);
+                    }
+                    if (b.type === "remote") {
+                      return div()
+                        .flex_none()
+                        .px(6)
+                        .py(1)
+                        .rounded(10)
+                        .bg(t.raised)
+                        .border_1()
+                        .border_color(t.border)
+                        .text_size(10)
+                        .font_medium()
+                        .text_color(t.muted)
+                        .truncate()
+                        .child(`☁ ${b.label}`);
+                    }
+                    // Tag
                     return div()
                       .flex_none()
-                      .px(5)
-                      .py(0.5)
-                      .rounded(3)
-                      .bg(isHead ? (t.accent + "33") : t.raised)
+                      .px(6)
+                      .py(1)
+                      .rounded(10)
+                      .bg("#f59e0b20")
+                      .border_1()
+                      .border_color("#f59e0b66")
                       .text_size(10)
-                      .font_semibold()
-                      .text_color(isHead ? t.accent : t.foreground)
+                      .font_medium()
+                      .text_color("#fbbf24")
                       .truncate()
-                      .child(ref);
+                      .child(`🏷 ${b.label}`);
                   })
                 )
-                .when((row.refs || []).length > 2, (el) =>
+                .when(badges.length > 3, (el) =>
                   el.child(
                     div()
                       .flex_none()
-                      .px(4)
+                      .px(5)
                       .py(0.5)
-                      .rounded(3)
+                      .rounded(10)
                       .bg(t.raised)
                       .text_size(9.5)
                       .text_color(t.dim)
-                      .child(`+${row.refs.length - 2}`)
+                      .child(`+${badges.length - 3}`)
                   )
                 )
                 // Commit Subject
@@ -880,12 +953,37 @@ export default class EnhancedGit extends View {
                 .child(div().flex_none().text_size(10.5).text_color(t.dim).child(row.relDate));
             })
           )
+          // Load More Commits Button (+50)
+          .child(
+            h_flex()
+              .h(32)
+              .flex_none()
+              .items_center()
+              .justify_center()
+              .child(
+                div()
+                  .px(14)
+                  .py(4)
+                  .rounded(5)
+                  .bg(t.raised)
+                  .hover((s) => s.bg(t.hover))
+                  .cursor_pointer()
+                  .text_size(11)
+                  .font_medium()
+                  .text_color(t.foreground)
+                  .on_click((_e, cx) => {
+                    this.graphLimit += 50;
+                    this.fetchGraph(cx);
+                  })
+                  .child("⇣ 載入更多歷史紀錄 (+50 筆)")
+              )
+          )
       )
       // Commit Detail Inspector (when a commit is clicked)
       .when(Boolean(this.selectedCommit), (el) =>
         el.child(
           v_flex()
-            .h(200)
+            .h(210)
             .flex_none()
             .p(10)
             .gap(8)
@@ -900,31 +998,59 @@ export default class EnhancedGit extends View {
                 .justify_between()
                 .child(
                   h_flex()
-                    .gap(6)
+                    .gap(8)
                     .items_center()
-                    .child(div().font_semibold().text_size(12).text_color(t.foreground).child(this.selectedCommit.hash))
-                    .child(div().text_size(11.5).text_color(t.dim).child(`by ${this.selectedCommit.author}`))
-                    .child(div().text_size(11.5).text_color(t.dim).child(`(${this.selectedCommit.relDate})`))
+                    .child(
+                      div()
+                        .size(20)
+                        .rounded_full()
+                        .bg(t.accent)
+                        .items_center()
+                        .justify_center()
+                        .child(
+                          div()
+                            .text_size(10)
+                            .font_bold()
+                            .text_color(t.background)
+                            .child((this.selectedCommit?.author || "A")[0].toUpperCase())
+                        )
+                    )
+                    .child(
+                      div()
+                        .text_size(11.5)
+                        .font_semibold()
+                        .text_color(t.foreground)
+                        .child(this.selectedCommit?.subject || "")
+                    )
+                    .child(
+                      div()
+                        .px(6)
+                        .py(1)
+                        .rounded(4)
+                        .bg(t.raised)
+                        .font_family("JetBrains Mono")
+                        .text_size(10)
+                        .text_color(t.dim)
+                        .child(this.selectedCommit?.hash || "")
+                    )
                 )
                 .child(
                   div()
+                    .px(6)
+                    .py(2)
+                    .rounded(4)
+                    .hover((s) => s.bg(t.hover))
+                    .cursor_pointer()
                     .text_size(11)
                     .text_color(t.dim)
-                    .cursor_pointer()
-                    .hover((s) => s.text_color(t.foreground))
-                    .on_click((_e, cx) => this.selectCommit(this.selectedCommit, cx))
+                    .on_click(() => {
+                      this.selectedCommit = null;
+                      cx.notify();
+                    })
                     .child("✕ Close")
                 )
             )
-            .child(
-              div()
-                .text_size(12)
-                .font_medium()
-                .text_color(t.foreground)
-                .truncate()
-                .child(this.selectedCommit.subject)
-            )
-            // Changed files & diff split
+            // Files and Diff view
             .child(
               h_flex()
                 .flex_1()
@@ -933,19 +1059,19 @@ export default class EnhancedGit extends View {
                 .child(
                   v_flex()
                     .w(180)
-                    .flex_none()
+                    .min_h(0)
+                    .bg(t.background)
+                    .rounded(4)
                     .overflow_y_scrollbar()
-                    .gap(2)
                     .children(
                       this.commitFiles.map((f) =>
                         h_flex()
-                          .h(22)
+                          .h(24)
                           .px(6)
+                          .gap(6)
                           .items_center()
-                          .justify_between()
-                          .rounded(4)
                           .cursor_pointer()
-                          .when(this.selectedCommitFile === f.path, (e) => e.bg(t.selected))
+                          .when(this.selectedCommitFile === f.path, (el) => el.bg(t.selected))
                           .hover((s) => s.bg(t.hover))
                           .on_click((_e, cx) => this.selectCommitFile(f.path, cx))
                           .child(div().flex_1().min_w(0).text_size(11).text_color(t.foreground).truncate().child(f.path))
@@ -968,112 +1094,520 @@ export default class EnhancedGit extends View {
       );
   }
 
-  // --- Render Layout Header (Branch, Sync, Tabs, Popout) ---
+  // --- View: Branches Tab (Fork Style Local & Remotes Tree) ---
+  renderBranchesTab(t, cx) {
+    const branches = this.refs?.branches || [];
+    const remotes = this.refs?.remotes || [];
+    const tags = this.refs?.tags || [];
+
+    return v_flex()
+      .size_full()
+      .min_h(0)
+      .gap(12)
+      .overflow_y_scrollbar()
+      .p(6)
+      // Section: Local Branches
+      .child(
+        v_flex()
+          .gap(4)
+          .child(
+            h_flex()
+              .items_center()
+              .justify_between()
+              .px(4)
+              .child(div().text_size(11).font_bold().text_color(t.dim).child("LOCAL BRANCHES"))
+              .child(
+                div()
+                  .px(6)
+                  .py(0.5)
+                  .rounded(10)
+                  .bg(t.raised)
+                  .text_size(10)
+                  .font_semibold()
+                  .text_color(t.muted)
+                  .child(String(branches.length))
+              )
+          )
+          .children(
+            branches.map((b) =>
+              h_flex()
+                .h(28)
+                .flex_none()
+                .px(8)
+                .gap(8)
+                .items_center()
+                .justify_between()
+                .rounded(6)
+                .when(b.isCurrent, (el) => el.bg(t.raised))
+                .hover((s) => s.bg(t.hover))
+                .child(
+                  h_flex()
+                    .gap(6)
+                    .items_center()
+                    .child(
+                      div()
+                        .text_size(12)
+                        .text_color(b.isCurrent ? t.accent : t.muted)
+                        .child("⎇")
+                    )
+                    .child(
+                      div()
+                        .text_size(11.5)
+                        .font_semibold()
+                        .when(!b.isCurrent, (el) => el.font_normal())
+                        .text_color(b.isCurrent ? t.foreground : t.muted)
+                        .child(b.name)
+                    )
+                    .when(b.isCurrent, (el) =>
+                      el.child(
+                        div()
+                          .px(6)
+                          .py(0.5)
+                          .rounded(8)
+                          .bg(t.accent + "26")
+                          .text_size(9.5)
+                          .font_semibold()
+                          .text_color(t.accent)
+                          .child("✓ HEAD")
+                      )
+                    )
+                    .when(b.ahead > 0, (el) =>
+                      el.child(div().text_size(10).font_medium().text_color(t.accent).child(`↑${b.ahead}`))
+                    )
+                    .when(b.behind > 0, (el) =>
+                      el.child(div().text_size(10).font_medium().text_color("#f59e0b").child(`↓${b.behind}`))
+                    )
+                )
+                .when(!b.isCurrent, (el) =>
+                  el.child(
+                    div()
+                      .px(8)
+                      .py(2)
+                      .rounded(4)
+                      .bg(t.surface)
+                      .hover((s) => s.bg(t.raised))
+                      .cursor_pointer()
+                      .text_size(10.5)
+                      .text_color(t.foreground)
+                      .on_click((_e, cx) => this.doCheckout(b.name, cx))
+                      .child("切換 Checkout")
+                  )
+                )
+            )
+          )
+      )
+      // Section: Remote Branches
+      .child(
+        v_flex()
+          .gap(4)
+          .child(
+            h_flex()
+              .items_center()
+              .justify_between()
+              .px(4)
+              .child(div().text_size(11).font_bold().text_color(t.dim).child("REMOTES"))
+              .child(
+                div()
+                  .px(6)
+                  .py(0.5)
+                  .rounded(10)
+                  .bg(t.raised)
+                  .text_size(10)
+                  .font_semibold()
+                  .text_color(t.muted)
+                  .child(String(remotes.length))
+              )
+          )
+          .children(
+            remotes.map((r) =>
+              h_flex()
+                .h(28)
+                .flex_none()
+                .px(8)
+                .gap(8)
+                .items_center()
+                .justify_between()
+                .rounded(6)
+                .hover((s) => s.bg(t.hover))
+                .child(
+                  h_flex()
+                    .gap(6)
+                    .items_center()
+                    .child(div().text_size(11).text_color(t.dim).child("☁"))
+                    .child(div().text_size(11.5).text_color(t.muted).child(r.name))
+                )
+                .child(
+                  div()
+                    .px(8)
+                    .py(2)
+                    .rounded(4)
+                    .bg(t.surface)
+                    .hover((s) => s.bg(t.raised))
+                    .cursor_pointer()
+                    .text_size(10.5)
+                    .text_color(t.foreground)
+                    .on_click((_e, cx) => this.doCheckout(r.name, cx))
+                    .child("檢出 Checkout")
+                )
+            )
+          )
+      )
+      // Section: Tags
+      .child(
+        v_flex()
+          .gap(4)
+          .child(
+            h_flex()
+              .items_center()
+              .justify_between()
+              .px(4)
+              .child(div().text_size(11).font_bold().text_color(t.dim).child("TAGS"))
+              .child(
+                div()
+                  .px(6)
+                  .py(0.5)
+                  .rounded(10)
+                  .bg(t.raised)
+                  .text_size(10)
+                  .font_semibold()
+                  .text_color(t.muted)
+                  .child(String(tags.length))
+              )
+          )
+          .children(
+            tags.map((tag) =>
+              h_flex()
+                .h(26)
+                .flex_none()
+                .px(8)
+                .gap(6)
+                .items_center()
+                .rounded(6)
+                .hover((s) => s.bg(t.hover))
+                .child(div().text_size(11).text_color("#f59e0b").child("🏷"))
+                .child(div().text_size(11.5).text_color(t.foreground).child(tag.name))
+            )
+          )
+      );
+  }
+
+  // --- View: Stashes Tab (Fork Style) ---
+  renderStashesTab(t, cx) {
+    const stashes = this.refs?.stashes || [];
+
+    return v_flex()
+      .size_full()
+      .min_h(0)
+      .gap(10)
+      .p(6)
+      .child(
+        h_flex()
+          .items_center()
+          .justify_between()
+          .px(4)
+          .child(
+            h_flex()
+              .gap(6)
+              .items_center()
+              .child(div().text_size(11).font_bold().text_color(t.dim).child("STASHES"))
+              .child(
+                div()
+                  .px(6)
+                  .py(0.5)
+                  .rounded(10)
+                  .bg(t.raised)
+                  .text_size(10)
+                  .font_semibold()
+                  .text_color(t.muted)
+                  .child(String(stashes.length))
+              )
+          )
+          .child(
+            div()
+              .px(8)
+              .py(3)
+              .rounded(4)
+              .bg(t.raised)
+              .hover((s) => s.bg(t.hover))
+              .cursor_pointer()
+              .text_size(10.5)
+              .font_medium()
+              .text_color(t.foreground)
+              .on_click((_e, cx) => this.doStash(cx))
+              .child("＋ 暫存當前變更")
+          )
+      )
+      .child(
+        v_flex()
+          .flex_1()
+          .min_h(0)
+          .gap(4)
+          .overflow_y_scrollbar()
+          .children(
+            stashes.map((s) =>
+              h_flex()
+                .h(34)
+                .flex_none()
+                .px(8)
+                .gap(8)
+                .items_center()
+                .justify_between()
+                .rounded(6)
+                .bg(t.surface)
+                .hover((s) => s.bg(t.hover))
+                .child(
+                  h_flex()
+                    .gap(6)
+                    .items_center()
+                    .child(div().text_size(12).text_color(t.dim).child("📦"))
+                    .child(div().text_size(11.5).font_semibold().text_color(t.foreground).child(s.id))
+                    .child(div().text_size(11).text_color(t.dim).truncate().child(s.message))
+                )
+                .child(
+                  h_flex()
+                    .gap(4)
+                    .child(
+                      div()
+                        .px(6)
+                        .py(2)
+                        .rounded(4)
+                        .bg(t.raised)
+                        .hover((s) => s.bg(t.hover))
+                        .cursor_pointer()
+                        .text_size(10.5)
+                        .text_color(t.foreground)
+                        .on_click((_e, cx) => this.doStashApply(s.id, cx))
+                        .child("套用 Apply")
+                    )
+                    .child(
+                      div()
+                        .px(6)
+                        .py(2)
+                        .rounded(4)
+                        .bg(t.raised)
+                        .hover((s) => s.bg(t.hover))
+                        .cursor_pointer()
+                        .text_size(10.5)
+                        .text_color(t.foreground)
+                        .on_click((_e, cx) => this.doStashPop(cx))
+                        .child("彈出 Pop")
+                    )
+                    .child(
+                      div()
+                        .px(6)
+                        .py(2)
+                        .rounded(4)
+                        .hover((s) => s.bg(t.raised))
+                        .cursor_pointer()
+                        .text_size(10.5)
+                        .text_color(t.ansi1)
+                        .on_click((_e, cx) => this.doStashDrop(s.id, cx))
+                        .child("捨棄 Drop")
+                    )
+                )
+            )
+          )
+          .when(stashes.length === 0, (el) =>
+            el.child(
+              v_flex()
+                .size_full()
+                .items_center()
+                .justify_center()
+                .gap(6)
+                .child(div().text_size(12).text_color(t.dim).child("No stashes saved"))
+            )
+          )
+      );
+  }
+
+  // --- Render Layout Header (Fork Style: Repo, Branch, Sync, Tabs) ---
   renderHeader(t, cx) {
     const status = this.status;
     const branch = status?.branch || "main";
     const ahead = status?.ahead || 0;
     const behind = status?.behind || 0;
+    const stagedCount = status?.stagedFiles?.length || 0;
+    const unstagedCount = status?.unstagedFiles?.length || 0;
+    const totalChanges = stagedCount + unstagedCount;
 
-    return h_flex()
-      .h(38)
+    return v_flex()
+      .w_full()
       .flex_none()
-      .px(10)
-      .gap(8)
-      .items_center()
-      .justify_between()
       .border_b(1)
       .border_color(t.border)
-      // Left: Branch & Sync Info
+      // Top Row: Branch, Sync Indicators & Actions
       .child(
         h_flex()
-          .gap(6)
+          .h(36)
+          .flex_none()
+          .px(10)
+          .gap(8)
           .items_center()
+          .justify_between()
+          // Left: Branch & Sync Indicators
           .child(
             h_flex()
-              .gap(4)
-              .px(6)
-              .py(2)
-              .rounded(4)
-              .bg(t.raised)
+              .gap(6)
               .items_center()
-              .child(div().text_size(11.5).child("⎇"))
-              .child(div().font_semibold().text_size(11.5).text_color(t.foreground).child(branch))
+              .child(
+                h_flex()
+                  .gap(4)
+                  .px(6)
+                  .py(2)
+                  .rounded(4)
+                  .bg(t.raised)
+                  .items_center()
+                  .child(div().text_size(11.5).child("⎇"))
+                  .child(div().font_semibold().text_size(11.5).text_color(t.foreground).child(branch))
+              )
+              .when(ahead > 0, (el) =>
+                el.child(
+                  div()
+                    .text_size(10.5)
+                    .font_semibold()
+                    .text_color(t.accent)
+                    .child(`↑${ahead}`)
+                )
+              )
+              .when(behind > 0, (el) =>
+                el.child(
+                  div()
+                    .text_size(10.5)
+                    .font_semibold()
+                    .text_color("#f59e0b")
+                    .child(`↓${behind}`)
+                )
+              )
+              // Pull / Push / Fetch buttons
+              .child(
+                h_flex()
+                  .gap(4)
+                  .child(
+                    div()
+                      .px(6)
+                      .py(1.5)
+                      .rounded(3)
+                      .bg(t.surface)
+                      .hover((s) => s.bg(t.hover))
+                      .cursor_pointer()
+                      .text_size(10.5)
+                      .text_color(t.foreground)
+                      .on_click((_e, cx) => this.doPush(cx))
+                      .child("⇪ Push")
+                  )
+                  .child(
+                    div()
+                      .px(6)
+                      .py(1.5)
+                      .rounded(3)
+                      .bg(t.surface)
+                      .hover((s) => s.bg(t.hover))
+                      .cursor_pointer()
+                      .text_size(10.5)
+                      .text_color(t.foreground)
+                      .on_click((_e, cx) => this.doPull(cx))
+                      .child("⇩ Pull")
+                  )
+                  .child(
+                    div()
+                      .px(6)
+                      .py(1.5)
+                      .rounded(3)
+                      .bg(t.surface)
+                      .hover((s) => s.bg(t.hover))
+                      .cursor_pointer()
+                      .text_size(10.5)
+                      .text_color(t.foreground)
+                      .on_click((_e, cx) => this.doFetch(cx))
+                      .child("↻ Fetch")
+                  )
+              )
           )
-          // Sync indicators
-          .when(ahead > 0, (el) =>
-            el.child(
-              div()
-                .text_size(10.5)
-                .font_medium()
-                .text_color(t.accent)
-                .child(`↑${ahead}`)
-            )
-          )
-          .when(behind > 0, (el) =>
-            el.child(
-              div()
-                .text_size(10.5)
-                .font_medium()
-                .text_color(t.blocked || "#f59e0b")
-                .child(`↓${behind}`)
-            )
-          )
-          // Push / Pull action buttons
+          // Right: Refresh & Popout/Close
           .child(
             h_flex()
               .gap(4)
+              .items_center()
               .child(
                 div()
-                  .px(6)
-                  .py(1.5)
-                  .rounded(3)
-                  .bg(t.surface)
-                  .hover((s) => s.bg(t.hover))
+                  .p(3)
+                  .rounded(4)
                   .cursor_pointer()
-                  .text_size(10.5)
-                  .text_color(t.foreground)
-                  .on_click((_e, cx) => this.doPush(cx))
-                  .child("⇪ Push")
+                  .hover((s) => s.bg(t.hover))
+                  .text_size(11)
+                  .text_color(t.dim)
+                  .on_click((_e, cx) => this.refresh(cx))
+                  .child("↻")
               )
-              .child(
-                div()
-                  .px(6)
-                  .py(1.5)
-                  .rounded(3)
-                  .bg(t.surface)
-                  .hover((s) => s.bg(t.hover))
-                  .cursor_pointer()
-                  .text_size(10.5)
-                  .text_color(t.foreground)
-                  .on_click((_e, cx) => this.doPull(cx))
-                  .child("⇩ Pull")
+              .when(this.role === "panel", (el) =>
+                el.child(
+                  div()
+                    .p(3)
+                    .rounded(4)
+                    .cursor_pointer()
+                    .hover((s) => s.bg(t.hover))
+                    .text_size(11)
+                    .text_color(t.dim)
+                    .on_click(() => this.openOverlayDialog())
+                    .child("⧉")
+                )
+              )
+              .when(this.role === "dialog", (el) =>
+                el.child(
+                  div()
+                    .p(3)
+                    .rounded(4)
+                    .cursor_pointer()
+                    .hover((s) => s.bg(t.hover))
+                    .text_size(12)
+                    .text_color(t.dim)
+                    .on_click(() => this.close())
+                    .child("✕")
+                )
               )
           )
       )
-      // Right: Tabs & Popout
+      // Bottom Row: Fork Navigation Tabs
       .child(
         h_flex()
+          .h(32)
+          .flex_none()
+          .px(10)
           .gap(4)
           .items_center()
           // Tab: Changes
           .child(
-            div()
+            h_flex()
               .px(8)
               .py(2)
+              .gap(5)
+              .items_center()
               .rounded(4)
               .cursor_pointer()
               .when(this.tab === "changes", (el) => el.bg(t.raised).text_color(t.foreground))
               .when(this.tab !== "changes", (el) => el.text_color(t.dim).hover((s) => s.text_color(t.foreground)))
-              .text_size(11.5)
+              .text_size(11)
               .font_medium()
               .on_click(() => {
                 this.tab = "changes";
                 cx.notify();
               })
-              .child("Changes")
+              .child(div().child("Changes"))
+              .when(totalChanges > 0, (el) =>
+                el.child(
+                  div()
+                    .px(5)
+                    .py(0.2)
+                    .rounded(8)
+                    .bg(t.accent)
+                    .text_size(9.5)
+                    .font_bold()
+                    .text_color(t.background)
+                    .child(String(totalChanges))
+                )
+              )
           )
-          // Tab: Git Graph
+          // Tab: Subway Graph
           .child(
             div()
               .px(8)
@@ -1082,7 +1616,7 @@ export default class EnhancedGit extends View {
               .cursor_pointer()
               .when(this.tab === "graph", (el) => el.bg(t.raised).text_color(t.foreground))
               .when(this.tab !== "graph", (el) => el.text_color(t.dim).hover((s) => s.text_color(t.foreground)))
-              .text_size(11.5)
+              .text_size(11)
               .font_medium()
               .on_click((_e, cx) => {
                 this.tab = "graph";
@@ -1091,47 +1625,41 @@ export default class EnhancedGit extends View {
                 }
                 cx.notify();
               })
-              .child("🌿 Graph")
+              .child("🌿 Commits Graph")
           )
-          // Refresh
+          // Tab: Branches
           .child(
             div()
-              .p(3)
+              .px(8)
+              .py(2)
               .rounded(4)
               .cursor_pointer()
-              .hover((s) => s.bg(t.hover))
+              .when(this.tab === "branches", (el) => el.bg(t.raised).text_color(t.foreground))
+              .when(this.tab !== "branches", (el) => el.text_color(t.dim).hover((s) => s.text_color(t.foreground)))
               .text_size(11)
-              .text_color(t.dim)
-              .on_click((_e, cx) => this.refresh(cx))
-              .child("↻")
+              .font_medium()
+              .on_click(() => {
+                this.tab = "branches";
+                cx.notify();
+              })
+              .child("⎇ Branches")
           )
-          // Expand button (when in panel mode)
-          .when(this.role === "panel", (el) =>
-            el.child(
-              div()
-                .p(3)
-                .rounded(4)
-                .cursor_pointer()
-                .hover((s) => s.bg(t.hover))
-                .text_size(11)
-                .text_color(t.dim)
-                .on_click(() => this.openOverlayDialog())
-                .child("⧉")
-            )
-          )
-          // Close button (when in dialog mode)
-          .when(this.role === "dialog", (el) =>
-            el.child(
-              div()
-                .p(3)
-                .rounded(4)
-                .cursor_pointer()
-                .hover((s) => s.bg(t.hover))
-                .text_size(12)
-                .text_color(t.dim)
-                .on_click(() => this.close())
-                .child("✕")
-            )
+          // Tab: Stashes
+          .child(
+            div()
+              .px(8)
+              .py(2)
+              .rounded(4)
+              .cursor_pointer()
+              .when(this.tab === "stashes", (el) => el.bg(t.raised).text_color(t.foreground))
+              .when(this.tab !== "stashes", (el) => el.text_color(t.dim).hover((s) => s.text_color(t.foreground)))
+              .text_size(11)
+              .font_medium()
+              .on_click(() => {
+                this.tab = "stashes";
+                cx.notify();
+              })
+              .child("📦 Stashes")
           )
       );
   }
@@ -1155,7 +1683,12 @@ export default class EnhancedGit extends View {
         .border_1()
         .border_color(t.border)
         .rounded(8)
-        .child(h_flex().justify_between().child(div().font_semibold().text_size(13).text_color(t.foreground).child("Git Manager")).child(div().cursor_pointer().on_click((_e, cx) => this.refresh(cx)).child("↻")))
+        .child(
+          h_flex()
+            .justify_between()
+            .child(div().font_semibold().text_size(13).text_color(t.foreground).child("Git Manager (Fork Style)"))
+            .child(div().cursor_pointer().on_click((_e, cx) => this.refresh(cx)).child("↻"))
+        )
         .child(div().text_size(12).text_color(t.dim).child(this.error));
     }
 
@@ -1185,7 +1718,15 @@ export default class EnhancedGit extends View {
           .flex_1()
           .min_h(0)
           .p(10)
-          .child(this.tab === "changes" ? this.renderChangesTab(t, cx) : this.renderGraphTab(t, cx))
+          .child(
+            this.tab === "changes"
+              ? this.renderChangesTab(t, cx)
+              : this.tab === "graph"
+              ? this.renderGraphTab(t, cx)
+              : this.tab === "branches"
+              ? this.renderBranchesTab(t, cx)
+              : this.renderStashesTab(t, cx)
+          )
       );
   }
 }

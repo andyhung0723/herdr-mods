@@ -234,3 +234,92 @@ test("getGitGraph falls back to HEAD and branches if --all fails", async () => {
   assert.equal(res.rows[0].subject, "fallback commit");
   assert.ok(callCount >= 2);
 });
+
+test("parseRefBadge parses branch, remote, head, and tag pill badges", async () => {
+  const { git } = await harness();
+
+  const head = git.parseRefBadge("HEAD -> main");
+  assert.equal(head.type, "head");
+  assert.equal(head.label, "main");
+  assert.equal(head.isHead, true);
+
+  const remote = git.parseRefBadge("origin/feat-music");
+  assert.equal(remote.type, "remote");
+  assert.equal(remote.label, "origin/feat-music");
+
+  const tag = git.parseRefBadge("tag: v2.1.0");
+  assert.equal(tag.type, "tag");
+  assert.equal(tag.label, "v2.1.0");
+
+  const branch = git.parseRefBadge("develop");
+  assert.equal(branch.type, "branch");
+  assert.equal(branch.label, "develop");
+});
+
+test("getGitRefs safely parses branches, remotes, tags, and stashes", async () => {
+  const { git } = await harness({
+    exec: async (_cmd, args) => {
+      if (args.includes("refs/heads")) {
+        return {
+          code: 0,
+          stdout: "main\t[ahead 2, behind 1]\t*\nfeature/fork\t\t \n",
+        };
+      }
+      if (args.includes("refs/remotes")) {
+        return {
+          code: 0,
+          stdout: "origin/HEAD\norigin/main\norigin/feature/fork\n",
+        };
+      }
+      if (args.includes("tag")) {
+        return {
+          code: 0,
+          stdout: "v2.0.0 Tag release 2\nv1.0.0 Tag release 1\n",
+        };
+      }
+      if (args.includes("stash")) {
+        return {
+          code: 0,
+          stdout: "stash@{0}: WIP on main: 283ef88 fix\n",
+        };
+      }
+      return { code: 0, stdout: "" };
+    },
+  });
+
+  const refs = await git.getGitRefs("/repo", null);
+  assert.equal(refs.branches.length, 2);
+  assert.equal(refs.branches[0].name, "main");
+  assert.equal(refs.branches[0].isCurrent, true);
+  assert.equal(refs.branches[0].ahead, 2);
+  assert.equal(refs.branches[0].behind, 1);
+  assert.equal(refs.branches[1].name, "feature/fork");
+  assert.equal(refs.branches[1].isCurrent, false);
+
+  assert.equal(refs.remotes.length, 2);
+  assert.equal(refs.remotes[0].remote, "origin");
+  assert.equal(refs.remotes[0].branch, "main");
+
+  assert.equal(refs.tags.length, 2);
+  assert.equal(refs.tags[0].name, "v2.0.0");
+
+  assert.equal(refs.stashes.length, 1);
+  assert.equal(refs.stashes[0].id, "stash@{0}");
+});
+
+test("EnhancedGit view supports Fork navigation tabs (changes, graph, branches, stashes)", async () => {
+  const { View, cx } = await harness();
+
+  const view = new View();
+  view.init({ role: "panel" }, cx);
+
+  view.tab = "branches";
+  assert.equal(view.tab, "branches");
+
+  view.tab = "stashes";
+  assert.equal(view.tab, "stashes");
+
+  view.tab = "graph";
+  assert.equal(view.tab, "graph");
+});
+

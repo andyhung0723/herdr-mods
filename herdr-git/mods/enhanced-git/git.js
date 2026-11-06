@@ -172,6 +172,27 @@ export async function getGitStatus(cwd, on) {
   };
 }
 
+export function parseRefBadge(refStr) {
+  let type = "branch"; // "head" | "branch" | "remote" | "tag"
+  let label = (refStr || "").trim();
+  let isHead = false;
+
+  if (label.startsWith("HEAD -> ")) {
+    isHead = true;
+    type = "head";
+    label = label.replace("HEAD -> ", "").trim();
+  } else if (label === "HEAD") {
+    isHead = true;
+    type = "head";
+  } else if (label.startsWith("tag: ")) {
+    type = "tag";
+    label = label.replace("tag: ", "").trim();
+  } else if (label.includes("/")) {
+    type = "remote";
+  }
+  return { type, label, isHead, raw: refStr };
+}
+
 export function parseGraphRow(rawLine) {
   const parts = rawLine.split("\t");
   if (parts.length < 2) {
@@ -182,6 +203,7 @@ export function parseGraphRow(rawLine) {
       hash: null,
       parents: [],
       refs: [],
+      badges: [],
       subject: "",
       relDate: "",
       author: "",
@@ -207,6 +229,7 @@ export function parseGraphRow(rawLine) {
       hash: null,
       parents: [],
       refs: [],
+      badges: [],
       subject: "",
       relDate: "",
       author: "",
@@ -216,11 +239,15 @@ export function parseGraphRow(rawLine) {
   const parents = (parts[1] || "").split(" ").filter(Boolean);
   const rawRefs = (parts[2] || "").trim();
   const refs = [];
+  const badges = [];
   if (rawRefs.startsWith("(") && rawRefs.endsWith(")")) {
     const inner = rawRefs.slice(1, -1);
     for (const r of inner.split(", ")) {
       const trimmed = r.trim();
-      if (trimmed) refs.push(trimmed);
+      if (trimmed) {
+        refs.push(trimmed);
+        badges.push(parseRefBadge(trimmed));
+      }
     }
   }
 
@@ -234,6 +261,7 @@ export function parseGraphRow(rawLine) {
     hash,
     parents,
     refs,
+    badges,
     subject,
     relDate,
     author,
@@ -396,4 +424,101 @@ export async function gitStash(cwd, on, message = "Herdr stash") {
 
 export async function gitStashPop(cwd, on) {
   return exec("git", ["stash", "pop"], { cwd, on });
+}
+
+export async function gitStashApply(cwd, on, stashId) {
+  const args = stashId ? ["stash", "apply", stashId] : ["stash", "apply"];
+  return exec("git", args, { cwd, on });
+}
+
+export async function gitStashDrop(cwd, on, stashId) {
+  const args = stashId ? ["stash", "drop", stashId] : ["stash", "drop"];
+  return exec("git", args, { cwd, on });
+}
+
+export async function gitCheckout(cwd, on, branch) {
+  return exec("git", ["checkout", branch], { cwd, on });
+}
+
+export async function getGitRefs(cwd, on) {
+  if (!cwd) return { branches: [], remotes: [], tags: [], stashes: [], error: "No folder" };
+
+  let repoCwd = cwd;
+  try {
+    const topRes = await exec("git", ["rev-parse", "--show-toplevel"], { cwd, on });
+    if (topRes.code === 0 && topRes.stdout.trim()) {
+      repoCwd = topRes.stdout.trim();
+    }
+  } catch {}
+
+  const git = (args) => exec("git", [...READ_FLAGS, ...args], { cwd: repoCwd, on });
+
+  const [branchesRes, remotesRes, tagsRes, stashesRes] = await Promise.all([
+    git(["for-each-ref", "--format=%(refname:short)\t%(upstream:track)\t%(HEAD)", "refs/heads"]).catch(() => ({ code: 1, stdout: "" })),
+    git(["for-each-ref", "--format=%(refname:short)", "refs/remotes"]).catch(() => ({ code: 1, stdout: "" })),
+    git(["tag", "--list", "--sort=-creatordate", "-n1"]).catch(() => ({ code: 1, stdout: "" })),
+    git(["stash", "list"]).catch(() => ({ code: 1, stdout: "" })),
+  ]);
+
+  const branches = [];
+  if (branchesRes.code === 0 && branchesRes.stdout) {
+    for (const line of branchesRes.stdout.split("\n")) {
+      if (!line.trim()) continue;
+      const [name, track, headMarker] = line.split("\t");
+      let ahead = 0;
+      let behind = 0;
+      if (track) {
+        const aheadMatch = /ahead\s+(\d+)/.exec(track);
+        const behindMatch = /behind\s+(\d+)/.exec(track);
+        if (aheadMatch) ahead = Number(aheadMatch[1]);
+        if (behindMatch) behind = Number(behindMatch[1]);
+      }
+      branches.push({
+        name: (name || "").trim(),
+        ahead,
+        behind,
+        isCurrent: (headMarker || "").trim() === "*",
+      });
+    }
+  }
+
+  const remotes = [];
+  if (remotesRes.code === 0 && remotesRes.stdout) {
+    for (const line of remotesRes.stdout.split("\n")) {
+      const trimmed = line.trim();
+      if (!trimmed || trimmed.endsWith("/HEAD")) continue;
+      const parts = trimmed.split("/");
+      const remote = parts[0];
+      const branch = parts.slice(1).join("/");
+      remotes.push({ name: trimmed, remote, branch });
+    }
+  }
+
+  const tags = [];
+  if (tagsRes.code === 0 && tagsRes.stdout) {
+    for (const line of tagsRes.stdout.split("\n")) {
+      const trimmed = line.trim();
+      if (!trimmed) continue;
+      const tagName = trimmed.split(/\s+/)[0];
+      if (tagName && !tags.some((t) => t.name === tagName)) {
+        tags.push({ name: tagName });
+      }
+      if (tags.length >= 25) break;
+    }
+  }
+
+  const stashes = [];
+  if (stashesRes.code === 0 && stashesRes.stdout) {
+    for (const line of stashesRes.stdout.split("\n")) {
+      const trimmed = line.trim();
+      if (!trimmed) continue;
+      const colonIdx = trimmed.indexOf(":");
+      const id = colonIdx > 0 ? trimmed.slice(0, colonIdx) : trimmed;
+      const message = colonIdx > 0 ? trimmed.slice(colonIdx + 1).trim() : "";
+      stashes.push({ id, message });
+      if (stashes.length >= 25) break;
+    }
+  }
+
+  return { branches, remotes, tags, stashes, error: null };
 }
