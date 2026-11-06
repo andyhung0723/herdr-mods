@@ -8,21 +8,35 @@ import {
   spaces, focused, panes, shared, setShared
 } from "herdr";
 
-function resolveLocation() {
-  const f = focused();
-  const allSpaces = spaces();
+export function resolveLocation() {
+  const f = focused() || {};
+  const allSpaces = spaces() || [];
   const space = allSpaces.find((s) => s.id === f?.space) ?? allSpaces.find((s) => s.active) ?? allSpaces[0];
-  const allPanes = panes();
-  const tabs = new Set((space?.tabs ?? []).map((t) => t.id));
-  
-  // Find pane in current space or active tab
-  const cwd = allPanes.find((p) => tabs.has(p.tab) && p.cwd)?.cwd
-    || (f?.pane ? allPanes.find((p) => p.pane === f.pane)?.cwd : null)
-    || f?.cwd
+  const allPanes = panes() || [];
+
+  // 1. Highest priority: currently focused pane
+  let pane = f.pane ? allPanes.find((p) => p.pane === f.pane) : null;
+
+  // 2. Second priority: pane in the currently active tab (e.g. Tab 2, Tab 3)
+  if (!pane?.cwd) {
+    const activeTabId = f.tab || space?.tabs?.find((t) => t.active)?.id;
+    if (activeTabId) {
+      pane = allPanes.find((p) => p.tab === activeTabId && p.cwd);
+    }
+  }
+
+  // 3. Fallbacks: direct focused cwd, space tab pane, or space root
+  const cwd = pane?.cwd
+    || f.cwd
+    || (space?.tabs ? allPanes.find((p) => space.tabs.some((t) => t.id === p.tab) && p.cwd)?.cwd : null)
     || space?.folder
+    || space?.cwd
     || ".";
 
-  const on = space?.machine ?? null;
+  const on = f.pane === null
+    ? (f.terminal?.includes("/") ? f.terminal.split("/")[0] : null)
+    : space?.machine ?? null;
+
   return { cwd, on, space: space?.id, spaceName: space?.name || "Workspace" };
 }
 

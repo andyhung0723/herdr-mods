@@ -3,7 +3,7 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 import vm from "node:vm";
 
-async function harness(propsValue = {}) {
+async function harness(propsValue = {}, apiOverrides = {}) {
   const events = [];
   const sharedMap = new Map();
   const files = new Map([
@@ -48,6 +48,7 @@ async function harness(propsValue = {}) {
     settings: () => ({ font_family: "monospace" }),
     shared: (k) => sharedMap.get(k) ?? null,
     setShared: (k, v) => sharedMap.set(k, v),
+    ...apiOverrides,
   };
 
   const context = vm.createContext({});
@@ -133,8 +134,9 @@ async function harness(propsValue = {}) {
   };
 
   const buildFileTree = main.namespace.buildFileTree;
+  const resolveLocation = main.namespace.resolveLocation;
 
-  return { api, View, instance, cx, events, files, linkHandlers, sharedMap, buildFileTree };
+  return { api, View, instance, cx, events, files, linkHandlers, sharedMap, buildFileTree, resolveLocation };
 }
 
 test("markdown-preview loads default README.md when no file prop is provided", async () => {
@@ -274,4 +276,62 @@ test("markdown-preview folder collapsing toggle and overlay state", async () => 
   assert.equal(instance.collapsedFolders.has("docs"), true);
   instance.toggleFolder("docs", cx);
   assert.equal(instance.collapsedFolders.has("docs"), false);
+});
+
+test("resolveLocation picks currently focused pane and second tab cwd over first tab", async () => {
+  const { resolveLocation } = await harness({}, {
+    focused: () => ({
+      space: "s1",
+      tab: "tab-2",
+      pane: "pane-2",
+      cwd: "/repo/tab2-project",
+    }),
+    spaces: () => [
+      {
+        id: "s1",
+        active: true,
+        folder: "/repo",
+        tabs: [
+          { id: "tab-1", title: "Tab 1", active: false },
+          { id: "tab-2", title: "Tab 2", active: true },
+        ],
+      },
+    ],
+    panes: () => [
+      { pane: "pane-1", tab: "tab-1", cwd: "/repo/tab1-first" },
+      { pane: "pane-2", tab: "tab-2", cwd: "/repo/tab2-project" },
+    ],
+  });
+
+  const loc = resolveLocation();
+  assert.equal(loc.cwd, "/repo/tab2-project");
+});
+
+test("resolveLocation picks active tab when pane is not directly focused", async () => {
+  const { resolveLocation } = await harness({}, {
+    focused: () => ({
+      space: "s1",
+      tab: "tab-2",
+      pane: null,
+      cwd: null,
+    }),
+    spaces: () => [
+      {
+        id: "s1",
+        active: true,
+        folder: "/repo",
+        tabs: [
+          { id: "tab-1", title: "Tab 1", active: false },
+          { id: "tab-2", title: "Tab 2", active: true },
+        ],
+      },
+    ],
+    panes: () => [
+      { pane: "pane-1", tab: "tab-1", cwd: "/repo/tab1-first" },
+      { pane: "pane-2", tab: "tab-2", cwd: "/repo/tab2-project" },
+    ],
+  });
+
+  const loc = resolveLocation();
+  assert.equal(loc.cwd, "/repo/tab2-project");
 });
