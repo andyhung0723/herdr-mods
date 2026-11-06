@@ -710,7 +710,7 @@ export default class AgentQuotas extends View {
                           h_flex()
                             .gap(6)
                             .items_center()
-                            .child(div().text_size(12).font_medium().text_color(t.foreground).child(`${antigravity?.model || "Gemini"} 5-Hour Limit`))
+                            .child(div().text_size(12).font_medium().text_color(t.foreground).child("5-Hour Rolling Limit"))
                             .child(
                               div()
                                 .text_size(11)
@@ -756,7 +756,7 @@ export default class AgentQuotas extends View {
                           h_flex()
                             .gap(6)
                             .items_center()
-                            .child(div().text_size(12).font_medium().text_color(t.foreground).child(antigravity.week.displayName || "Claude & GPT Weekly Limit"))
+                            .child(div().text_size(12).font_medium().text_color(t.foreground).child("Weekly Rolling Limit"))
                             .child(
                               div()
                                 .text_size(11)
