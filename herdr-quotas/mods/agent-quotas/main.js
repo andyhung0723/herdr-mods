@@ -146,7 +146,11 @@ export default class AgentQuotas extends View {
                   .font_medium()
                   .text_color(claudeColor)
                   .child(
-                    claude?.hasCredit
+                    claude?.isConsumingCredit
+                      ? `Credit: ${claude.credit.used} (${claude.credit.percent}%)`
+                      : claude?.hasFiveHour && claude?.fiveHour?.percent > 0
+                      ? `5h: ${claude.fiveHour.percent}%`
+                      : claude?.hasCredit
                       ? `Credit: ${claude.credit.used} (${claude.credit.percent}%)`
                       : claude?.available
                       ? `Week: ${claude.week.percent}%`

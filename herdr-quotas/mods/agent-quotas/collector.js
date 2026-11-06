@@ -124,6 +124,15 @@ export async function collectClaudeData() {
       (limitCents > 0 ? (usedCents / limitCents) * 100 : 0)
     );
 
+    // Active consuming pool:
+    // If seven_day is exhausted (>= 100%) and extra usage is enabled/active, Claude consumes extra credit.
+    // Otherwise, normal prompts consume the 5-hour rolling session limit.
+    const isConsumingCredit = hasCredit && (sevenDay >= 100 || usedCents > 0);
+    const primaryPercent = isConsumingCredit
+      ? creditPercent
+      : (fiveHour > 0 ? fiveHour : (sevenDay > 0 ? sevenDay : 0));
+    const primaryLabel = isConsumingCredit ? "Credit" : (fiveHour > 0 || !sevenDay ? "5h" : "Week");
+
     return {
       name: "Claude Code",
       available: true,
@@ -144,6 +153,7 @@ export async function collectClaudeData() {
         timeRemaining: formatTimeRemaining(sevenDayResetsAt),
       },
       hasCredit: hasCredit,
+      isConsumingCredit: isConsumingCredit,
       credit: {
         used: `$${creditUsed}`,
         limit: `$${creditLimit}`,
@@ -151,7 +161,8 @@ export async function collectClaudeData() {
         rawUsed: usedCents / 100,
         rawLimit: limitCents / 100,
       },
-      primaryPercent: hasCredit ? creditPercent : sevenDay,
+      primaryPercent: primaryPercent,
+      primaryLabel: primaryLabel,
     };
   } catch (err) {
     return { name: "Claude Code", available: false, error: String(err) };
@@ -324,14 +335,16 @@ export async function collectAntigravityData() {
     }
   } catch {}
 
-  const isFiveHourHigher = (hasFiveHour ? fiveHour.percent : 0) > (hasWeek ? week.percent : 0);
-  const primaryPercent = isFiveHourHigher
-    ? (hasFiveHour ? fiveHour.percent : 0)
-    : (hasWeek ? week.percent : (hasFiveHour ? fiveHour.percent : 0));
-  const primaryLabel = isFiveHourHigher ? "5h" : (hasWeek ? "Week" : (hasFiveHour ? "5h" : "Quota"));
-  const primaryRemainingPercent = isFiveHourHigher
+  // Antigravity directly consumes the 5-Hour rolling window on prompt execution.
+  // We prioritize fiveHour as the primary consuming pool.
+  const hasFiveHourActive = hasFiveHour && typeof fiveHour.percent === "number";
+  const primaryPercent = hasFiveHourActive
+    ? fiveHour.percent
+    : (hasWeek ? week.percent : 0);
+  const primaryLabel = hasFiveHourActive ? "5h" : (hasWeek ? "Week" : "Quota");
+  const primaryRemainingPercent = hasFiveHourActive
     ? fiveHour.remainingPercent
-    : (hasWeek ? week.remainingPercent : fiveHour.remainingPercent);
+    : (hasWeek ? week.remainingPercent : 100);
 
   return {
     name: "Antigravity",

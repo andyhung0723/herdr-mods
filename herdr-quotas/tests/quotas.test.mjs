@@ -230,9 +230,9 @@ test("collector parses Claude Code, Codex, and Antigravity metrics with 5hr, wee
   assert.equal(res.antigravity.week.percent, 40);
   assert.equal(res.antigravity.week.remainingPercent, 60);
   assert.equal(res.antigravity.week.displayName, "Weekly Limit Remaining");
-  assert.equal(res.antigravity.primaryPercent, 40);
-  assert.equal(res.antigravity.primaryLabel, "Week");
-  assert.equal(res.antigravity.primaryRemainingPercent, 60);
+  assert.equal(res.antigravity.primaryPercent, 25);
+  assert.equal(res.antigravity.primaryLabel, "5h");
+  assert.equal(res.antigravity.primaryRemainingPercent, 75);
   assert.equal(res.antigravity.stepsToday, 4500);
   assert.equal(res.antigravity.formattedSteps, "4.5k");
   assert.equal(res.antigravity.sessionsToday, 3);
