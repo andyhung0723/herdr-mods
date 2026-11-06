@@ -402,7 +402,8 @@ export default class Scratchpad extends View {
                         .text_size(10)
                         .text_color(t.dim)
                         .on_click((e, cx) => {
-                          e.stop_propagation?.();
+                          cx?.stop_propagation?.();
+                          e?.stop_propagation?.();
                           this.closeTab(tab.id, cx);
                         })
                         .child("✕")

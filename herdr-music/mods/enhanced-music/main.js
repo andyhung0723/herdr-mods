@@ -71,7 +71,7 @@ export default class EnhancedMusic extends View {
         .bg(isMain ? t.accent : t.raised)
         .text_color(isMain ? t.raised : t.foreground)
         .hover((s) => s.opacity(0.85))
-        .on_click(() => this.handleControl(action, cx))
+        .on_click((_e, clickCx) => this.handleControl(action, clickCx || cx))
         .child(
           svg(`mods/enhanced-music/${icon}.svg`)
             .size(isMain ? 16 : 14)

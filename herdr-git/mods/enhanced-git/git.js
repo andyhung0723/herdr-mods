@@ -12,13 +12,22 @@ export function resolveLocation() {
   const allPanes = panes() || [];
   const f = focused() || {};
 
-  const activeSpace = allSpaces.find((s) => s.active);
-  let pane = null;
-  if (f.pane) {
-    pane = allPanes.find((p) => p.pane === f.pane);
+  const activeSpace = allSpaces.find((s) => s.id === f?.space) ?? allSpaces.find((s) => s.active) ?? allSpaces[0];
+
+  // 1. Highest priority: currently focused pane
+  let pane = f.pane ? allPanes.find((p) => p.pane === f.pane) : null;
+
+  // 2. Second priority: pane in the currently active tab (e.g. Tab 2, Tab 3)
+  if (!pane?.cwd) {
+    const activeTabId = f.tab || activeSpace?.tabs?.find((t) => t.active)?.id;
+    if (activeTabId) {
+      pane = allPanes.find((p) => p.tab === activeTabId && p.cwd);
+    }
   }
+
+  // 3. Fallback to any pane in the active space
   if (!pane && activeSpace) {
-    pane = allPanes.find((p) => p.space === activeSpace.id);
+    pane = allPanes.find((p) => p.space === activeSpace.id || activeSpace.tabs?.some((t) => t.id === p.tab));
   }
 
   const cwd = pane?.cwd || f.cwd || activeSpace?.folder || activeSpace?.cwd || null;

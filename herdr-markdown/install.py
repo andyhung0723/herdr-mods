@@ -169,10 +169,9 @@ def main() -> int:
     args = parse_args(sys.argv[1:])
     source_root = Path(__file__).resolve().parent
     preview_src = source_root / "mods" / MOD_PREVIEW
-    files_src = source_root / "mods" / MOD_FILES
 
-    if not preview_src.exists() or not files_src.exists():
-        print("Error: Missing mod source folders in repository", file=sys.stderr)
+    if not preview_src.exists():
+        print("Error: Missing mod source folder in repository", file=sys.stderr)
         return 1
 
     home = resolve_home(args.home)
@@ -182,8 +181,6 @@ def main() -> int:
     try:
         run_mod_check(preview_src, home)
         print(f"✔ {MOD_PREVIEW} passed check")
-        run_mod_check(files_src, home)
-        print(f"✔ {MOD_FILES} passed check")
     except InstallError as e:
         print(f"Error: {e}", file=sys.stderr)
         return 1
@@ -196,7 +193,6 @@ def main() -> int:
 
     try:
         copy_mod(preview_src, mods_dir / MOD_PREVIEW, args.dry_run)
-        copy_mod(files_src, mods_dir / MOD_FILES, args.dry_run)
 
         keys_path = home / "keys.json"
         update_keys_json(keys_path, backups_dir, args.dry_run)
@@ -211,7 +207,7 @@ def main() -> int:
     print("\nUsage:")
     print("  1. Overlay / Popup: Press Ctrl+B M (or run: herdr-app do mod.open '{\"name\":\"markdown-preview\"}')")
     print("  2. Split Pane: Run: herdr-app do pane.split '{\"direction\":\"right\",\"mod\":\"markdown-preview\"}'")
-    print("  3. Enhanced Files: Click any .md file in the Files panel to preview with toggle and split buttons!")
+    print("  3. Enhanced Files: Managed by herdr-files package")
     return 0
 
 

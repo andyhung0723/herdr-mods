@@ -31,11 +31,13 @@ export default class EnhancedWorkspaceChrome extends View {
   init(_props, cx) {
     this.tickCount = 0;
 
-    // Animation timer: ticks every 250ms for live clock + animated pixel pet
-    cx.timer.every(250, (timerCx) => {
-      this.tick();
-      timerCx.notify();
-    });
+    if (!_props?.footer && !props()?.footer) {
+      // Animation timer: ticks every 250ms for live clock + animated pixel pet
+      cx.timer.every(250, (timerCx) => {
+        this.tick();
+        timerCx.notify();
+      });
+    }
   }
 
   tick() {

@@ -130,14 +130,20 @@ def update_layout_sidebar(layout_path: Path, backups_dir: Path, dry_run: bool) -
     except Exception as e:
         raise InstallError(f"Failed to parse layout {layout_path}: {e}")
 
-    # Check if widget is already present
+    # Check if widget is already present and ensure 3-row height limits
     widget_exists = False
+    widget_updated = False
 
     def check_node(node: Any) -> None:
-        nonlocal widget_exists
+        nonlocal widget_exists, widget_updated
         if isinstance(node, dict):
             if node.get("id") == WIDGET_ID:
                 widget_exists = True
+                if node.get("max", 0) < 165:
+                    node["size"] = {"px": 145}
+                    node["min"] = 110
+                    node["max"] = 165
+                    widget_updated = True
             for v in node.values():
                 check_node(v)
         elif isinstance(node, list):
@@ -146,7 +152,16 @@ def update_layout_sidebar(layout_path: Path, backups_dir: Path, dry_run: bool) -
 
     check_node(data)
     if widget_exists:
-        print(f"Widget {WIDGET_ID} already present in {layout_path.name}")
+        if widget_updated:
+            if dry_run:
+                print(f"[dry-run] Update widget {WIDGET_ID} height in {layout_path.name}")
+            else:
+                bk = backup_file(layout_path, backups_dir)
+                print(f"Backed up {layout_path.name} to {bk}")
+                layout_path.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n", "utf-8")
+                print(f"Updated {WIDGET_ID} height limits in {layout_path.name}")
+        else:
+            print(f"Widget {WIDGET_ID} already present in {layout_path.name}")
         return
 
     # Find "sidebar-lists" and insert widget as last child
@@ -166,10 +181,10 @@ def update_layout_sidebar(layout_path: Path, backups_dir: Path, dry_run: bool) -
                         }
                     },
                     "size": {
-                        "px": 96
+                        "px": 145
                     },
-                    "min": 80,
-                    "max": 130
+                    "min": 110,
+                    "max": 165
                 }
                 node["children"].append(widget_node)
                 inserted = True

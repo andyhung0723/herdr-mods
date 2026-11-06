@@ -323,3 +323,28 @@ test("EnhancedGit view supports Fork navigation tabs (changes, graph, branches, 
   assert.equal(view.tab, "graph");
 });
 
+test("resolveLocation prioritizes active second tab cwd when pane is not directly focused", async () => {
+  const { git } = await harness({
+    focused: () => ({ pane: null, tab: null, space: "s1" }),
+    spaces: () => [
+      {
+        id: "s1",
+        active: true,
+        folder: "/repo-root",
+        tabs: [
+          { id: "tab1", active: false },
+          { id: "tab2", active: true },
+        ],
+      },
+    ],
+    panes: () => [
+      { pane: "p1", tab: "tab1", space: "s1", cwd: "/repo-root/tab1-dir" },
+      { pane: "p2", tab: "tab2", space: "s1", cwd: "/repo-root/tab2-dir" },
+    ],
+  });
+
+  const loc = git.resolveLocation();
+  assert.equal(loc.cwd, "/repo-root/tab2-dir");
+});
+
+

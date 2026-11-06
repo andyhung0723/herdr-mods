@@ -15,10 +15,29 @@ import {
 } from "./fs-actions.js";
 
 function location() {
-  const space = spaces().find(s => s.active), f = focused();
-  const pane = f?.pane ? panes().find(p => p.pane === f.pane) : null;
-  const on = f?.pane === null ? (f.terminal?.includes("/") ? f.terminal.split("/")[0] : null) : space?.machine ?? null;
-  return { cwd: pane?.cwd || f?.cwd || space?.folder, on, space: space?.id };
+  const allSpaces = spaces() || [];
+  const allPanes = panes() || [];
+  const f = focused() || {};
+  const space = allSpaces.find((s) => s.id === f?.space) ?? allSpaces.find((s) => s.active) ?? allSpaces[0];
+
+  // 1. Highest priority: currently focused pane
+  let pane = f.pane ? allPanes.find((p) => p.pane === f.pane) : null;
+
+  // 2. Second priority: pane in the currently active tab (e.g. Tab 2, Tab 3)
+  if (!pane?.cwd) {
+    const activeTabId = f.tab || space?.tabs?.find((t) => t.active)?.id;
+    if (activeTabId) {
+      pane = allPanes.find((p) => p.tab === activeTabId && p.cwd);
+    }
+  }
+
+  // 3. Fallback to any pane in the active space
+  if (!pane && space) {
+    pane = allPanes.find((p) => p.space === space.id || space.tabs?.some((t) => t.id === p.tab));
+  }
+
+  const on = f.pane === null ? (f.terminal?.includes("/") ? f.terminal.split("/")[0] : null) : space?.machine ?? null;
+  return { cwd: pane?.cwd || f.cwd || space?.folder, on, space: space?.id };
 }
 const key = () => JSON.stringify(location());
 const LANG = { ts: "js", tsx: "js", mts: "js", cts: "js", jsx: "js", mjs: "js", toml: "yaml", jsonc: "json", svelte: "html", vue: "html", md: "markdown" };
@@ -337,7 +356,7 @@ export default class EnhancedFiles extends View {
     }
     this.creating = { type, parentDir: cleanParent };
     this.createInput = InputState.new({ value: "" });
-    this.createInput.on("submit", () => this.submitCreate(cx));
+    this.createInput.on("submit", (_e, submitCx) => this.submitCreate(submitCx || cx));
     cx.timer.after(50, () => this.createInput?.focus());
     cx.notify();
   }
@@ -384,7 +403,7 @@ export default class EnhancedFiles extends View {
     const dotIdx = originalName.lastIndexOf(".");
     const selEnd = isDir || dotIdx <= 0 ? originalName.length : dotIdx;
     this.renameInput.set_selected_range({ start: 0, end: selEnd });
-    this.renameInput.on("submit", () => this.submitRename(cx));
+    this.renameInput.on("submit", (_e, submitCx) => this.submitRename(submitCx || cx));
     cx.timer.after(50, () => this.renameInput?.focus());
     cx.notify();
   }
