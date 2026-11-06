@@ -248,14 +248,110 @@ export async function collectCodexData() {
   };
 }
 
+export async function collectAntigravityData() {
+  const h = home();
+  let model = "Gemini 3.8 Flash";
+  try {
+    const raw = await readTextFile(`${h}/.gemini/antigravity-cli/settings.json`);
+    if (raw) {
+      const cfg = JSON.parse(raw);
+      if (cfg.model) model = cfg.model;
+    }
+  } catch {}
+
+  let stepsToday = 0;
+  let sessionsToday = 0;
+  try {
+    const dbPath = `${h}/.gemini/antigravity-cli/conversation_summaries.db`;
+    const res = await exec("sqlite3", [
+      "-csv",
+      "-noheader",
+      dbPath,
+      "SELECT COALESCE(SUM(step_count), 0), COUNT(conversation_id) FROM conversation_summaries WHERE date(last_modified_time) = date('now');",
+    ]);
+    if (res.code === 0 && res.stdout) {
+      const parts = res.stdout.trim().split(",");
+      if (parts.length >= 2) {
+        stepsToday = Number(parts[0]) || 0;
+        sessionsToday = Number(parts[1]) || 0;
+      }
+    }
+  } catch {}
+
+  let email = "";
+  let tier = "Antigravity";
+  let hasFiveHour = false;
+  let fiveHour = { percent: 0, resetsAt: null, timeRemaining: null };
+  let hasWeek = false;
+  let week = { percent: 0, resetsAt: null, timeRemaining: null };
+
+  try {
+    let scriptPath = `${h}/.config/herdr-app/mods/agent-quotas/antigravity_limits.py`;
+    const exists = await readTextFile(scriptPath);
+    if (!exists) {
+      scriptPath = `${h}/Workspace/side-project/herdr-customized/herdr-quotas/mods/agent-quotas/antigravity_limits.py`;
+    }
+    const res = await exec("python3", [scriptPath]);
+    if (res.code === 0 && res.stdout) {
+      const parsed = JSON.parse(res.stdout.trim());
+      if (parsed && !parsed.error) {
+        if (parsed.email) email = parsed.email;
+        if (parsed.tier) tier = parsed.tier;
+
+        if (parsed.fiveHour && typeof parsed.fiveHour.percent === "number") {
+          hasFiveHour = true;
+          fiveHour = {
+            percent: parsed.fiveHour.percent,
+            resetsAt: parsed.fiveHour.resetTime,
+            timeRemaining: formatTimeRemaining(parsed.fiveHour.resetTime),
+          };
+        }
+
+        if (parsed.weekly && typeof parsed.weekly.percent === "number") {
+          hasWeek = true;
+          week = {
+            percent: parsed.weekly.percent,
+            resetsAt: parsed.weekly.resetTime,
+            timeRemaining: formatTimeRemaining(parsed.weekly.resetTime),
+          };
+        }
+      }
+    }
+  } catch {}
+
+  const primaryPercent = Math.max(
+    hasFiveHour ? fiveHour.percent : 0,
+    hasWeek ? week.percent : 0
+  );
+
+  return {
+    name: "Antigravity",
+    available: true,
+    tier: tier,
+    email: email,
+    model: model,
+    hasFiveHour: hasFiveHour,
+    fiveHour: fiveHour,
+    hasWeek: hasWeek,
+    week: week,
+    hasCredit: false,
+    stepsToday: stepsToday,
+    formattedSteps: formatTokenCount(stepsToday),
+    sessionsToday: sessionsToday,
+    primaryPercent: primaryPercent,
+  };
+}
+
 export async function collectAllQuotas() {
-  const [claude, codex] = await Promise.all([
+  const [claude, codex, antigravity] = await Promise.all([
     collectClaudeData(),
     collectCodexData(),
+    collectAntigravityData(),
   ]);
   return {
     claude,
     codex,
+    antigravity,
     updatedAt: new Date(),
   };
 }

@@ -42,11 +42,32 @@ async function harness() {
       if (path.includes(".claude")) return fakeClaudeJson;
       if (path.includes(".codex/auth.json")) return fakeCodexAuth;
       if (path.includes(".codex/config.toml")) return 'model = "gpt-5"';
+      if (path.includes(".gemini/antigravity-cli/settings.json")) return '{"model": "Gemini 3.8 Flash (Medium)"}';
       return null;
     },
     exec: async (cmd, args) => {
       events.push(["exec", cmd, args]);
       if (cmd === "python3") {
+        const script = args?.[0] || "";
+        if (script.includes("antigravity_limits.py")) {
+          return {
+            code: 0,
+            stdout: JSON.stringify({
+              email: "test@example.com",
+              tier: "Antigravity",
+              fiveHour: {
+                percent: 25,
+                remainingFraction: 0.75,
+                resetTime: "2026-11-06T15:00:00Z",
+              },
+              weekly: {
+                percent: 40,
+                remainingFraction: 0.6,
+                resetTime: "2026-11-13T03:00:00Z",
+              },
+            }),
+          };
+        }
         return {
           code: 0,
           stdout: JSON.stringify({
@@ -56,6 +77,12 @@ async function harness() {
             resetCredits: 2,
           }),
         };
+      }
+      if (cmd === "sqlite3") {
+        const db = args?.[2] || "";
+        if (db.includes("conversation_summaries.db")) {
+          return { code: 0, stdout: "4500,3\n" };
+        }
       }
       return { code: 0, stdout: "1500000,12\n" };
     },
@@ -150,7 +177,7 @@ test("collector formats tokens and time strings correctly", async () => {
   assert.equal(collector.formatTimeRemaining(null), null);
 });
 
-test("collector parses Claude Code and Codex metrics with 5hr, week, and credit", async () => {
+test("collector parses Claude Code, Codex, and Antigravity metrics with 5hr, week, and credit", async () => {
   const { collector } = await harness();
   const res = await collector.collectAllQuotas();
 
@@ -174,6 +201,20 @@ test("collector parses Claude Code and Codex metrics with 5hr, week, and credit"
   assert.equal(res.codex.hasCredit, false);
   assert.equal(res.codex.tokensToday, 1500000);
   assert.equal(res.codex.turnsToday, 12);
+
+  assert.equal(res.antigravity.available, true);
+  assert.equal(res.antigravity.name, "Antigravity");
+  assert.equal(res.antigravity.tier, "Antigravity");
+  assert.equal(res.antigravity.email, "test@example.com");
+  assert.equal(res.antigravity.model, "Gemini 3.8 Flash (Medium)");
+  assert.equal(res.antigravity.hasFiveHour, true);
+  assert.equal(res.antigravity.fiveHour.percent, 25);
+  assert.equal(res.antigravity.hasWeek, true);
+  assert.equal(res.antigravity.week.percent, 40);
+  assert.equal(res.antigravity.primaryPercent, 40);
+  assert.equal(res.antigravity.stepsToday, 4500);
+  assert.equal(res.antigravity.formattedSteps, "4.5k");
+  assert.equal(res.antigravity.sessionsToday, 3);
 });
 
 test("AgentQuotas view initializes and switches between widget and dialog", async () => {

@@ -66,7 +66,7 @@ export default class AgentQuotas extends View {
       mod: "agent-quotas",
       kind: "dialog",
       width: 780,
-      height: 620,
+      height: 700,
       props: { role: "dialog", initialData: this.data },
     });
     setShared(OVERLAY_KEY, id);
@@ -83,12 +83,16 @@ export default class AgentQuotas extends View {
   renderWidget(t, cx) {
     const claude = this.data?.claude;
     const codex = this.data?.codex;
+    const antigravity = this.data?.antigravity;
 
     const claudePercent = claude?.primaryPercent ?? 0;
     const claudeColor = getBarColor(t, claudePercent);
 
     const codexPercent = codex?.primaryPercent ?? 0;
     const codexColor = getBarColor(t, codexPercent);
+
+    const antigravityPercent = antigravity?.primaryPercent ?? 0;
+    const antigravityColor = getBarColor(t, antigravityPercent);
 
     return v_flex()
       .id("agent-quotas-widget")
@@ -214,6 +218,55 @@ export default class AgentQuotas extends View {
                 )
             )
           )
+      )
+      // Row 3: Antigravity
+      .child(
+        v_flex()
+          .gap(2)
+          .child(
+            h_flex()
+              .items_center()
+              .justify_between()
+              .child(
+                h_flex()
+                  .gap(5)
+                  .items_center()
+                  .child(image("custom-icons/antigravity.svg").w(12).h(12).flex_none())
+                  .child(div().text_size(11).font_medium().text_color(t.foreground).child("Antigravity"))
+              )
+              .child(
+                div()
+                  .text_size(10.5)
+                  .font_medium()
+                  .text_color(antigravityColor)
+                  .child(
+                    antigravity?.hasFiveHour
+                      ? `5h: ${antigravity.fiveHour.percent}%`
+                      : antigravity?.hasWeek
+                      ? `Week: ${antigravity.week.percent}%`
+                      : antigravity?.formattedSteps
+                      ? `${antigravity.formattedSteps} steps`
+                      : "-"
+                  )
+              )
+          )
+          .when(Boolean(antigravity?.hasFiveHour || antigravity?.hasWeek), (el) =>
+            el.child(
+              h_flex()
+                .h(4)
+                .w_full()
+                .rounded(2)
+                .bg(t.background)
+                .overflow_hidden()
+                .child(
+                  div()
+                    .h_full()
+                    .w(`${Math.max(2, Math.min(100, antigravityPercent))}%`)
+                    .bg(antigravityColor)
+                    .rounded(2)
+                )
+            )
+          )
       );
   }
 
@@ -221,15 +274,13 @@ export default class AgentQuotas extends View {
   renderDialog(t, cx) {
     const claude = this.data?.claude;
     const codex = this.data?.codex;
-
-    const sevenDayPercent = claude?.week?.percent ?? 0;
-    const sevenDayColor = getBarColor(t, sevenDayPercent);
+    const antigravity = this.data?.antigravity;
 
     return v_flex()
       .id("agent-quotas-dialog")
       .track_focus(this.handle)
       .w(780)
-      .h(620)
+      .h(700)
       .size_full()
       .bg(t.popover)
       .rounded(12)
@@ -602,6 +653,162 @@ export default class AgentQuotas extends View {
                       .gap(2)
                       .child(div().text_size(11).text_color(t.dim).child("Today's Active Turns"))
                       .child(div().text_size(17).font_semibold().text_color(t.foreground).child(String(codex?.turnsToday || 0)))
+                  )
+              )
+          )
+          // --- Card 3: Antigravity ---
+          .child(
+            v_flex()
+              .p(14)
+              .gap(10)
+              .rounded(10)
+              .bg(t.surface)
+              .border_1()
+              .border_color(t.border)
+              // Header line
+              .child(
+                h_flex()
+                  .items_center()
+                  .justify_between()
+                  .child(
+                    h_flex()
+                      .gap(8)
+                      .items_center()
+                      .child(image("custom-icons/antigravity.svg").w(18).h(18).flex_none())
+                      .child(div().font_semibold().text_size(14).text_color(t.foreground).child("Antigravity"))
+                      .child(
+                        div()
+                          .px(6)
+                          .py(1)
+                          .rounded(4)
+                          .bg(t.raised)
+                          .text_size(10.5)
+                          .text_color(t.dim)
+                          .child(antigravity?.tier || "Standard")
+                      )
+                  )
+                  .child(
+                    div()
+                      .text_size(11)
+                      .text_color(t.dim)
+                      .child(antigravity?.email ? antigravity.email : `Model: ${antigravity?.model || "Gemini"}`)
+                  )
+              )
+              // 5-Hour Limit Quota line (if hasFiveHour)
+              .when(Boolean(antigravity?.hasFiveHour), (fEl) =>
+                fEl.child(
+                  v_flex()
+                    .gap(4)
+                    .child(
+                      h_flex()
+                        .items_center()
+                        .justify_between()
+                        .child(
+                          h_flex()
+                            .gap(6)
+                            .items_center()
+                            .child(div().text_size(12).font_medium().text_color(t.foreground).child("5-Hour Rolling Limit"))
+                            .child(
+                              div()
+                                .text_size(11)
+                                .text_color(t.dim)
+                                .child(antigravity.fiveHour.timeRemaining ? `(resets ${antigravity.fiveHour.timeRemaining})` : "")
+                            )
+                        )
+                        .child(
+                          div()
+                            .text_size(12)
+                            .font_semibold()
+                            .text_color(getBarColor(t, antigravity.fiveHour.percent))
+                            .child(`${antigravity.fiveHour.percent}%`)
+                        )
+                    )
+                    .child(
+                      h_flex()
+                        .h(6)
+                        .w_full()
+                        .rounded(3)
+                        .bg(t.background)
+                        .overflow_hidden()
+                        .child(
+                          div()
+                            .h_full()
+                            .w(`${Math.max(2, Math.min(100, antigravity.fiveHour.percent))}%`)
+                            .bg(getBarColor(t, antigravity.fiveHour.percent))
+                            .rounded(3)
+                        )
+                    )
+                )
+              )
+              // Weekly Quota line (if hasWeek)
+              .when(Boolean(antigravity?.hasWeek), (wEl) =>
+                wEl.child(
+                  v_flex()
+                    .gap(4)
+                    .child(
+                      h_flex()
+                        .items_center()
+                        .justify_between()
+                        .child(
+                          h_flex()
+                            .gap(6)
+                            .items_center()
+                            .child(div().text_size(12).font_medium().text_color(t.foreground).child("Weekly Rolling Usage"))
+                            .child(
+                              div()
+                                .text_size(11)
+                                .text_color(t.dim)
+                                .child(antigravity.week.timeRemaining ? `(resets ${antigravity.week.timeRemaining})` : "")
+                            )
+                        )
+                        .child(
+                          div()
+                            .text_size(12)
+                            .font_semibold()
+                            .text_color(getBarColor(t, antigravity.week.percent))
+                            .child(`${antigravity.week.percent}%`)
+                        )
+                    )
+                    .child(
+                      h_flex()
+                        .h(6)
+                        .w_full()
+                        .rounded(3)
+                        .bg(t.background)
+                        .overflow_hidden()
+                        .child(
+                          div()
+                            .h_full()
+                            .w(`${Math.max(2, Math.min(100, antigravity.week.percent))}%`)
+                            .bg(getBarColor(t, antigravity.week.percent))
+                            .rounded(3)
+                        )
+                    )
+                )
+              )
+              // Metrics line
+              .child(
+                h_flex()
+                  .gap(10)
+                  .child(
+                    v_flex()
+                      .flex_1()
+                      .p(10)
+                      .rounded(6)
+                      .bg(t.background)
+                      .gap(2)
+                      .child(div().text_size(11).text_color(t.dim).child("Today's Steps"))
+                      .child(div().text_size(17).font_semibold().text_color(t.foreground).child(antigravity?.formattedSteps || "0"))
+                  )
+                  .child(
+                    v_flex()
+                      .flex_1()
+                      .p(10)
+                      .rounded(6)
+                      .bg(t.background)
+                      .gap(2)
+                      .child(div().text_size(11).text_color(t.dim).child("Active Sessions"))
+                      .child(div().text_size(17).font_semibold().text_color(t.foreground).child(String(antigravity?.sessionsToday || 0)))
                   )
               )
           )
