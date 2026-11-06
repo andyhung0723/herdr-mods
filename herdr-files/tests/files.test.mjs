@@ -132,3 +132,19 @@ test("contextMenu structure - validates items and actions definition", () => {
   assert.equal(menuConfig.actions.includes("rename"), true);
 });
 
+test("enhanced-files main.js - verifies fast 400ms CWD dirty check and expanded LRU", async () => {
+  const fs = await import("node:fs");
+  const path = await import("node:path");
+  const mainPath = path.resolve(import.meta.dirname, "../mods/enhanced-files/main.js");
+  const content = fs.readFileSync(mainPath, "utf-8");
+
+  // Fast timer 400ms
+  assert.match(content, /cx\.timer\.every\(400,/);
+  // Fast CWD Dirty Check
+  assert.match(content, /Fast CWD Dirty Check/);
+  assert.match(content, /currentKey !== this\.lastObservedKey/);
+  // Expanded LRU cache
+  assert.match(content, /this\.saved\.size > 24/);
+});
+
+

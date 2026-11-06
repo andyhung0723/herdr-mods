@@ -39,7 +39,10 @@ function location() {
   const on = f.pane === null ? (f.terminal?.includes("/") ? f.terminal.split("/")[0] : null) : space?.machine ?? null;
   return { cwd: pane?.cwd || f.cwd || space?.folder, on, space: space?.id };
 }
-const key = () => JSON.stringify(location());
+const key = () => {
+  const l = location();
+  return `${l.space ?? ""}::${l.on ?? ""}::${l.cwd ?? ""}`;
+};
 const LANG = { ts: "js", tsx: "js", mts: "js", cts: "js", jsx: "js", mjs: "js", toml: "yaml", jsonc: "json", svelte: "html", vue: "html", md: "markdown" };
 const PER_FOLDER = 500, TOTAL = 5000;
 
@@ -125,9 +128,10 @@ export default class EnhancedFiles extends View {
     this.renameInput = null;
     this.confirmDelete = null;
     this.lastRefreshedAt = 0;
+    this.lastObservedKey = key();
 
-    // Listen for actions dispatched from popup overlay
-    cx.timer.every(250, (timerCx) => {
+    // Fast check every 400ms: handles both file actions and immediate terminal CWD changes
+    cx.timer.every(400, (timerCx) => {
       const act = shared("files.action");
       if (act) {
         setShared("files.action", null);
@@ -143,11 +147,20 @@ export default class EnhancedFiles extends View {
       if (ref && ref !== this.lastRefreshedAt) {
         this.lastRefreshedAt = ref;
         this.refresh(timerCx);
+        return;
+      }
+
+      // Fast CWD Dirty Check: if cwd changed (e.g. user cd'd in terminal), update immediately!
+      const currentKey = key();
+      if (currentKey !== this.lastObservedKey) {
+        this.lastObservedKey = currentKey;
+        this.refresh(timerCx);
       }
     });
 
     this.refresh(cx);
-    cx.timer.every(10000, cx => this.refresh(cx));
+    // Background safety revalidation every 15s for external filesystem changes
+    cx.timer.every(15000, cx => this.refresh(cx));
   }
 
   watch(root, cx) {
@@ -183,11 +196,12 @@ export default class EnhancedFiles extends View {
           entries: new Map(this.entries),
           marks: { ...this.marks },
         });
-        if (this.saved.size > 8) {
+        if (this.saved.size > 24) {
           const oldestKey = this.saved.keys().next().value;
           this.saved.delete(oldestKey);
         }
       }
+      this.lastObservedKey = next;
       const saved = this.saved.get(next);
       this.context = { key: next, cwd, on };
       this.root = cwd;
