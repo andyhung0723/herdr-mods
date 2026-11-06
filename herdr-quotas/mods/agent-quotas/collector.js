@@ -324,10 +324,14 @@ export async function collectAntigravityData() {
     }
   } catch {}
 
-  const primaryPercent = Math.max(
-    hasFiveHour ? fiveHour.percent : 0,
-    hasWeek ? week.percent : 0
-  );
+  const isFiveHourHigher = (hasFiveHour ? fiveHour.percent : 0) > (hasWeek ? week.percent : 0);
+  const primaryPercent = isFiveHourHigher
+    ? (hasFiveHour ? fiveHour.percent : 0)
+    : (hasWeek ? week.percent : (hasFiveHour ? fiveHour.percent : 0));
+  const primaryLabel = isFiveHourHigher ? "5h" : (hasWeek ? "Week" : (hasFiveHour ? "5h" : "Quota"));
+  const primaryRemainingPercent = isFiveHourHigher
+    ? fiveHour.remainingPercent
+    : (hasWeek ? week.remainingPercent : fiveHour.remainingPercent);
 
   return {
     name: "Antigravity",
@@ -344,6 +348,8 @@ export async function collectAntigravityData() {
     formattedSteps: formatTokenCount(stepsToday),
     sessionsToday: sessionsToday,
     primaryPercent: primaryPercent,
+    primaryLabel: primaryLabel,
+    primaryRemainingPercent: primaryRemainingPercent,
   };
 }
 

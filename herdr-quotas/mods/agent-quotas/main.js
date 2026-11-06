@@ -240,10 +240,12 @@ export default class AgentQuotas extends View {
                   .font_medium()
                   .text_color(antigravityColor)
                   .child(
-                    antigravity?.hasFiveHour
+                    antigravity?.primaryLabel
+                      ? `${antigravity.primaryLabel}: ${antigravity.primaryPercent}% (${antigravity.primaryRemainingPercent}% left)`
+                      : antigravity?.hasFiveHour
                       ? `5h: ${antigravity.fiveHour.percent}% (${antigravity.fiveHour.remainingPercent}% left)`
                       : antigravity?.hasWeek
-                      ? `Week: ${antigravity.week.percent}%`
+                      ? `Week: ${antigravity.week.percent}% (${antigravity.week.remainingPercent}% left)`
                       : antigravity?.formattedSteps
                       ? `${antigravity.formattedSteps} steps`
                       : "-"
