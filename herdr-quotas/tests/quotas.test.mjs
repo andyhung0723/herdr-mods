@@ -126,7 +126,17 @@ async function harness() {
   const element = new Proxy(
     {},
     {
-      get: () => () => element,
+      get: (target, prop) => {
+        if (prop === "when") {
+          return (cond, fn) => {
+            if (cond && typeof fn === "function") {
+              fn(element);
+            }
+            return element;
+          };
+        }
+        return () => element;
+      },
     }
   );
 
@@ -217,17 +227,23 @@ test("collector parses Claude Code, Codex, and Antigravity metrics with 5hr, wee
   assert.equal(res.antigravity.sessionsToday, 3);
 });
 
-test("AgentQuotas view initializes and switches between widget and dialog", async () => {
+test("AgentQuotas view initializes, fetches data, and renders both widget and dialog", async () => {
   const { View, cx } = await harness();
   const widgetInstance = new View();
   widgetInstance.init({ role: "widget" }, cx);
   await new Promise((r) => setImmediate(r));
   assert.equal(widgetInstance.role, "widget");
+  assert.ok(widgetInstance.data);
+  const widgetRendered = widgetInstance.render(cx);
+  assert.ok(widgetRendered);
 
   const dialogInstance = new View();
   dialogInstance.init({ role: "dialog", overlay: "overlay-test" }, cx);
   await new Promise((r) => setImmediate(r));
   assert.equal(dialogInstance.role, "dialog");
+  assert.ok(dialogInstance.data);
+  const dialogRendered = dialogInstance.render(cx);
+  assert.ok(dialogRendered);
 });
 
 test("collector selects newest Claude profile by fetchedAtMs and parses spend amount", async () => {

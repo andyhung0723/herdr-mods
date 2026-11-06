@@ -276,6 +276,9 @@ export default class AgentQuotas extends View {
     const codex = this.data?.codex;
     const antigravity = this.data?.antigravity;
 
+    const sevenDayPercent = claude?.week?.percent ?? 0;
+    const sevenDayColor = getBarColor(t, sevenDayPercent);
+
     return v_flex()
       .id("agent-quotas-dialog")
       .track_focus(this.handle)
