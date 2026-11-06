@@ -79,8 +79,8 @@ export default class Tabs extends View {
     const panel = find(root, "panel"), body = find(root, "panel-body");
     const rawPanels = shared("workspace.panels");
     const enabled = Array.isArray(rawPanels)
-      ? (rawPanels.includes("music") ? rawPanels : [...rawPanels, "music"])
-      : ["files", "changes", "music"];
+      ? [...new Set([...rawPanels, "music", "context"])]
+      : ["files", "changes", "music", "context"];
     this.syncPanel(space, panel, body, enabled);
     const panelButton = (id, label, icon) => {
       const on = panel && !panel.hidden && body?.active === id;
@@ -100,6 +100,7 @@ export default class Tabs extends View {
       .when(enabled.includes("files"), el => el.child(panelButton("files", "Files", "mods/files/file.svg")))
       .when(enabled.includes("changes"), el => el.child(panelButton("changes", "Git", "icons/git.svg")))
       .when(enabled.includes("music"), el => el.child(panelButton("music", "Music", "mods/enhanced-music/music.svg")))
+      .when(enabled.includes("context"), el => el.child(panelButton("context", "Agent", "mods/workspace-chrome/layers.svg")))
       .when(w?.buttons, el => el.child(button("minimize", w.platform === "windows" ? svg("mods/tabs/win-min.svg").size(16) : "−", () => run("window.minimize")))
         .child(button("maximize", w.platform === "windows" ? svg(`mods/tabs/${w.maximized ? "win-restore" : "win-max"}.svg`).size(16) : "□", () => run("window.maximize")))
         .child(button("close-window", w.platform === "windows" ? svg("mods/tabs/win-close.svg").size(16) : svg("mods/pane/close.svg").size(13), () => run("window.close"))));

@@ -26,6 +26,12 @@ test("enhanced-tabs - main.js renders Git and Music buttons", () => {
     content,
     /panelButton\("music",\s*"Music",\s*"mods\/enhanced-music\/music\.svg"\)/
   );
+
+  // Verify Agent button is present
+  assert.match(
+    content,
+    /panelButton\("context",\s*"Agent",\s*"mods\/workspace-chrome\/layers\.svg"\)/
+  );
 });
 
 test("enhanced-tabs - mod.json exists and has valid place", () => {
