@@ -1043,7 +1043,7 @@ export default class EnhancedGit extends View {
                     .cursor_pointer()
                     .text_size(11)
                     .text_color(t.dim)
-                    .on_click(() => {
+                    .on_click((_e, cx) => {
                       this.selectedCommit = null;
                       cx.notify();
                     })
@@ -1548,7 +1548,7 @@ export default class EnhancedGit extends View {
                     .hover((s) => s.bg(t.hover))
                     .text_size(11)
                     .text_color(t.dim)
-                    .on_click(() => this.openOverlayDialog())
+                    .on_click((_e, _cx) => this.openOverlayDialog())
                     .child("⧉")
                 )
               )
@@ -1561,7 +1561,7 @@ export default class EnhancedGit extends View {
                     .hover((s) => s.bg(t.hover))
                     .text_size(12)
                     .text_color(t.dim)
-                    .on_click(() => this.close())
+                    .on_click((_e, _cx) => this.close())
                     .child("✕")
                 )
               )
@@ -1588,9 +1588,11 @@ export default class EnhancedGit extends View {
               .when(this.tab !== "changes", (el) => el.text_color(t.dim).hover((s) => s.text_color(t.foreground)))
               .text_size(11)
               .font_medium()
-              .on_click(() => {
-                this.tab = "changes";
-                cx.notify();
+              .on_click((_e, cx) => {
+                if (this.tab !== "changes") {
+                  this.tab = "changes";
+                  cx.notify();
+                }
               })
               .child(div().child("Changes"))
               .when(totalChanges > 0, (el) =>
@@ -1619,11 +1621,13 @@ export default class EnhancedGit extends View {
               .text_size(11)
               .font_medium()
               .on_click((_e, cx) => {
-                this.tab = "graph";
-                if (!this.graphRows || this.graphRows.length === 0) {
-                  this.fetchGraph(cx);
+                if (this.tab !== "graph") {
+                  this.tab = "graph";
+                  cx.notify();
+                  if (!this.graphRows || this.graphRows.length === 0) {
+                    this.fetchGraph(cx);
+                  }
                 }
-                cx.notify();
               })
               .child("🌿 Commits Graph")
           )
@@ -1638,9 +1642,14 @@ export default class EnhancedGit extends View {
               .when(this.tab !== "branches", (el) => el.text_color(t.dim).hover((s) => s.text_color(t.foreground)))
               .text_size(11)
               .font_medium()
-              .on_click(() => {
-                this.tab = "branches";
-                cx.notify();
+              .on_click((_e, cx) => {
+                if (this.tab !== "branches") {
+                  this.tab = "branches";
+                  cx.notify();
+                  if (!this.refs?.branches || this.refs.branches.length === 0) {
+                    this.fetchRefs(cx);
+                  }
+                }
               })
               .child("⎇ Branches")
           )
@@ -1655,9 +1664,14 @@ export default class EnhancedGit extends View {
               .when(this.tab !== "stashes", (el) => el.text_color(t.dim).hover((s) => s.text_color(t.foreground)))
               .text_size(11)
               .font_medium()
-              .on_click(() => {
-                this.tab = "stashes";
-                cx.notify();
+              .on_click((_e, cx) => {
+                if (this.tab !== "stashes") {
+                  this.tab = "stashes";
+                  cx.notify();
+                  if (!this.refs?.stashes || this.refs.stashes.length === 0) {
+                    this.fetchRefs(cx);
+                  }
+                }
               })
               .child("📦 Stashes")
           )
