@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
-"""Install Herdr Wallpaper Carousel mod, register controller and shortcuts (Ctrl+B Shift+B).
+"""Install Herdr Matrix Animated Background / Wallpaper Carousel mod.
 
 Includes:
 - Safe timestamped backups
+- Copying Matrix rain frames & static wallpaper to ~/.config/herdr-app/backgrounds/
 - Copying mod to ~/.config/herdr-app/mods/wallpaper-carousel
 - Registering 0px controller in layouts/main-popup.json
-- Registering shortcuts in keys.json
+- Registering shortcuts in keys.json (Ctrl+B Alt+B to pause/resume, Ctrl+B Shift+B to switch mode)
 - Running herdr-app check validation
 """
 
@@ -33,17 +34,23 @@ class InstallError(RuntimeError):
 
 
 def parse_args(argv: list[str]) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Install Herdr Wallpaper Carousel")
+    parser = argparse.ArgumentParser(description="Install Herdr Matrix Animated Wallpaper / Carousel")
     parser.add_argument(
         "--home",
         type=Path,
         help="Herdr app home (default: HERDR_APP_HOME or ~/.config/herdr-app)",
     )
     parser.add_argument(
+        "--mode",
+        choices=("matrix", "carousel"),
+        default="matrix",
+        help="Background mode: 'matrix' (animated digital rain) or 'carousel' (default: matrix)",
+    )
+    parser.add_argument(
         "--interval",
         type=int,
-        default=30000,
-        help="Rotation interval in milliseconds (default: 30000ms)",
+        default=160,
+        help="Frame/rotation interval in milliseconds (default: 160ms for matrix rain)",
     )
     parser.add_argument(
         "--dry-run",
@@ -137,7 +144,7 @@ def update_keys(home: Path, dry_run: bool) -> bool:
     return changed
 
 
-def update_layout(home: Path, interval_ms: int, dry_run: bool) -> bool:
+def update_layout(home: Path, mode: str, interval_ms: int, dry_run: bool) -> bool:
     layout_path = home / "layouts" / "main-popup.json"
     if not layout_path.is_file():
         raise InstallError(f"Layout not found: {layout_path}")
@@ -146,14 +153,17 @@ def update_layout(home: Path, interval_ms: int, dry_run: bool) -> bool:
     root = data
 
     controller_id = f"{MOD_NAME}-controller"
+    desired_props = {
+        "mode": mode,
+        "intervalMs": interval_ms,
+        "frameCount": 16,
+    }
     controller_spec = {
         "id": controller_id,
         "type": "block",
         "content": {
             "mod": MOD_NAME,
-            "props": {
-                "intervalMs": interval_ms,
-            },
+            "props": desired_props,
         },
         "size": {
             "px": 0,
@@ -162,45 +172,55 @@ def update_layout(home: Path, interval_ms: int, dry_run: bool) -> bool:
         "max": 0,
     }
 
+    changed = False
+    if mode == "matrix":
+        desired_bg = {
+            "image": "backgrounds/matrix-rain/frame_00.jpg",
+            "fit": "cover",
+        }
+        if root.get("background") != desired_bg:
+            root["background"] = desired_bg
+            changed = True
+
     def inject_controller(node: Any) -> bool:
         if not isinstance(node, dict):
             return False
         sub_children = node.get("children")
         if isinstance(sub_children, list):
-            # Check if already present
             for sc in sub_children:
                 if isinstance(sc, dict) and sc.get("id") == controller_id:
-                    # Update props if changed
-                    if sc.get("content", {}).get("props", {}).get("intervalMs") != interval_ms:
-                        sc["content"]["props"] = {"intervalMs": interval_ms}
+                    if sc.get("content", {}).get("props") != desired_props:
+                        sc.setdefault("content", {})["props"] = desired_props
                         return True
                     return False
 
-            # Insert after scratchpad-controller or popup-terminal-controller
             for idx, sc in enumerate(sub_children):
                 if isinstance(sc, dict) and sc.get("id") in ("scratchpad-controller", "popup-terminal-controller"):
                     sub_children.insert(idx + 1, controller_spec)
                     return True
 
-            # Recurse
             for sc in sub_children:
                 if inject_controller(sc):
                     return True
         return False
 
-    injected = inject_controller(root)
-    if injected:
+    if inject_controller(root):
+        changed = True
+
+    if changed:
         write_json_dict(layout_path, data, dry_run)
-        print(f"Updated layout {layout_path.name}: registered {controller_id} ({interval_ms}ms)")
+        print(f"Updated layout {layout_path.name}: registered {controller_id} (mode={mode}, {interval_ms}ms)")
         return True
     else:
         print(f"Controller {controller_id} already up to date in {layout_path.name}")
         return False
 
 
-def copy_mod_files(source_dir: Path, target_dir: Path, dry_run: bool) -> None:
+def copy_tree_files(source_dir: Path, target_dir: Path, dry_run: bool, label: str = "files") -> None:
+    if not source_dir.is_dir():
+        return
     if dry_run:
-        print(f"[dry-run] copy mod tree: {source_dir} -> {target_dir}")
+        print(f"[dry-run] copy {label}: {source_dir} -> {target_dir}")
         return
 
     target_dir.mkdir(parents=True, exist_ok=True)
@@ -210,7 +230,7 @@ def copy_mod_files(source_dir: Path, target_dir: Path, dry_run: bool) -> None:
             dst = target_dir / rel
             dst.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(src, dst)
-    print(f"Copied mod files to {target_dir}")
+    print(f"Copied {label} to {target_dir}")
 
 
 def main(argv: list[str]) -> int:
@@ -220,6 +240,8 @@ def main(argv: list[str]) -> int:
 
     source_mod_dir = repo_root / "mods" / MOD_NAME
     target_mod_dir = home / "mods" / MOD_NAME
+    source_assets_dir = repo_root / "assets"
+    target_bg_dir = home / "backgrounds"
 
     if not source_mod_dir.is_dir():
         raise InstallError(f"Source mod dir not found: {source_mod_dir}")
@@ -235,24 +257,27 @@ def main(argv: list[str]) -> int:
     backup_dir = create_backup(home, files_to_backup, args.dry_run)
     print(f"Backup created at: {backup_dir}")
 
+    # Copy background assets (static + matrix-rain frames)
+    copy_tree_files(source_assets_dir, target_bg_dir, args.dry_run, label="background assets")
+
     # Copy mod files
-    copy_mod_files(source_mod_dir, target_mod_dir, args.dry_run)
+    copy_tree_files(source_mod_dir, target_mod_dir, args.dry_run, label="mod files")
 
     # Update keys.json
     update_keys(home, args.dry_run)
 
     # Update layout
-    update_layout(home, args.interval, args.dry_run)
+    update_layout(home, args.mode, args.interval, args.dry_run)
 
     # Validate installed mod
     if not args.dry_run:
         run_mod_check(target_mod_dir, home)
 
     print(
-        f"\nSuccessfully installed {MOD_NAME}!\n"
-        f"- Carousel interval: {args.interval / 1000:.1f}s\n"
-        f"- Next wallpaper shortcut: `{SHORTCUT_NEXT}`\n"
-        f"- Pause/Resume shortcut: `{SHORTCUT_TOGGLE}`"
+        f"\nSuccessfully installed {MOD_NAME} ({args.mode} mode)!\n"
+        f"- Frame interval: {args.interval}ms\n"
+        f"- Pause/Resume rain shortcut: `{SHORTCUT_TOGGLE}`\n"
+        f"- Switch mode shortcut: `{SHORTCUT_NEXT}`"
     )
     return 0
 

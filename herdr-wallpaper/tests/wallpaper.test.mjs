@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import {
   filterWallpaperFiles,
   extractCurrentWallpaper,
+  getMatrixRainFrames,
   getNextWallpaper,
   updateLayoutJson,
 } from "../mods/wallpaper-carousel/logic.js";
@@ -147,4 +148,19 @@ test("WallpaperCarousel class - lifecycle and rotation flow", async () => {
   assert.equal(timerRegistered, true);
   assert.equal(timerInterval, 10000);
 });
+
+test("getMatrixRainFrames - generates zero-padded seamless loop frame paths", () => {
+  const frames = getMatrixRainFrames(4, "matrix-rain");
+  assert.deepEqual(frames, [
+    "matrix-rain/frame_00.jpg",
+    "matrix-rain/frame_01.jpg",
+    "matrix-rain/frame_02.jpg",
+    "matrix-rain/frame_03.jpg",
+  ]);
+  const defaultFrames = getMatrixRainFrames();
+  assert.equal(defaultFrames.length, 16);
+  assert.equal(defaultFrames[0], "matrix-rain/frame_00.jpg");
+  assert.equal(defaultFrames[15], "matrix-rain/frame_15.jpg");
+});
+
 

@@ -12,47 +12,108 @@ import {
 import {
   extractCurrentWallpaper,
   filterWallpaperFiles,
+  getMatrixRainFrames,
   getNextWallpaper,
 } from "./logic.js";
 
-const DEFAULT_INTERVAL_MS = 30000;
+const DEFAULT_MATRIX_INTERVAL_MS = 160;
+const DEFAULT_CAROUSEL_INTERVAL_MS = 30000;
 const SHARED_KEY_PAUSED = "wallpaper-carousel.paused";
 const SHARED_KEY_CURRENT = "wallpaper-carousel.current";
+const SHARED_KEY_MODE = "wallpaper-carousel.mode";
 
 export default class WallpaperCarousel extends View {
   init(initialProps, cx) {
-    this.intervalMs = (initialProps && initialProps.intervalMs) || DEFAULT_INTERVAL_MS;
+    const props = initialProps || {};
+    this.mode = props.mode || shared(SHARED_KEY_MODE) || "matrix";
+    this.frameCount = props.frameCount || 16;
+    this.matrixFrames = getMatrixRainFrames(this.frameCount, props.matrixFolder || "matrix-rain");
+    this.frameIndex = 0;
+
+    this.intervalMs =
+      props.intervalMs ||
+      (this.mode === "matrix" ? DEFAULT_MATRIX_INTERVAL_MS : DEFAULT_CAROUSEL_INTERVAL_MS);
+
     this.paused = shared(SHARED_KEY_PAUSED) === true;
     this.busy = false;
 
-    // Start auto-rotation timer
-    cx.timer.every(this.intervalMs, async (timerCx) => {
+    // Start frame / rotation timer
+    cx.timer.every(this.intervalMs, async () => {
       if (!this.paused) {
-        await this.rotate(1, false);
+        if (this.mode === "matrix") {
+          this.stepMatrixFrame(1);
+        } else {
+          await this.rotate(1, false);
+        }
       }
     });
 
     // Start command loop for manual controls: next, prev, toggle
-    cx.spawn(async (spawnCx) => {
+    cx.spawn(async () => {
       for (;;) {
         const cmd = await nextCommand();
         if (cmd === "next") {
-          await this.rotate(1, true);
+          if (this.mode === "matrix" && !this.paused) {
+            this.mode = "carousel";
+            setShared(SHARED_KEY_MODE, this.mode);
+            await this.rotate(1, true);
+          } else if (this.mode === "carousel") {
+            this.mode = "matrix";
+            this.paused = false;
+            setShared(SHARED_KEY_MODE, this.mode);
+            setShared(SHARED_KEY_PAUSED, false);
+            this.stepMatrixFrame(1);
+            notify({
+              title: "已切換為 Matrix 動態數位雨背景",
+              body: "按 Ctrl+B Alt+B 可隨時暫停/恢復流動",
+              level: "info",
+            });
+          } else {
+            this.stepMatrixFrame(1);
+          }
         } else if (cmd === "prev") {
-          await this.rotate(-1, true);
+          if (this.mode === "matrix") {
+            this.stepMatrixFrame(-1);
+          } else {
+            await this.rotate(-1, true);
+          }
         } else if (cmd === "toggle") {
           this.paused = !this.paused;
           setShared(SHARED_KEY_PAUSED, this.paused);
           notify({
-            title: this.paused ? "桌布輪播已暫停" : "桌布輪播已恢復",
+            title: this.paused ? "Matrix 數位雨已暫停" : "Matrix 數位雨已啟動",
             body: this.paused
-              ? "自動切換已停止 (仍可用快捷鍵切換)"
-              : `每 ${Math.round(this.intervalMs / 1000)} 秒自動更換`,
+              ? "已定格為靜態 Matrix 背景 (0% CPU 省電模式)"
+              : "終端機背景數位雨持續流瀉中",
             level: "info",
           });
         }
       }
     });
+  }
+
+  stepMatrixFrame(step = 1) {
+    if (this.busy || this.matrixFrames.length === 0) return;
+    this.busy = true;
+    try {
+      const currentLayout = layout();
+      if (!currentLayout || typeof currentLayout !== "object") return;
+
+      const total = this.matrixFrames.length;
+      this.frameIndex = ((this.frameIndex + step) % total + total) % total;
+      const nextFrame = this.matrixFrames[this.frameIndex];
+
+      currentLayout.background = {
+        image: `backgrounds/${nextFrame}`,
+        fit: "cover",
+      };
+
+      run("layout.set", { layout: currentLayout });
+    } catch {
+      // Ignore transient layout snapshot errors
+    } finally {
+      this.busy = false;
+    }
   }
 
   async rotate(step, notifyUser) {
@@ -135,7 +196,7 @@ export default class WallpaperCarousel extends View {
     }
   }
 
-  render(cx) {
+  render() {
     return div();
   }
 }

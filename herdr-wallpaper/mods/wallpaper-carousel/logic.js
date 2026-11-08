@@ -95,3 +95,21 @@ export function updateLayoutJson(layoutJsonString, newWallpaperFilename) {
 
   return JSON.stringify(parsed, null, 2);
 }
+
+/**
+ * Generates ordered seamless loop frame paths for Matrix digital rain.
+ * @param {number} frameCount Number of frames (default: 16)
+ * @param {string} folder Subfolder under backgrounds/ (default: "matrix-rain")
+ * @returns {string[]}
+ */
+export function getMatrixRainFrames(frameCount = 16, folder = "matrix-rain") {
+  const count = Math.max(1, Math.floor(Number(frameCount) || 16));
+  const cleanFolder = String(folder || "matrix-rain").replace(/^\/+|\/+$/g, "");
+  const frames = [];
+  for (let i = 0; i < count; i++) {
+    const num = String(i).padStart(2, "0");
+    frames.push(`${cleanFolder}/frame_${num}.jpg`);
+  }
+  return frames;
+}
+
