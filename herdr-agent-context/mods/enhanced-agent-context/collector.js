@@ -1,11 +1,11 @@
 // Agent Context Collector Wrapper for Herdr
-import { home, readTextFile, exec } from "herdr";
+import { appHome, readTextFile, exec } from "herdr";
 
 const CACHE = new Map();
 const CACHE_TTL_MS = 8000;
 
 function resolveCollectorPath() {
-  const h = home();
+  const h = appHome();
   return `${h}/mods/enhanced-agent-context/collector.py`;
 }
 

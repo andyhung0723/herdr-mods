@@ -22,6 +22,33 @@ const SHARED_KEY_PAUSED = "wallpaper-carousel.paused";
 const SHARED_KEY_CURRENT = "wallpaper-carousel.current";
 const SHARED_KEY_MODE = "wallpaper-carousel.mode";
 
+function findNode(node, id) {
+  if (node?.id === id) return node;
+  for (const child of node?.children ?? []) {
+    const found = findNode(child, id);
+    if (found) return found;
+  }
+  return null;
+}
+
+function applyPanelOverride(layoutTree) {
+  const agentsNode = findNode(layoutTree, "agents");
+  if (agentsNode?.content && agentsNode.content.mod === "agents") {
+    agentsNode.content.mod = "enhanced-agents";
+  }
+  const override = shared("panel.override");
+  if (!override || typeof override !== "object") return;
+  if (Date.now() - (override.at || 0) > 2500) return;
+  const panel = findNode(layoutTree, "panel");
+  const body = findNode(layoutTree, "panel-body");
+  if (panel && typeof override.hidden === "boolean") {
+    panel.hidden = override.hidden;
+  }
+  if (body && override.active) {
+    body.active = override.active;
+  }
+}
+
 export default class WallpaperCarousel extends View {
   init(initialProps, cx) {
     const props = initialProps || {};
@@ -104,28 +131,23 @@ export default class WallpaperCarousel extends View {
     if (this.busy || this.matrixFrames.length === 0) return;
     this.busy = true;
     try {
-      if (!this.cachedLayout || this.ticksSinceSync >= 20) {
-        const live = layout();
-        if (live && typeof live === "object") {
-          this.cachedLayout = live;
-          this.ticksSinceSync = 0;
-        }
-      }
-      if (!this.cachedLayout) return;
-      this.ticksSinceSync += 1;
+      const live = layout();
+      if (!live || typeof live !== "object") return;
+
+      applyPanelOverride(live);
 
       const total = this.matrixFrames.length;
       this.frameIndex = ((this.frameIndex + step) % total + total) % total;
       const nextFrame = this.matrixFrames[this.frameIndex];
 
-      this.cachedLayout.background = {
+      live.background = {
         image: `backgrounds/${nextFrame}`,
         fit: "cover",
       };
 
-      run("layout.set", { layout: this.cachedLayout });
+      run("layout.set", { layout: live });
     } catch {
-      this.cachedLayout = null;
+      // Ignore transient layout read/set errors
     } finally {
       this.busy = false;
     }

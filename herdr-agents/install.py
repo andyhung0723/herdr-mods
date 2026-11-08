@@ -10,6 +10,7 @@ Includes:
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import shutil
 import subprocess
@@ -17,7 +18,8 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-MOD_NAME = "agents"
+SOURCE_MOD_NAME = "agents"
+TARGET_MOD_NAME = "enhanced-agents"
 
 
 class InstallError(RuntimeError):
@@ -95,13 +97,45 @@ def copy_mod_files(source_dir: Path, target_dir: Path, dry_run: bool) -> None:
     print(f"Copied mod files to {target_dir}")
 
 
+def bind_agents_in_layout(layout_path: Path, dry_run: bool) -> None:
+    if not layout_path.is_file():
+        return
+    data = json.loads(layout_path.read_text(encoding="utf-8"))
+
+    def walk(node: object) -> bool:
+        changed = False
+        if isinstance(node, dict):
+            if node.get("id") == "agents":
+                content = node.get("content")
+                if isinstance(content, dict) and content.get("mod") in ("agents", TARGET_MOD_NAME):
+                    if content.get("mod") != TARGET_MOD_NAME:
+                        content["mod"] = TARGET_MOD_NAME
+                        changed = True
+                elif node.get("mod") in ("agents", TARGET_MOD_NAME):
+                    if node.get("mod") != TARGET_MOD_NAME:
+                        node["mod"] = TARGET_MOD_NAME
+                        changed = True
+            for child in node.get("children", []):
+                if walk(child):
+                    changed = True
+        return changed
+
+    if walk(data):
+        if dry_run:
+            print(f"[dry-run] bind 'agents' -> '{TARGET_MOD_NAME}' in {layout_path}")
+        else:
+            layout_path.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+            print(f"Bound 'agents' pane to '{TARGET_MOD_NAME}' in {layout_path}")
+
+
 def main(argv: list[str]) -> int:
     args = parse_args(argv)
     home = resolve_home(args.home)
     repo_root = Path(__file__).resolve().parent
 
-    source_mod_dir = repo_root / "mods" / MOD_NAME
-    target_mod_dir = home / "mods" / MOD_NAME
+    source_mod_dir = repo_root / "mods" / SOURCE_MOD_NAME
+    target_mod_dir = home / "mods" / TARGET_MOD_NAME
+    layout_path = home / "layouts" / "main-popup.json"
 
     if not source_mod_dir.is_dir():
         raise InstallError(f"Source mod dir not found: {source_mod_dir}")
@@ -110,12 +144,14 @@ def main(argv: list[str]) -> int:
     run_mod_check(source_mod_dir, home)
 
     # Backup existing
-    files_to_backup = [target_mod_dir]
+    files_to_backup = [target_mod_dir, layout_path]
     backup_dir = create_backup(home, files_to_backup, args.dry_run)
     print(f"Backup created at: {backup_dir}")
 
-    # Copy files
+    # Copy files to both enhanced-agents (persistent across restarts) and agents (immediate fallback)
     copy_mod_files(source_mod_dir, target_mod_dir, args.dry_run)
+    copy_mod_files(source_mod_dir, home / "mods" / SOURCE_MOD_NAME, args.dry_run)
+    bind_agents_in_layout(layout_path, args.dry_run)
 
     # Validate target mod
     if not args.dry_run:

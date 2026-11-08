@@ -1,6 +1,6 @@
 import { View, div, svg, image } from "gpui-kit";
 import { h_flex } from "gpui-base";
-import { spaces, panes, run, openOverlay, theme, window, shared, layout, settings } from "herdr";
+import { spaces, panes, run, openOverlay, theme, window, shared, setShared, layout, settings } from "herdr";
 
 function find(node, id) {
   if (node?.id === id) return node;
@@ -29,8 +29,14 @@ export default class Tabs extends View {
         const stored = this.panels[space.id] ?? null, want = enabled.includes(stored) ? stored : null;
         if (want !== now) {
           this.pending = { want, until: Date.now() + 1000 };
-          if (want) { run("layout.select", { stack: "panel-body", child: want }); run("layout.show", { id: "panel" }); }
-          else run("layout.hide", { id: "panel" });
+          if (want) {
+            setShared("panel.override", { hidden: false, active: want, at: Date.now() });
+            run("layout.select", { stack: "panel-body", child: want });
+            run("layout.show", { id: "panel" });
+          } else {
+            setShared("panel.override", { hidden: true, active: body?.active ?? null, at: Date.now() });
+            run("layout.hide", { id: "panel" });
+          }
           return;
         }
       }
@@ -83,13 +89,33 @@ export default class Tabs extends View {
       : ["files", "changes", "music", "context"];
     this.syncPanel(space, panel, body, enabled);
     const panelButton = (id, label, icon) => {
-      const on = panel && !panel.hidden && body?.active === id;
+      const override = shared("panel.override");
+      const useOverride = override && typeof override === "object" && Date.now() - (override.at || 0) < 1000;
+      const isHidden = useOverride ? override.hidden : Boolean(panel?.hidden);
+      const activeId = useOverride ? override.active : body?.active;
+      const on = Boolean(panel && !isHidden && activeId === id);
       return h_flex().id(`panel-${id}`).h(26).px(8).gap(5).flex_none().items_center().rounded(6)
         .text_size(12).bg(on ? t.selected : t.chrome).text_color(on ? t.foreground : t.muted)
         .hover(s => s.bg(t.hover)).on_mouse_down("left", stop)
         .on_click(() => {
-          if (on) run("layout.hide", { id: "panel" });
-          else { run("layout.select", { stack: "panel-body", child: id }); run("layout.show", { id: "panel" }); }
+          if (on) {
+            this.pending = { want: null, until: Date.now() + 1500 };
+            if (space) {
+              this.panels[space.id] = null;
+              localStorage.setItem("panels", JSON.stringify(this.panels));
+            }
+            setShared("panel.override", { hidden: true, active: activeId ?? id, at: Date.now() });
+            run("layout.hide", { id: "panel" });
+          } else {
+            this.pending = { want: id, until: Date.now() + 1500 };
+            if (space) {
+              this.panels[space.id] = id;
+              localStorage.setItem("panels", JSON.stringify(this.panels));
+            }
+            setShared("panel.override", { hidden: false, active: id, at: Date.now() });
+            run("layout.select", { stack: "panel-body", child: id });
+            run("layout.show", { id: "panel" });
+          }
         }).child(svg(icon).size(14)).child(label);
     };
     return h_flex().size_full().min_w(0).px(10).pl(lightsPadding).gap(3).items_center().bg(t.chrome).border_b(1).border_color(t.border)

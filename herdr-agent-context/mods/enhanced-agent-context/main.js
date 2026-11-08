@@ -1,12 +1,12 @@
 import { View, div, svg } from "gpui-kit";
-import { h_flex, v_flex } from "gpui-base";
-import { theme, run, focused, panes, spaces, agents, terminals, notify } from "herdr";
+import { h_flex, v_flex, TextView } from "gpui-base";
+import { theme, run, focused, panes, spaces, agents, terminals, notify, home } from "herdr";
 import { fetchAgentContext, readRuleContent } from "./collector.js";
 
 function cleanPath(p) {
   if (!p) return "";
-  const home = "/Users/dev";
-  return p.startsWith(home) ? "~" + p.slice(home.length) : p;
+  const userHome = home() || "/Users/dev";
+  return p.startsWith(userHome) ? "~" + p.slice(userHome.length) : p;
 }
 
 export default class EnhancedAgentContext extends View {
@@ -38,10 +38,25 @@ export default class EnhancedAgentContext extends View {
   }
 
   resolveActiveContext() {
-    const focus = focused();
-    const allAgents = agents();
+    const focus = focused() || {};
+    const allAgents = agents() || [];
+    const allSpaces = spaces() || [];
+    const allPanes = panes() || [];
     const currentAgent = focus?.agent ? allAgents.find((a) => a.address === focus.agent) : allAgents[0];
-    const cwd = currentAgent?.cwd || panes().find((p) => p.focused && p.cwd)?.cwd || spaces().find((s) => s.active)?.cwd || "";
+    const activeSpace =
+      allSpaces.find((s) => s.id === focus?.space) ??
+      allSpaces.find((s) => s.active) ??
+      allSpaces[0];
+    const focusedPane = focus?.pane
+      ? allPanes.find((p) => p.pane === focus.pane)
+      : allPanes.find((p) => p.focused && p.cwd);
+    const cwd =
+      currentAgent?.cwd ||
+      focusedPane?.cwd ||
+      focus?.cwd ||
+      activeSpace?.folder ||
+      activeSpace?.cwd ||
+      "";
     const agentType = (currentAgent?.program?.key || currentAgent?.agent || "all").toLowerCase();
     return { currentAgent, cwd, agentType };
   }
@@ -498,8 +513,9 @@ export default class EnhancedAgentContext extends View {
                       .cursor_pointer()
                       .hover((s) => s.bg(t.hover))
                       .tooltip("Copy entire file path")
-                      .on_click((_e, _cx) => {
+                      .on_click((_e, cx) => {
                         if (this.selectedRule?.path) {
+                          cx.write_to_clipboard(this.selectedRule.path);
                           notify({ title: "Path copied", body: this.selectedRule.path, level: "info" });
                         }
                       })
@@ -513,17 +529,15 @@ export default class EnhancedAgentContext extends View {
             v_flex()
               .flex_1()
               .w_full()
-              .p(8)
+              .p(10)
               .rounded(6)
               .bg(t.raised)
               .overflow_y_scrollbar()
               .child(
-                div()
-                  .text_size(11.5)
-                  .font_family("monospace")
-                  .text_color(t.foreground)
-                  .whitespace_pre_wrap()
-                  .child(this.ruleContent || this.selectedRule?.preview || "No content available")
+                TextView.markdown(
+                  "rule-markdown-preview",
+                  this.ruleContent || this.selectedRule?.preview || "No content available"
+                ).selectable(true)
               )
           )
       );
@@ -672,9 +686,11 @@ export default class EnhancedAgentContext extends View {
                 )
                 .child(
                   div()
+                    .w_full()
                     .text_size(11)
                     .text_color(t.muted)
-                    .when(!expanded, (el) => el.line_clamp(2))
+                    .when(!expanded, (el) => el.truncate())
+                    .when(expanded, (el) => el.whitespace_normal())
                     .child(s.description || "No description provided.")
                 )
                 .when(expanded && Boolean(s.promptFile), (el) =>
@@ -821,10 +837,10 @@ export default class EnhancedAgentContext extends View {
           .flex_1()
           .w_full()
           .min_h(0)
-          .when(this.activeTab === "overview", () => this.renderOverview(t))
-          .when(this.activeTab === "rules", () => this.renderRules(t))
-          .when(this.activeTab === "skills", () => this.renderSkills(t))
-          .when(this.activeTab === "connectors", () => this.renderConnectors(t))
+          .when(this.activeTab === "overview", (el) => el.child(this.renderOverview(t)))
+          .when(this.activeTab === "rules", (el) => el.child(this.renderRules(t)))
+          .when(this.activeTab === "skills", (el) => el.child(this.renderSkills(t)))
+          .when(this.activeTab === "connectors", (el) => el.child(this.renderConnectors(t)))
       );
   }
 }
