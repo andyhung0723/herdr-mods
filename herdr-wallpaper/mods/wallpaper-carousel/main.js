@@ -16,7 +16,7 @@ import {
   getNextWallpaper,
 } from "./logic.js";
 
-const DEFAULT_MATRIX_INTERVAL_MS = 160;
+const DEFAULT_MATRIX_INTERVAL_MS = 75;
 const DEFAULT_CAROUSEL_INTERVAL_MS = 30000;
 const SHARED_KEY_PAUSED = "wallpaper-carousel.paused";
 const SHARED_KEY_CURRENT = "wallpaper-carousel.current";
@@ -26,12 +26,14 @@ export default class WallpaperCarousel extends View {
   init(initialProps, cx) {
     const props = initialProps || {};
     this.mode = props.mode || shared(SHARED_KEY_MODE) || "matrix";
-    this.frameCount = props.frameCount || 16;
+    this.frameCount = props.frameCount || 32;
     this.matrixFrames = getMatrixRainFrames(
       this.frameCount,
-      props.matrixFolder || "matrix-rain-hd"
+      props.matrixFolder || "matrix-rain-smooth"
     );
     this.frameIndex = 0;
+    this.cachedLayout = null;
+    this.ticksSinceSync = 0;
 
     this.intervalMs =
       props.intervalMs ||
@@ -58,11 +60,13 @@ export default class WallpaperCarousel extends View {
         if (cmd === "next") {
           if (this.mode === "matrix" && !this.paused) {
             this.mode = "carousel";
+            this.cachedLayout = null;
             setShared(SHARED_KEY_MODE, this.mode);
             await this.rotate(1, true);
           } else if (this.mode === "carousel") {
             this.mode = "matrix";
             this.paused = false;
+            this.cachedLayout = null;
             setShared(SHARED_KEY_MODE, this.mode);
             setShared(SHARED_KEY_PAUSED, false);
             this.stepMatrixFrame(1);
@@ -82,6 +86,7 @@ export default class WallpaperCarousel extends View {
           }
         } else if (cmd === "toggle") {
           this.paused = !this.paused;
+          this.cachedLayout = null;
           setShared(SHARED_KEY_PAUSED, this.paused);
           notify({
             title: this.paused ? "Matrix 數位雨已暫停" : "Matrix 數位雨已啟動",
@@ -99,21 +104,28 @@ export default class WallpaperCarousel extends View {
     if (this.busy || this.matrixFrames.length === 0) return;
     this.busy = true;
     try {
-      const currentLayout = layout();
-      if (!currentLayout || typeof currentLayout !== "object") return;
+      if (!this.cachedLayout || this.ticksSinceSync >= 20) {
+        const live = layout();
+        if (live && typeof live === "object") {
+          this.cachedLayout = live;
+          this.ticksSinceSync = 0;
+        }
+      }
+      if (!this.cachedLayout) return;
+      this.ticksSinceSync += 1;
 
       const total = this.matrixFrames.length;
       this.frameIndex = ((this.frameIndex + step) % total + total) % total;
       const nextFrame = this.matrixFrames[this.frameIndex];
 
-      currentLayout.background = {
+      this.cachedLayout.background = {
         image: `backgrounds/${nextFrame}`,
         fit: "cover",
       };
 
-      run("layout.set", { layout: currentLayout });
+      run("layout.set", { layout: this.cachedLayout });
     } catch {
-      // Ignore transient layout snapshot errors
+      this.cachedLayout = null;
     } finally {
       this.busy = false;
     }
@@ -175,6 +187,7 @@ export default class WallpaperCarousel extends View {
         fit: "cover",
       };
 
+      this.cachedLayout = currentLayout;
       run("layout.set", { layout: currentLayout });
       setShared(SHARED_KEY_CURRENT, nextImage);
 

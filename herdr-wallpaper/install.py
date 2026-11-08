@@ -49,8 +49,8 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument(
         "--interval",
         type=int,
-        default=160,
-        help="Frame/rotation interval in milliseconds (default: 160ms for matrix rain)",
+        default=75,
+        help="Frame/rotation interval in milliseconds (default: 75ms for ~13.3 FPS matrix rain)",
     )
     parser.add_argument(
         "--dry-run",
@@ -156,8 +156,8 @@ def update_layout(home: Path, mode: str, interval_ms: int, dry_run: bool) -> boo
     desired_props = {
         "mode": mode,
         "intervalMs": interval_ms,
-        "frameCount": 16,
-        "matrixFolder": "matrix-rain-hd",
+        "frameCount": 32,
+        "matrixFolder": "matrix-rain-smooth",
     }
     controller_spec = {
         "id": controller_id,
@@ -176,7 +176,7 @@ def update_layout(home: Path, mode: str, interval_ms: int, dry_run: bool) -> boo
     changed = False
     if mode == "matrix":
         desired_bg = {
-            "image": "backgrounds/matrix-rain-hd/frame_00.jpg",
+            "image": "backgrounds/matrix-rain-smooth/frame_00.jpg",
             "fit": "cover",
         }
         if root.get("background") != desired_bg:

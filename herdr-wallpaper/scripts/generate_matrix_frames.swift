@@ -6,10 +6,11 @@ import Foundation
 
 let width = 2560
 let height = 1440
-let numFrames = 16
+let numFrames = 32
+let subPeriodRows = 32
 
 let args = CommandLine.arguments
-let outDir = args.count > 1 ? args[1] : "assets/matrix-rain-hd"
+let outDir = args.count > 1 ? args[1] : "assets/matrix-rain-smooth"
 let baseImagePath = args.count > 2 ? args[2] : "assets/matrix_rain.jpg"
 
 let fileManager = FileManager.default
@@ -26,9 +27,8 @@ struct StreamColumn {
     let cellH: CGFloat
     let numRows: Int
     let dropsPerCol: Int
-    let phaseRows: Double
+    let phaseRow: Int // 0 ..< 32 (exact row alignment so every frame steps 1 cell cleanly)
     let tailLengthRows: Double
-    let speedSubCycles: Double // integer (1.0 or 2.0) sub-periods per 16 frames
     let brightness: CGFloat
     let layer: Int // 0 = micro-grid, 1 = far, 2 = mid, 3 = near hero
     let seed: UInt64
@@ -46,104 +46,95 @@ func randDouble(_ state: inout UInt64) -> Double {
     return Double(splitMix64(&state) >> 11) / Double(1 << 53)
 }
 
-var rngState: UInt64 = 0x4D41545249585F32 // "MATRIX_2"
+var rngState: UInt64 = 0x4D41545249585F33 // "MATRIX_3"
 var columns: [StreamColumn] = []
 
-// Layer 0: Deep Micro-Grid (8.5pt, 10px spacing, 3 drops per column -> ~256 streams)
+// Layer 0: Deep Micro-Grid (9pt, 10px spacing, 4 drops * 32 rows = 128 rows)
 let microStep: CGFloat = 10.0
 for idx in 0..<Int(CGFloat(width) / microStep) {
-    let cellH: CGFloat = 10.0 // 1440 / 10 = 144 rows (divisible by 3 -> 48 rows per drop!)
-    let rows = height / Int(cellH)
-    let drops = 3
-    let subPeriod = Double(rows / drops)
-    let phase = randDouble(&rngState) * subPeriod
-    let tail = 14.0 + randDouble(&rngState) * 18.0
-    let bright = CGFloat(0.18 + randDouble(&rngState) * 0.18)
+    let drops = 4
+    let rows = drops * subPeriodRows // 128 rows
+    let cellH = CGFloat(height) / CGFloat(rows) // 11.25px
+    let phase = Int(splitMix64(&rngState) % UInt64(subPeriodRows))
+    let tail = 14.0 + randDouble(&rngState) * 12.0
+    let bright = CGFloat(0.18 + randDouble(&rngState) * 0.16)
     columns.append(StreamColumn(
         x: CGFloat(idx) * microStep + 1.0,
-        fontSize: 8.5,
+        fontSize: 8.8,
         cellH: cellH,
         numRows: rows,
         dropsPerCol: drops,
-        phaseRows: phase,
+        phaseRow: phase,
         tailLengthRows: tail,
-        speedSubCycles: 1.0,
         brightness: bright,
         layer: 0,
         seed: splitMix64(&rngState)
     ))
 }
 
-// Layer 1: Far Dense Rain (11pt, 14px spacing, 2 drops per column -> ~182 streams)
+// Layer 1: Far Dense Rain (10.5pt, 14px spacing, 4 drops * 32 rows = 128 rows)
 let farStep: CGFloat = 14.0
 for idx in 0..<Int(CGFloat(width) / farStep) {
-    let cellH: CGFloat = 12.0 // 1440 / 12 = 120 rows (divisible by 2 -> 60 rows per drop!)
-    let rows = height / Int(cellH)
-    let drops = 2
-    let subPeriod = Double(rows / drops)
-    let phase = randDouble(&rngState) * subPeriod
-    let tail = 16.0 + randDouble(&rngState) * 24.0
-    let bright = CGFloat(0.36 + randDouble(&rngState) * 0.26)
+    let drops = 4
+    let rows = drops * subPeriodRows // 128 rows
+    let cellH = CGFloat(height) / CGFloat(rows) // 11.25px
+    let phase = Int(splitMix64(&rngState) % UInt64(subPeriodRows))
+    let tail = 16.0 + randDouble(&rngState) * 11.0
+    let bright = CGFloat(0.36 + randDouble(&rngState) * 0.24)
     columns.append(StreamColumn(
         x: CGFloat(idx) * farStep + 3.0,
         fontSize: 10.5,
         cellH: cellH,
         numRows: rows,
         dropsPerCol: drops,
-        phaseRows: phase,
+        phaseRow: phase,
         tailLengthRows: tail,
-        speedSubCycles: 1.0,
         brightness: bright,
         layer: 1,
         seed: splitMix64(&rngState)
     ))
 }
 
-// Layer 2: Classic Mid-Ground Crisp Streams (13.5pt, 18px spacing, 2 drops per column -> ~142 streams)
+// Layer 2: Classic Mid-Ground Crisp Streams (13pt, 18px spacing, 3 drops * 32 rows = 96 rows)
 let midStep: CGFloat = 18.0
 for idx in 0..<Int(CGFloat(width) / midStep) {
-    let cellH: CGFloat = 15.0 // 1440 / 15 = 96 rows (divisible by 2 -> 48 rows per drop!)
-    let rows = height / Int(cellH)
-    let drops = 2
-    let subPeriod = Double(rows / drops)
-    let phase = randDouble(&rngState) * subPeriod
-    let tail = 14.0 + randDouble(&rngState) * 22.0
-    let speed = (idx % 4 == 0) ? 2.0 : 1.0
-    let bright = CGFloat(0.68 + randDouble(&rngState) * 0.30)
+    let drops = 3
+    let rows = drops * subPeriodRows // 96 rows
+    let cellH = CGFloat(height) / CGFloat(rows) // 15.0px
+    let phase = Int(splitMix64(&rngState) % UInt64(subPeriodRows))
+    let tail = 16.0 + randDouble(&rngState) * 11.0
+    let bright = CGFloat(0.68 + randDouble(&rngState) * 0.28)
     columns.append(StreamColumn(
         x: CGFloat(idx) * midStep + 5.0,
         fontSize: 13.0,
         cellH: cellH,
         numRows: rows,
         dropsPerCol: drops,
-        phaseRows: phase,
+        phaseRow: phase,
         tailLengthRows: tail,
-        speedSubCycles: speed,
         brightness: bright,
         layer: 2,
         seed: splitMix64(&rngState)
     ))
 }
 
-// Layer 3: Foreground Hero Streams (16.5pt, 46px spacing, 2 drops per column -> ~55 hero streams)
+// Layer 3: Foreground Hero Streams (15.5pt, 46px spacing, 3 drops * 32 rows = 96 rows)
 let nearStep: CGFloat = 46.0
 for idx in 0..<Int(CGFloat(width) / nearStep) {
-    let cellH: CGFloat = 18.0 // 1440 / 18 = 80 rows (divisible by 2 -> 40 rows per drop!)
-    let rows = height / Int(cellH)
-    let drops = 2
-    let subPeriod = Double(rows / drops)
-    let phase = randDouble(&rngState) * subPeriod
-    let tail = 14.0 + randDouble(&rngState) * 16.0
-    let jitterX = CGFloat(randDouble(&rngState) * 14.0 - 7.0)
+    let drops = 3
+    let rows = drops * subPeriodRows // 96 rows
+    let cellH = CGFloat(height) / CGFloat(rows) // 15.0px
+    let phase = Int(splitMix64(&rngState) % UInt64(subPeriodRows))
+    let tail = 18.0 + randDouble(&rngState) * 9.0
+    let jitterX = CGFloat(randDouble(&rngState) * 12.0 - 6.0)
     columns.append(StreamColumn(
         x: CGFloat(idx) * nearStep + 12.0 + jitterX,
-        fontSize: 16.0,
+        fontSize: 15.5,
         cellH: cellH,
         numRows: rows,
         dropsPerCol: drops,
-        phaseRows: phase,
+        phaseRow: phase,
         tailLengthRows: tail,
-        speedSubCycles: 1.0,
         brightness: 1.0,
         layer: 3,
         seed: splitMix64(&rngState)
@@ -163,8 +154,6 @@ let colorSpace = CGColorSpaceCreateDeviceRGB()
 
 for frame in 0..<numFrames {
     autoreleasepool {
-        let progress = Double(frame) / Double(numFrames) // 0.0 ..< 1.0
-
         guard let ctx = CGContext(
             data: nil,
             width: width,
@@ -193,65 +182,74 @@ for frame in 0..<numFrames {
         ctx.setFillColor(red: 0.008, green: 0.024, blue: 0.014, alpha: 1.0)
         ctx.fill(CGRect(x: 0, y: 0, width: width, height: height))
 
-        // 2. Subtle atmospheric glow from base matrix_rain.jpg (16% opacity)
+        // 2. Subtle atmospheric glow from base matrix_rain.jpg (15% opacity)
         if let base = baseImage,
            let cgBase = base.cgImage(forProposedRect: nil, context: nsCtx, hints: nil) {
             ctx.saveGState()
             ctx.translateBy(x: 0, y: CGFloat(height))
             ctx.scaleBy(x: 1.0, y: -1.0)
-            ctx.setAlpha(0.16)
+            ctx.setAlpha(0.15)
             ctx.draw(cgBase, in: CGRect(x: 0, y: 0, width: width, height: height))
             ctx.restoreGState()
         }
 
-        // 3. Draw all 4 depth layers of falling Matrix code
+        // 3. Draw all 4 depth layers: each frame advances head by EXACTLY 1 row!
         for col in columns {
             let font = fontCache[col.fontSize]!
-            let subPeriod = Double(col.numRows / col.dropsPerCol)
-
-            // Head position within [0, subPeriod)
-            let headOffset = (col.phaseRows + progress * col.speedSubCycles * subPeriod)
-                .truncatingRemainder(dividingBy: subPeriod)
+            let headRowInSub = (col.phaseRow + frame) % subPeriodRows
 
             for r in 0..<col.numRows {
-                let rowInSub = Double(r % (col.numRows / col.dropsPerCol))
-                var dist = headOffset - rowInSub
-                if dist < 0 {
-                    dist += subPeriod
+                let rowInSub = r % subPeriodRows
+                var distInt = headRowInSub - rowInSub
+                if distInt < 0 {
+                    distInt += subPeriodRows
                 }
+                let dist = Double(distInt)
 
                 if dist > col.tailLengthRows {
                     continue
                 }
 
-                // Deterministic glyph selection per cell, with subtle live mutation near the head
+                // Stationary grid glyph that lights up as the wave passes through it;
+                // only the leading head (dist == 0) flickers to a fresh glyph as it prints!
                 var glyphSeed = col.seed ^ UInt64(r &* 1315423911)
-                if dist < 1.8 || (dist < 5.0 && ((r + frame) % 7 == 0)) {
+                if distInt == 0 {
                     glyphSeed ^= UInt64(frame &* 2654435761)
                 }
                 let glyphIdx = Int(splitMix64(&glyphSeed) % UInt64(glyphChars.count))
                 let glyph = glyphChars[glyphIdx]
 
                 let norm = dist / col.tailLengthRows // 0.0 at head -> 1.0 at tail end
-                let fade = pow(1.0 - norm, 1.65) * Double(col.brightness)
+                let fade = pow(1.0 - norm, 1.55) * Double(col.brightness)
 
                 let textColor: NSColor
                 var glowBlur: CGFloat = 0.0
 
-                if dist < 0.95 && col.layer >= 1 {
-                    // Leading phosphor white-green character (#e4ffed)
+                if distInt == 0 && col.layer >= 1 {
+                    // Leading phosphor white-green character (#eafff2)
                     let headAlpha = min(1.0, Double(col.brightness) * 1.08)
                     textColor = NSColor(
-                        calibratedRed: col.layer == 3 ? 0.92 : 0.80,
+                        calibratedRed: col.layer == 3 ? 0.92 : 0.82,
                         green: 1.0,
-                        blue: col.layer == 3 ? 0.95 : 0.86,
+                        blue: col.layer == 3 ? 0.95 : 0.88,
                         alpha: CGFloat(headAlpha)
                     )
                     if col.layer >= 2 {
                         glowBlur = col.fontSize * 0.65
                     }
-                } else if dist < 3.2 && col.layer >= 1 {
-                    // Intense neon Matrix green (#00ff66)
+                } else if distInt == 1 && col.layer >= 1 {
+                    // Second cell: warm transition from white-green to neon green (#66ffa3)
+                    textColor = NSColor(
+                        calibratedRed: 0.38,
+                        green: 1.0,
+                        blue: 0.64,
+                        alpha: CGFloat(min(1.0, fade * 1.05))
+                    )
+                    if col.layer >= 2 {
+                        glowBlur = col.fontSize * 0.45
+                    }
+                } else if distInt <= 4 && col.layer >= 1 {
+                    // Bright neon Matrix green (#00ff66)
                     textColor = NSColor(
                         calibratedRed: 0.04,
                         green: 1.0,
@@ -259,7 +257,7 @@ for frame in 0..<numFrames {
                         alpha: CGFloat(fade)
                     )
                     if col.layer == 3 {
-                        glowBlur = col.fontSize * 0.45
+                        glowBlur = col.fontSize * 0.35
                     }
                 } else {
                     // Rich emerald gradient trail (#00d455 -> #003b18)
@@ -328,7 +326,7 @@ for frame in 0..<numFrames {
         let bitmapRep = NSBitmapImageRep(cgImage: outCgImage)
         guard let jpegData = bitmapRep.representation(
             using: .jpeg,
-            properties: [.compressionFactor: 0.92]
+            properties: [.compressionFactor: 0.90]
         ) else {
             fatalError("Failed to encode JPEG for frame \(frame)")
         }
@@ -339,4 +337,4 @@ for frame in 0..<numFrames {
     }
 }
 
-print("Generated \(numFrames) 2K Retina high-density Matrix rain frames in \(outDir)")
+print("Generated \(numFrames) 2K 1-row-per-frame smooth Matrix rain frames in \(outDir)")

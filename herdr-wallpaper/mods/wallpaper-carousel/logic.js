@@ -98,13 +98,13 @@ export function updateLayoutJson(layoutJsonString, newWallpaperFilename) {
 
 /**
  * Generates ordered seamless loop frame paths for Matrix digital rain.
- * @param {number} frameCount Number of frames (default: 16)
- * @param {string} folder Subfolder under backgrounds/ (default: "matrix-rain")
+ * @param {number} frameCount Number of frames (default: 32)
+ * @param {string} folder Subfolder under backgrounds/ (default: "matrix-rain-smooth")
  * @returns {string[]}
  */
-export function getMatrixRainFrames(frameCount = 16, folder = "matrix-rain") {
-  const count = Math.max(1, Math.floor(Number(frameCount) || 16));
-  const cleanFolder = String(folder || "matrix-rain").replace(/^\/+|\/+$/g, "");
+export function getMatrixRainFrames(frameCount = 32, folder = "matrix-rain-smooth") {
+  const count = Math.max(1, Math.floor(Number(frameCount) || 32));
+  const cleanFolder = String(folder || "matrix-rain-smooth").replace(/^\/+|\/+$/g, "");
   const frames = [];
   for (let i = 0; i < count; i++) {
     const num = String(i).padStart(2, "0");

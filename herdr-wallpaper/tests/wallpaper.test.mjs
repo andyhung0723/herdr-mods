@@ -158,9 +158,9 @@ test("getMatrixRainFrames - generates zero-padded seamless loop frame paths", ()
     "matrix-rain/frame_03.jpg",
   ]);
   const defaultFrames = getMatrixRainFrames();
-  assert.equal(defaultFrames.length, 16);
-  assert.equal(defaultFrames[0], "matrix-rain/frame_00.jpg");
-  assert.equal(defaultFrames[15], "matrix-rain/frame_15.jpg");
+  assert.equal(defaultFrames.length, 32);
+  assert.equal(defaultFrames[0], "matrix-rain-smooth/frame_00.jpg");
+  assert.equal(defaultFrames[31], "matrix-rain-smooth/frame_31.jpg");
 });
 
 
