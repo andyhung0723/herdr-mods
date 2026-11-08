@@ -157,6 +157,7 @@ def update_layout(home: Path, mode: str, interval_ms: int, dry_run: bool) -> boo
         "mode": mode,
         "intervalMs": interval_ms,
         "frameCount": 16,
+        "matrixFolder": "matrix-rain-hd",
     }
     controller_spec = {
         "id": controller_id,
@@ -175,7 +176,7 @@ def update_layout(home: Path, mode: str, interval_ms: int, dry_run: bool) -> boo
     changed = False
     if mode == "matrix":
         desired_bg = {
-            "image": "backgrounds/matrix-rain/frame_00.jpg",
+            "image": "backgrounds/matrix-rain-hd/frame_00.jpg",
             "fit": "cover",
         }
         if root.get("background") != desired_bg:

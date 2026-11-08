@@ -27,7 +27,10 @@ export default class WallpaperCarousel extends View {
     const props = initialProps || {};
     this.mode = props.mode || shared(SHARED_KEY_MODE) || "matrix";
     this.frameCount = props.frameCount || 16;
-    this.matrixFrames = getMatrixRainFrames(this.frameCount, props.matrixFolder || "matrix-rain");
+    this.matrixFrames = getMatrixRainFrames(
+      this.frameCount,
+      props.matrixFolder || "matrix-rain-hd"
+    );
     this.frameIndex = 0;
 
     this.intervalMs =
