@@ -9,14 +9,27 @@ function cleanPath(p) {
   return p.startsWith(userHome) ? "~" + p.slice(userHome.length) : p;
 }
 
+function classifyAgentKind(rawString) {
+  const s = (rawString || "").toLowerCase();
+  if (!s) return null;
+  if (s.includes("claude")) return { key: "claude", label: "Claude Code" };
+  if (s.includes("codex") || s.includes("openai")) return { key: "codex", label: "Codex" };
+  if (s.includes("antigravity") || s.includes("agy") || s.includes("gemini")) {
+    return { key: "antigravity", label: "Antigravity" };
+  }
+  return null;
+}
+
 export default class EnhancedAgentContext extends View {
   init(_props, cx) {
-    this.activeTab = "overview"; // overview | rules | skills | connectors | plugins
+    this.activeTab = "overview"; // overview | rules | skills | connectors
+    this.scopeMode = "focused"; // focused (only current agent) | all (all agents)
     this.selectedRule = null;
     this.ruleContent = "";
     this.skillFilter = "all"; // all | claude | codex | antigravity
     this.expandedSkill = null;
     this.loading = false;
+    this.lastObservedKey = "";
     this.data = {
       cwd: "",
       targetAgent: "all",
@@ -29,8 +42,18 @@ export default class EnhancedAgentContext extends View {
       summary: { rulesCount: 0, skillsCount: 0, connectorsCount: 0, pluginsCount: 0 },
     };
 
-    // Auto-refresh when pane focus changes
-    cx.timer.every(4000, (timerCx) => {
+    // Fast dirty-check every 500ms: immediately switches context when user switches tabs/panes
+    cx.timer.every(500, (timerCx) => {
+      const { cwd, effectiveAgent } = this.resolveActiveContext();
+      const nextKey = `${cwd}::${effectiveAgent}::${this.scopeMode}`;
+      if (nextKey !== this.lastObservedKey) {
+        this.lastObservedKey = nextKey;
+        this.refresh(timerCx, false);
+      }
+    });
+
+    // Background revalidation every 10s
+    cx.timer.every(10000, (timerCx) => {
       this.refresh(timerCx, false);
     });
 
@@ -42,37 +65,90 @@ export default class EnhancedAgentContext extends View {
     const allAgents = agents() || [];
     const allSpaces = spaces() || [];
     const allPanes = panes() || [];
-    const currentAgent = focus?.agent ? allAgents.find((a) => a.address === focus.agent) : allAgents[0];
+
     const activeSpace =
       allSpaces.find((s) => s.id === focus?.space) ??
       allSpaces.find((s) => s.active) ??
       allSpaces[0];
-    const focusedPane = focus?.pane
-      ? allPanes.find((p) => p.pane === focus.pane)
-      : allPanes.find((p) => p.focused && p.cwd);
+
+    const activeTabId = focus?.tab || activeSpace?.tabs?.find((t) => t.active)?.id;
+
+    // 1. Find focused pane or active tab's agent pane
+    let activePane = focus?.pane ? allPanes.find((p) => p.pane === focus.pane) : null;
+    if (!activePane && activeTabId) {
+      activePane =
+        allPanes.find((p) => p.tab === activeTabId && p.focused) ??
+        allPanes.find((p) => p.tab === activeTabId && p.program?.agent) ??
+        allPanes.find((p) => p.tab === activeTabId);
+    }
+    if (!activePane) {
+      activePane = allPanes.find((p) => p.focused && p.cwd);
+    }
+
+    // 2. Find matching agent in agents() list
+    let currentAgent = focus?.agent ? allAgents.find((a) => a.address === focus.agent) : null;
+    if (!currentAgent && activePane) {
+      currentAgent = allAgents.find(
+        (a) => a.pane === activePane.pane || (activePane.terminal && a.address === activePane.terminal)
+      );
+    }
+    if (!currentAgent && activeTabId) {
+      currentAgent = allAgents.find((a) => a.tab === activeTabId);
+    }
+    if (!currentAgent && activeSpace) {
+      currentAgent = allAgents.find((a) => a.space === activeSpace.id && a.focused);
+    }
+
+    // 3. Classify agent type (claude | codex | antigravity | all)
+    const detected =
+      classifyAgentKind(currentAgent?.program?.key) ||
+      classifyAgentKind(currentAgent?.program?.name) ||
+      classifyAgentKind(currentAgent?.agent) ||
+      classifyAgentKind(activePane?.program?.key) ||
+      classifyAgentKind(activePane?.program?.name) ||
+      classifyAgentKind(activePane?.title);
+
+    const agentType = detected ? detected.key : "all";
+    const agentLabel = detected
+      ? detected.label
+      : currentAgent?.program?.name || activePane?.program?.name || "All Agents";
+
     const cwd =
       currentAgent?.cwd ||
-      focusedPane?.cwd ||
+      activePane?.cwd ||
       focus?.cwd ||
       activeSpace?.folder ||
       activeSpace?.cwd ||
       "";
-    const agentType = (currentAgent?.program?.key || currentAgent?.agent || "all").toLowerCase();
-    return { currentAgent, cwd, agentType };
+
+    const effectiveAgent = this.scopeMode === "all" ? "all" : agentType;
+
+    return { currentAgent, cwd, agentType, agentLabel, effectiveAgent };
   }
 
   async refresh(cx, force = false) {
-    const { cwd, agentType } = this.resolveActiveContext();
+    const { cwd, effectiveAgent } = this.resolveActiveContext();
+    this.lastObservedKey = `${cwd}::${effectiveAgent}::${this.scopeMode}`;
     this.loading = true;
     cx?.notify?.();
 
     try {
-      const result = await fetchAgentContext(cwd, agentType, force);
+      const result = await fetchAgentContext(cwd, effectiveAgent, force);
       if (result) {
         this.data = result;
-        // Default select first rule if not selected
-        if (!this.selectedRule && this.data.rules?.length > 0) {
-          this.selectRule(this.data.rules[0], cx);
+        const rules = this.data.rules || [];
+        const stillExists =
+          this.selectedRule &&
+          rules.some(
+            (r) => r.displayPath === this.selectedRule.displayPath && r.agent === this.selectedRule.agent
+          );
+        if (!stillExists) {
+          if (rules.length > 0) {
+            this.selectRule(rules[0], cx);
+          } else {
+            this.selectedRule = null;
+            this.ruleContent = "";
+          }
         }
       }
     } catch (err) {
@@ -128,11 +204,13 @@ export default class EnhancedAgentContext extends View {
       );
   }
 
-  renderHeader(t, currentAgent, cwd) {
+  renderHeader(t, currentAgent, cwd, agentType = "all", agentLabel = "AI Agent") {
     const git = this.data.git || {};
-    const agentName = currentAgent?.name || currentAgent?.program?.name || "AI Agent";
-    const agentKey = (currentAgent?.program?.key || currentAgent?.agent || "agent").toLowerCase();
-    const model = this.data.models?.[agentKey] || this.data.models?.claude || "Default Model";
+    const isFocusedScope = this.scopeMode === "focused" && agentType !== "all";
+    const model =
+      (agentType !== "all" ? this.data.models?.[agentType] : null) ||
+      this.data.models?.claude ||
+      "Default Model";
 
     return v_flex()
       .w_full()
@@ -148,26 +226,51 @@ export default class EnhancedAgentContext extends View {
           .justify_between()
           .child(
             h_flex()
-              .gap(8)
+              .gap(6)
               .items_center()
               .child(svg("mods/workspace-chrome/layers.svg").size(16).text_color(t.accent ?? t.working ?? t.foreground))
-              .child(div().text_size(14).font_bold().text_color(t.foreground).child("Agent Inspector"))
+              .child(div().text_size(13.5).font_bold().text_color(t.foreground).child("Agent Inspector"))
               .child(
                 div()
                   .px(6)
                   .h(18)
                   .rounded(4)
-                  .bg((t.accent ?? "#3b82f6") + "22")
+                  .bg((isFocusedScope ? (t.working ?? "#10b981") : (t.accent ?? "#3b82f6")) + "22")
                   .text_size(10.5)
                   .font_semibold()
-                  .text_color(t.accent ?? t.foreground)
-                  .child(agentName)
+                  .text_color(isFocusedScope ? (t.working ?? "#10b981") : (t.accent ?? t.foreground))
+                  .flex()
+                  .items_center()
+                  .child(isFocusedScope ? `🎯 ${agentLabel}` : "All Agents")
               )
           )
           .child(
             h_flex()
               .gap(4)
               .items_center()
+              .child(
+                div()
+                  .id("btn-toggle-agent-scope")
+                  .px(6)
+                  .h(20)
+                  .rounded(4)
+                  .bg(t.raised)
+                  .border(1)
+                  .border_color(t.border)
+                  .text_size(10)
+                  .text_color(t.muted)
+                  .cursor_pointer()
+                  .hover((s) => s.bg(t.hover).text_color(t.foreground))
+                  .tooltip("Toggle between current focused Agent context vs All Agents")
+                  .on_click((_e, cx) => {
+                    this.scopeMode = this.scopeMode === "focused" ? "all" : "focused";
+                    this.skillFilter = "all";
+                    this.refresh(cx, false);
+                  })
+                  .flex()
+                  .items_center()
+                  .child(this.scopeMode === "focused" ? "Show All" : "Follow Agent")
+              )
               .child(
                 div()
                   .id("btn-refresh-context")
@@ -447,10 +550,13 @@ export default class EnhancedAgentContext extends View {
           .gap(4)
           .overflow_y_scrollbar()
           .children(
-            rules.map((r) => {
-              const on = this.selectedRule?.path === r.path;
+            rules.map((r, idx) => {
+              const on =
+                (this.selectedRule?.displayPath || this.selectedRule?.path) ===
+                  (r.displayPath || r.path) &&
+                (this.selectedRule?.agent || "") === (r.agent || "");
               return v_flex()
-                .id(`rule-item-${r.name}`)
+                .id(`rule-item-${r.agent || "all"}-${r.scope}-${idx}`)
                 .w_full()
                 .p(6)
                 .rounded(6)
@@ -475,7 +581,12 @@ export default class EnhancedAgentContext extends View {
                         .child(r.scope)
                     )
                 )
-                .child(div().text_size(10).text_color(t.dim).child(`${r.lines} lines • ${(r.size / 1024).toFixed(1)} KB`));
+                .child(
+                  div()
+                    .text_size(10)
+                    .text_color(t.dim)
+                    .child(`${r.agent ? r.agent + " • " : ""}${r.lines} lines • ${(r.size / 1024).toFixed(1)} KB`)
+                );
             })
           )
       )
@@ -497,7 +608,16 @@ export default class EnhancedAgentContext extends View {
               .child(
                 v_flex()
                   .child(div().text_size(13).font_bold().text_color(t.foreground).child(this.selectedRule?.name || "Instructions Viewer"))
-                  .child(div().text_size(10.5).text_color(t.dim).child(cleanPath(this.selectedRule?.path) || ""))
+                  .child(
+                    div()
+                      .text_size(10.5)
+                      .text_color(t.dim)
+                      .child(
+                        this.selectedRule?.isSymlink && this.selectedRule?.targetPath
+                          ? `${cleanPath(this.selectedRule?.displayPath)} ↳ ${cleanPath(this.selectedRule?.targetPath)}`
+                          : cleanPath(this.selectedRule?.displayPath || this.selectedRule?.path) || ""
+                      )
+                  )
               )
               .child(
                 h_flex()
@@ -809,13 +929,13 @@ export default class EnhancedAgentContext extends View {
 
   render(cx) {
     const t = theme();
-    const { currentAgent, cwd } = this.resolveActiveContext();
+    const { currentAgent, cwd, agentType, agentLabel } = this.resolveActiveContext();
     const summary = this.data.summary || {};
 
     return v_flex()
       .size_full()
       .bg(t.chrome)
-      .child(this.renderHeader(t, currentAgent, cwd))
+      .child(this.renderHeader(t, currentAgent, cwd, agentType, agentLabel))
       .child(
         // Tabs Navigation Bar
         h_flex()

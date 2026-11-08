@@ -51,6 +51,25 @@ test("enhanced-agent-context - collector.py outputs valid JSON schema", () => {
   assert.ok(sampleConn.command, "connector has command");
 });
 
+test("enhanced-agent-context - collector.py filters context per active agent", () => {
+  for (const agent of ["claude", "codex", "antigravity"]) {
+    const stdout = execFileSync("python3", [collectorPy, "--cwd", rootDir, "--agent", agent], {
+      encoding: "utf-8",
+    });
+    const data = JSON.parse(stdout);
+    assert.equal(data.targetAgent, agent);
+    for (const r of data.rules) {
+      assert.equal(r.agent, agent, `Rule ${r.name} should belong to ${agent}`);
+    }
+    for (const s of data.skills) {
+      assert.equal(s.agent, agent, `Skill ${s.name} should belong to ${agent}`);
+    }
+    for (const c of data.connectors) {
+      assert.equal(c.agent, agent, `Connector ${c.name} should belong to ${agent}`);
+    }
+  }
+});
+
 test("enhanced-agent-context - main.js implements tab views", () => {
   const content = fs.readFileSync(path.resolve(modDir, "main.js"), "utf-8");
   assert.match(content, /export default class EnhancedAgentContext extends View/);
