@@ -1,5 +1,5 @@
 // Git Service & Parser for Herdr Enhanced Git mod
-import { spaces, panes, focused, exec, readTextFile } from "herdr";
+import { spaces, panes, focused, agents, exec, readTextFile } from "herdr";
 
 const READ_FLAGS = [
   "--no-optional-locks",
@@ -10,6 +10,7 @@ const READ_FLAGS = [
 export function resolveLocation() {
   const allSpaces = spaces() || [];
   const allPanes = panes() || [];
+  const allAgents = (typeof agents === "function" ? agents() : null) || [];
   const f = focused() || {};
 
   const activeSpace = allSpaces.find((s) => s.id === f?.space) ?? allSpaces.find((s) => s.active) ?? allSpaces[0];
@@ -30,7 +31,18 @@ export function resolveLocation() {
     pane = allPanes.find((p) => p.space === activeSpace.id || activeSpace.tabs?.some((t) => t.id === p.tab));
   }
 
-  const cwd = pane?.cwd || f.cwd || activeSpace?.folder || activeSpace?.cwd || null;
+  // Check matching agent in agents() list
+  let currentAgent = f?.agent ? allAgents.find((a) => a.address === f.agent) : null;
+  if (!currentAgent && pane) {
+    currentAgent = allAgents.find(
+      (a) => a.pane === pane.pane || (pane.terminal && a.address === pane.terminal)
+    );
+  }
+  if (!currentAgent && f.tab) {
+    currentAgent = allAgents.find((a) => a.tab === f.tab);
+  }
+
+  const cwd = currentAgent?.cwd || pane?.cwd || f.cwd || activeSpace?.folder || activeSpace?.cwd || null;
   const on = f.pane === null
     ? (f.terminal?.includes("/") ? f.terminal.split("/")[0] : null)
     : activeSpace?.machine ?? null;

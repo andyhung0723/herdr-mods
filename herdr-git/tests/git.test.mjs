@@ -27,6 +27,7 @@ async function harness(overrides = {}) {
   const api = {
     spaces: () => [{ id: "s1", active: true, folder: "/repo" }],
     panes: () => [{ pane: "p1", space: "s1", cwd: "/repo" }],
+    agents: () => [],
     focused: () => ({ pane: "p1", cwd: "/repo" }),
     exec: async (cmd, args) => {
       events.push(["exec", cmd, args]);
@@ -346,5 +347,47 @@ test("resolveLocation prioritizes active second tab cwd when pane is not directl
   const loc = git.resolveLocation();
   assert.equal(loc.cwd, "/repo-root/tab2-dir");
 });
+
+test("EnhancedGit clears selectedFile and diffLines when working tree becomes clean", async () => {
+  let statusOutput = [
+    "## main",
+    "M  staged-file.js",
+    "",
+  ].join("\0");
+
+  const { View, cx } = await harness({
+    exec: async (cmd, args) => {
+      if (args.includes("rev-parse") && args.includes("--show-toplevel")) return { code: 0, stdout: "/repo\n" };
+      if (args.includes("rev-parse") && args.includes("--verify")) return { code: 0, stdout: "283ef88\n" };
+      if (args.includes("status")) return { code: 0, stdout: statusOutput };
+      if (args.includes("diff") && args.includes("staged-file.js")) return { code: 0, stdout: "diff --git a/staged-file.js b/staged-file.js\n+line" };
+      return { code: 0, stdout: "" };
+    },
+  });
+
+  const view = new View();
+  view.init({ role: "panel" }, cx);
+  await new Promise((r) => setImmediate(r));
+  await new Promise((r) => setImmediate(r));
+
+  assert.equal(view.selectedFile, "staged-file.js");
+  assert.equal(view.selectedIsStaged, true);
+
+  // Now working tree becomes clean after commit
+  statusOutput = "## main\0";
+  await view.refresh(cx, true);
+  await new Promise((r) => setImmediate(r));
+  await new Promise((r) => setImmediate(r));
+
+  assert.equal(view.selectedFile, null);
+  assert.equal(view.selectedIsStaged, false);
+  assert.equal(view.diffLines.length, 0);
+
+  // Attempting to commit with empty tree should be ignored safely
+  view.message = "test commit";
+  view.doCommit(cx);
+  assert.equal(view.selectedFile, null);
+});
+
 
 

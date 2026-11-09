@@ -239,13 +239,29 @@ export default class EnhancedGit extends View {
           this.graphLoading = false;
         }
 
-        // Auto-select first changed file if none selected
-        if (!this.selectedFile) {
-          if (statusData.stagedFiles.length > 0) {
-            this.selectFile(statusData.stagedFiles[0].path, true, cx);
-          } else if (statusData.unstagedFiles.length > 0) {
-            this.selectFile(statusData.unstagedFiles[0].path, false, cx);
+        // Reconcile selected file with current git status
+        const allChangedFiles = [
+          ...statusData.stagedFiles.map((f) => ({ ...f, staged: true })),
+          ...statusData.unstagedFiles.map((f) => ({ ...f, staged: false })),
+        ];
+
+        const stillExists =
+          allChangedFiles.find((f) => f.path === this.selectedFile && f.staged === this.selectedIsStaged) ||
+          allChangedFiles.find((f) => f.path === this.selectedFile);
+
+        if (stillExists) {
+          if (stillExists.staged !== this.selectedIsStaged) {
+            this.selectedIsStaged = stillExists.staged;
+            this.selectFile(stillExists.path, stillExists.staged, cx);
           }
+        } else if (allChangedFiles.length > 0) {
+          // Previously selected file is gone (committed or discarded), auto-select next available
+          this.selectFile(allChangedFiles[0].path, allChangedFiles[0].staged, cx);
+        } else {
+          // Working tree is completely clean
+          this.selectedFile = null;
+          this.selectedIsStaged = false;
+          this.diffLines = [];
         }
 
         this.updateCache();
@@ -370,6 +386,9 @@ export default class EnhancedGit extends View {
   doCommit(cx) {
     const msg = this.message.trim();
     if (!msg) return;
+    const stagedCount = this.status?.stagedFiles?.length || 0;
+    const unstagedCount = this.status?.unstagedFiles?.length || 0;
+    if (stagedCount === 0 && unstagedCount === 0) return;
 
     this.runAction(async () => {
       // If nothing staged, auto-stage all
@@ -470,6 +489,7 @@ export default class EnhancedGit extends View {
     const status = this.status;
     const staged = status?.stagedFiles || [];
     const unstaged = status?.unstagedFiles || [];
+    const canCommit = staged.length > 0 || unstaged.length > 0;
 
     return v_flex()
       .size_full()
@@ -682,16 +702,42 @@ export default class EnhancedGit extends View {
                   .font_medium()
                   .text_color(t.foreground)
                   .truncate()
-                  .child(this.selectedFile ? `${this.selectedIsStaged ? "[Staged] " : ""}${this.selectedFile}` : "No file selected")
+                  .child(
+                    this.selectedFile
+                      ? `${this.selectedIsStaged ? "[Staged] " : ""}${this.selectedFile}`
+                      : canCommit
+                      ? "No file selected"
+                      : "Working tree clean"
+                  )
               )
           )
           // Diff Content
           .child(
-            v_flex()
-              .flex_1()
-              .min_h(0)
-              .overflow_y_scrollbar()
-              .child(this.renderDiffLines(this.diffLines, t))
+            this.selectedFile
+              ? v_flex()
+                  .flex_1()
+                  .min_h(0)
+                  .overflow_y_scrollbar()
+                  .child(this.renderDiffLines(this.diffLines, t))
+              : v_flex()
+                  .flex_1()
+                  .min_h(0)
+                  .items_center()
+                  .justify_center()
+                  .gap(6)
+                  .child(
+                    div()
+                      .text_size(12)
+                      .font_medium()
+                      .text_color(t.muted)
+                      .child(canCommit ? "Select a file to view diff" : "Working tree clean")
+                  )
+                  .child(
+                    div()
+                      .text_size(11)
+                      .text_color(t.dim)
+                      .child(canCommit ? "Click any staged or unstaged file above" : "No pending changes in this repository")
+                  )
           )
       )
       // Commit Input Row
@@ -712,15 +758,21 @@ export default class EnhancedGit extends View {
               .h(34)
               .px(14)
               .rounded(6)
-              .bg(t.accent)
-              .hover((s) => s.opacity(0.85))
-              .cursor_pointer()
+              .bg(canCommit ? t.accent : t.raised)
+              .border_1()
+              .border_color(canCommit ? t.accent : t.border)
+              .when(canCommit, (el) =>
+                el
+                  .hover((s) => s.opacity(0.85))
+                  .cursor_pointer()
+                  .on_click((_e, cx) => this.doCommit(cx))
+              )
+              .when(!canCommit, (el) => el.cursor_default().opacity(0.6))
               .items_center()
               .justify_center()
               .text_size(11.5)
               .font_semibold()
-              .text_color(t.background)
-              .on_click((_e, cx) => this.doCommit(cx))
+              .text_color(canCommit ? t.background : t.dim)
               .child("Commit")
           )
       );
