@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 
-test("enhanced-tabs - main.js renders Git and Music buttons", () => {
+test("enhanced-tabs - main.js renders Git and Agent buttons without Music", () => {
   const mainPath = path.resolve(
     import.meta.dirname,
     "../mods/enhanced-tabs/main.js"
@@ -21,16 +21,22 @@ test("enhanced-tabs - main.js renders Git and Music buttons", () => {
     /panelButton\("changes",\s*"Changes",\s*"mods\/changes\/changes\.svg"\)/
   );
 
-  // Verify Music button is present
-  assert.match(
+  // Verify Music button is NOT present
+  assert.doesNotMatch(
     content,
-    /panelButton\("music",\s*"Music",\s*"mods\/enhanced-music\/music\.svg"\)/
+    /panelButton\("music",/
   );
 
   // Verify Agent button is present
   assert.match(
     content,
     /panelButton\("context",\s*"Agent",\s*"mods\/workspace-chrome\/layers\.svg"\)/
+  );
+
+  // Verify Spectra button is present
+  assert.match(
+    content,
+    /panelButton\("spectra",\s*"Spectra",\s*"mods\/spectra-status\/spectra\.svg"\)/
   );
 });
 

@@ -1,0 +1,10 @@
+{
+  "place": "none",
+  "title": "Spectra",
+  "focusable": true,
+  "overlay": {
+    "kind": "dialog",
+    "width": 900,
+    "height": 680
+  }
+}

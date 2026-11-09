@@ -85,8 +85,8 @@ export default class Tabs extends View {
     const panel = find(root, "panel"), body = find(root, "panel-body");
     const rawPanels = shared("workspace.panels");
     const enabled = Array.isArray(rawPanels)
-      ? [...new Set([...rawPanels, "music", "context"])]
-      : ["files", "changes", "music", "context"];
+      ? [...new Set([...rawPanels, "context", "spectra"])]
+      : ["files", "changes", "context", "spectra"];
     this.syncPanel(space, panel, body, enabled);
     const panelButton = (id, label, icon) => {
       const override = shared("panel.override");
@@ -125,8 +125,8 @@ export default class Tabs extends View {
       .child(button("tab-new", "+", () => openOverlay({ mod: "new-menu", kind: "popup", width: 250, height: 512 })))
       .when(enabled.includes("files"), el => el.child(panelButton("files", "Files", "mods/files/file.svg")))
       .when(enabled.includes("changes"), el => el.child(panelButton("changes", "Git", "icons/git.svg")))
-      .when(enabled.includes("music"), el => el.child(panelButton("music", "Music", "mods/enhanced-music/music.svg")))
       .when(enabled.includes("context"), el => el.child(panelButton("context", "Agent", "mods/workspace-chrome/layers.svg")))
+      .when(enabled.includes("spectra"), el => el.child(panelButton("spectra", "Spectra", "mods/spectra-status/spectra.svg")))
       .when(w?.buttons, el => el.child(button("minimize", w.platform === "windows" ? svg("mods/tabs/win-min.svg").size(16) : "−", () => run("window.minimize")))
         .child(button("maximize", w.platform === "windows" ? svg(`mods/tabs/${w.maximized ? "win-restore" : "win-max"}.svg`).size(16) : "□", () => run("window.maximize")))
         .child(button("close-window", w.platform === "windows" ? svg("mods/tabs/win-close.svg").size(16) : svg("mods/pane/close.svg").size(13), () => run("window.close"))));
