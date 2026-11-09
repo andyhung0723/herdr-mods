@@ -1,0 +1,10 @@
+{
+  "place": "none",
+  "title": "Services",
+  "focusable": true,
+  "overlay": {
+    "kind": "dialog",
+    "width": 860,
+    "height": 640
+  }
+}
