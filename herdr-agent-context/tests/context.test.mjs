@@ -70,7 +70,7 @@ test("enhanced-agent-context - collector.py filters context per active agent", (
   }
 });
 
-test("enhanced-agent-context - main.js implements tab views", () => {
+test("enhanced-agent-context - main.js implements tab views and responsive narrow layout", () => {
   const content = fs.readFileSync(path.resolve(modDir, "main.js"), "utf-8");
   assert.match(content, /export default class EnhancedAgentContext extends View/);
   assert.match(content, /renderOverview/);
@@ -78,4 +78,11 @@ test("enhanced-agent-context - main.js implements tab views", () => {
   assert.match(content, /renderSkills/);
   assert.match(content, /renderConnectors/);
   assert.match(content, /Agent Inspector/);
+
+  // Responsive adaptive layout features
+  assert.match(content, /getPanelWidth/);
+  assert.match(content, /isNarrow/);
+  assert.match(content, /isVeryNarrow/);
+  assert.match(content, /\.min_w\(0\)/);
+  assert.doesNotMatch(content, /overflow_x_scrollbar/);
 });

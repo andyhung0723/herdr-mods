@@ -1,12 +1,31 @@
 import { View, div, svg } from "gpui-kit";
 import { h_flex, v_flex, TextView } from "gpui-base";
-import { theme, run, focused, panes, spaces, agents, terminals, notify, home } from "herdr";
+import { theme, run, focused, panes, spaces, agents, terminals, notify, home, layout } from "herdr";
 import { fetchAgentContext, readRuleContent } from "./collector.js";
 
 function cleanPath(p) {
   if (!p) return "";
   const userHome = home() || "/Users/dev";
   return p.startsWith(userHome) ? "~" + p.slice(userHome.length) : p;
+}
+
+function findLayoutNode(node, id) {
+  if (node?.id === id) return node;
+  for (const child of node?.children ?? []) {
+    const found = findLayoutNode(child, id);
+    if (found) return found;
+  }
+  return null;
+}
+
+function getPanelWidth() {
+  try {
+    if (typeof layout === "function") {
+      const panel = findLayoutNode(layout(), "panel");
+      if (typeof panel?.size?.px === "number") return panel.size.px;
+    }
+  } catch {}
+  return null;
 }
 
 function classifyAgentKind(rawString) {
@@ -30,6 +49,7 @@ export default class EnhancedAgentContext extends View {
     this.expandedSkill = null;
     this.loading = false;
     this.lastObservedKey = "";
+    this.lastWidthBucket = "";
     this.data = {
       cwd: "",
       targetAgent: "all",
@@ -42,13 +62,19 @@ export default class EnhancedAgentContext extends View {
       summary: { rulesCount: 0, skillsCount: 0, connectorsCount: 0, pluginsCount: 0 },
     };
 
-    // Fast dirty-check every 500ms: immediately switches context when user switches tabs/panes
+    // Fast dirty-check every 500ms: immediately switches context when user switches tabs/panes or resizes panel
     cx.timer.every(500, (timerCx) => {
       const { cwd, effectiveAgent } = this.resolveActiveContext();
       const nextKey = `${cwd}::${effectiveAgent}::${this.scopeMode}`;
+      const w = getPanelWidth();
+      const widthBucket = w === null ? "normal" : w < 380 ? "very-narrow" : w < 420 ? "narrow" : "normal";
       if (nextKey !== this.lastObservedKey) {
         this.lastObservedKey = nextKey;
+        this.lastWidthBucket = widthBucket;
         this.refresh(timerCx, false);
+      } else if (widthBucket !== this.lastWidthBucket) {
+        this.lastWidthBucket = widthBucket;
+        timerCx?.notify?.();
       }
     });
 
@@ -169,13 +195,13 @@ export default class EnhancedAgentContext extends View {
     cx?.notify?.();
   }
 
-  renderTabButton(t, id, label, iconSvg, count = null) {
+  renderTabButton(t, id, label, iconSvg, count = null, isNarrow = false, isVeryNarrow = false) {
     const on = this.activeTab === id;
     return h_flex()
       .id(`tab-btn-${id}`)
       .h(26)
-      .px(8)
-      .gap(5)
+      .px(isNarrow ? 6 : 8)
+      .gap(isNarrow ? 4 : 5)
       .rounded(6)
       .items_center()
       .cursor_pointer()
@@ -186,9 +212,9 @@ export default class EnhancedAgentContext extends View {
         this.activeTab = id;
         cx.notify();
       })
-      .child(svg(iconSvg).size(13).flex_none())
-      .child(div().text_size(12).font_medium().child(label))
-      .when(count !== null, (el) =>
+      .when(!isVeryNarrow, (el) => el.child(svg(iconSvg).size(13).flex_none()))
+      .child(div().text_size(isNarrow ? 11.5 : 12).font_medium().child(label))
+      .when(count !== null && (!isNarrow || on), (el) =>
         el.child(
           div()
             .px(5)
@@ -204,7 +230,7 @@ export default class EnhancedAgentContext extends View {
       );
   }
 
-  renderHeader(t, currentAgent, cwd, agentType = "all", agentLabel = "AI Agent") {
+  renderHeader(t, currentAgent, cwd, agentType = "all", agentLabel = "AI Agent", isNarrow = false, isVeryNarrow = false) {
     const git = this.data.git || {};
     const isFocusedScope = this.scopeMode === "focused" && agentType !== "all";
     const model =
@@ -215,7 +241,7 @@ export default class EnhancedAgentContext extends View {
     return v_flex()
       .w_full()
       .p(10)
-      .gap(6)
+      .gap(isNarrow ? 4 : 6)
       .border_b(1)
       .border_color(t.border)
       .bg(t.chrome)
@@ -224,16 +250,21 @@ export default class EnhancedAgentContext extends View {
           .w_full()
           .items_center()
           .justify_between()
+          .gap(6)
           .child(
             h_flex()
               .gap(6)
               .items_center()
-              .child(svg("mods/workspace-chrome/layers.svg").size(16).text_color(t.accent ?? t.working ?? t.foreground))
-              .child(div().text_size(13.5).font_bold().text_color(t.foreground).child("Agent Inspector"))
+              .min_w(0)
+              .child(svg("mods/workspace-chrome/layers.svg").size(16).flex_none().text_color(t.accent ?? t.working ?? t.foreground))
+              .when(!isVeryNarrow, (el) =>
+                el.child(div().text_size(13.5).font_bold().text_color(t.foreground).child("Agent Inspector"))
+              )
               .child(
                 div()
                   .px(6)
                   .h(18)
+                  .flex_none()
                   .rounded(4)
                   .bg((isFocusedScope ? (t.working ?? "#10b981") : (t.accent ?? "#3b82f6")) + "22")
                   .text_size(10.5)
@@ -248,6 +279,7 @@ export default class EnhancedAgentContext extends View {
             h_flex()
               .gap(4)
               .items_center()
+              .flex_none()
               .child(
                 div()
                   .id("btn-toggle-agent-scope")
@@ -290,38 +322,58 @@ export default class EnhancedAgentContext extends View {
       .child(
         h_flex()
           .w_full()
-          .gap(12)
+          .gap(10)
           .items_center()
           .text_size(11)
           .text_color(t.dim)
           .child(
             h_flex()
+              .flex_1()
+              .min_w(0)
               .gap(4)
               .items_center()
-              .child(svg("mods/workspace-chrome/folder.svg").size(12))
-              .child(div().truncate().child(cleanPath(cwd) || "No workspace"))
+              .child(svg("mods/workspace-chrome/folder.svg").size(12).flex_none())
+              .child(div().flex_1().min_w(0).truncate().child(cleanPath(cwd) || "No workspace"))
           )
-          .when(git.isRepo, (el) =>
+          .when(Boolean(git.isRepo), (el) =>
             el.child(
               h_flex()
+                .flex_none()
                 .gap(4)
                 .items_center()
-                .child(svg("mods/workspace-chrome/git-branch.svg").size(12).text_color(t.accent ?? t.foreground))
+                .child(svg("mods/workspace-chrome/git-branch.svg").size(12).flex_none().text_color(t.accent ?? t.foreground))
                 .child(div().text_color(t.foreground).child(git.branch))
-                .when(git.dirtyCount > 0, (del) => del.child(div().text_color(t.blocked ?? "#f59e0b").child(`• ${git.dirtyCount} modified`)))
+                .when(Boolean(git.dirtyCount > 0 && !isVeryNarrow), (del) =>
+                  del.child(div().text_color(t.blocked ?? "#f59e0b").child(`• ${git.dirtyCount} modified`))
+                )
             )
           )
-          .child(
-            h_flex()
-              .gap(4)
-              .items_center()
-              .child(svg("mods/workspace-chrome/server.svg").size(12))
-              .child(div().child(model))
+          .when(!isNarrow, (el) =>
+            el.child(
+              h_flex()
+                .flex_none()
+                .gap(4)
+                .items_center()
+                .child(svg("mods/workspace-chrome/server.svg").size(12).flex_none())
+                .child(div().child(model))
+            )
           )
+      )
+      .when(isNarrow, (el) =>
+        el.child(
+          h_flex()
+            .w_full()
+            .gap(4)
+            .items_center()
+            .text_size(10.5)
+            .text_color(t.dim)
+            .child(svg("mods/workspace-chrome/server.svg").size(11).flex_none())
+            .child(div().flex_1().min_w(0).truncate().child(model))
+        )
       );
   }
 
-  renderOverview(t) {
+  renderOverview(t, isNarrow = false, isVeryNarrow = false) {
     const summary = this.data.summary || {};
     const rules = this.data.rules || [];
     const connectors = this.data.connectors || [];
@@ -339,7 +391,8 @@ export default class EnhancedAgentContext extends View {
           .child(
             v_flex()
               .flex_1()
-              .p(10)
+              .min_w(0)
+              .p(isNarrow ? 8 : 10)
               .rounded(8)
               .bg(t.raised)
               .border(1)
@@ -351,14 +404,17 @@ export default class EnhancedAgentContext extends View {
                 this.activeTab = "rules";
                 cx.notify();
               })
-              .child(h_flex().items_center().justify_between().child(div().text_size(11).text_color(t.dim).child("Rules")).child(svg("mods/workspace-chrome/file-text.svg").size(14).text_color(t.accent ?? t.foreground)))
+              .child(h_flex().items_center().justify_between().child(div().text_size(11).text_color(t.dim).child("Rules")).child(svg("mods/workspace-chrome/file-text.svg").size(14).flex_none().text_color(t.accent ?? t.foreground)))
               .child(div().text_size(20).font_bold().text_color(t.foreground).child(String(summary.rulesCount || 0)))
-              .child(div().text_size(10).text_color(t.muted).child("CLAUDE.md / AGENTS.md"))
+              .when(!isVeryNarrow, (el) =>
+                el.child(div().text_size(10).text_color(t.muted).truncate().child("CLAUDE.md / AGENTS.md"))
+              )
           )
           .child(
             v_flex()
               .flex_1()
-              .p(10)
+              .min_w(0)
+              .p(isNarrow ? 8 : 10)
               .rounded(8)
               .bg(t.raised)
               .border(1)
@@ -370,14 +426,17 @@ export default class EnhancedAgentContext extends View {
                 this.activeTab = "skills";
                 cx.notify();
               })
-              .child(h_flex().items_center().justify_between().child(div().text_size(11).text_color(t.dim).child("Skills")).child(svg("mods/workspace-chrome/layers.svg").size(14).text_color(t.working ?? t.foreground)))
+              .child(h_flex().items_center().justify_between().child(div().text_size(11).text_color(t.dim).child("Skills")).child(svg("mods/workspace-chrome/layers.svg").size(14).flex_none().text_color(t.working ?? t.foreground)))
               .child(div().text_size(20).font_bold().text_color(t.foreground).child(String(summary.skillsCount || 0)))
-              .child(div().text_size(10).text_color(t.muted).child("Slash commands & tools"))
+              .when(!isVeryNarrow, (el) =>
+                el.child(div().text_size(10).text_color(t.muted).truncate().child("Slash commands & tools"))
+              )
           )
           .child(
             v_flex()
               .flex_1()
-              .p(10)
+              .min_w(0)
+              .p(isNarrow ? 8 : 10)
               .rounded(8)
               .bg(t.raised)
               .border(1)
@@ -389,9 +448,11 @@ export default class EnhancedAgentContext extends View {
                 this.activeTab = "connectors";
                 cx.notify();
               })
-              .child(h_flex().items_center().justify_between().child(div().text_size(11).text_color(t.dim).child("Connectors")).child(svg("mods/workspace-chrome/server.svg").size(14).text_color(t.blocked ?? t.foreground)))
+              .child(h_flex().items_center().justify_between().child(div().text_size(11).text_color(t.dim).child(isVeryNarrow ? "MCP" : "Connectors")).child(svg("mods/workspace-chrome/server.svg").size(14).flex_none().text_color(t.blocked ?? t.foreground)))
               .child(div().text_size(20).font_bold().text_color(t.foreground).child(String(summary.connectorsCount || 0)))
-              .child(div().text_size(10).text_color(t.muted).child("MCP Servers configured"))
+              .when(!isVeryNarrow, (el) =>
+                el.child(div().text_size(10).text_color(t.muted).truncate().child("MCP Servers configured"))
+              )
           )
       )
       // Active Instructions Preview Card
@@ -413,7 +474,7 @@ export default class EnhancedAgentContext extends View {
                 h_flex()
                   .gap(6)
                   .items_center()
-                  .child(svg("mods/workspace-chrome/file-text.svg").size(13).text_color(t.accent ?? t.foreground))
+                  .child(svg("mods/workspace-chrome/file-text.svg").size(13).flex_none().text_color(t.accent ?? t.foreground))
                   .child(div().text_size(12).font_semibold().text_color(t.foreground).child("Active Instructions"))
               )
               .child(
@@ -434,6 +495,7 @@ export default class EnhancedAgentContext extends View {
               h_flex()
                 .w_full()
                 .p(8)
+                .gap(6)
                 .rounded(6)
                 .bg(t.chrome)
                 .items_center()
@@ -446,12 +508,15 @@ export default class EnhancedAgentContext extends View {
                 })
                 .child(
                   h_flex()
+                    .flex_1()
+                    .min_w(0)
                     .gap(6)
                     .items_center()
                     .child(
                       div()
                         .px(4)
                         .h(16)
+                        .flex_none()
                         .rounded(3)
                         .bg(r.scope === "project" ? (t.working ?? "#10b981") + "22" : (t.accent ?? "#3b82f6") + "22")
                         .text_size(9.5)
@@ -459,10 +524,16 @@ export default class EnhancedAgentContext extends View {
                         .text_color(r.scope === "project" ? (t.working ?? "#10b981") : (t.accent ?? "#3b82f6"))
                         .child(r.scope)
                     )
-                    .child(div().text_size(12).font_medium().text_color(t.foreground).child(r.name))
-                    .when(r.isSymlink, (el) => el.child(div().text_size(10).text_color(t.dim).child("↳ symlink")))
+                    .child(div().flex_1().min_w(0).truncate().text_size(12).font_medium().text_color(t.foreground).child(r.name))
+                    .when(Boolean(r.isSymlink && !isNarrow), (el) => el.child(div().flex_none().text_size(10).text_color(t.dim).child("↳ symlink")))
                 )
-                .child(div().text_size(11).text_color(t.dim).child(`${r.lines} lines • ${(r.size / 1024).toFixed(1)} KB`))
+                .child(
+                  div()
+                    .flex_none()
+                    .text_size(11)
+                    .text_color(t.dim)
+                    .child(isVeryNarrow ? `${r.lines} lines` : `${r.lines} lines • ${(r.size / 1024).toFixed(1)} KB`)
+                )
             )
           )
       )
@@ -485,7 +556,7 @@ export default class EnhancedAgentContext extends View {
                 h_flex()
                   .gap(6)
                   .items_center()
-                  .child(svg("mods/workspace-chrome/server.svg").size(13).text_color(t.working ?? t.foreground))
+                  .child(svg("mods/workspace-chrome/server.svg").size(13).flex_none().text_color(t.working ?? t.foreground))
                   .child(div().text_size(12).font_semibold().text_color(t.foreground).child("Connected MCP Tools"))
               )
               .child(
@@ -507,20 +578,24 @@ export default class EnhancedAgentContext extends View {
                 .w_full()
                 .p(6)
                 .px(8)
+                .gap(6)
                 .rounded(6)
                 .bg(t.chrome)
                 .items_center()
                 .justify_between()
                 .child(
                   h_flex()
+                    .flex_1()
+                    .min_w(0)
                     .gap(6)
                     .items_center()
-                    .child(div().size(6).rounded(3).bg(t.working ?? "#10b981"))
-                    .child(div().text_size(11.5).font_medium().text_color(t.foreground).child(c.name))
+                    .child(div().size(6).flex_none().rounded(3).bg(t.working ?? "#10b981"))
+                    .child(div().flex_1().min_w(0).truncate().text_size(11.5).font_medium().text_color(t.foreground).child(c.name))
                     .child(
                       div()
                         .px(4)
                         .h(14)
+                        .flex_none()
                         .rounded(3)
                         .bg(t.hover)
                         .text_size(9)
@@ -528,21 +603,25 @@ export default class EnhancedAgentContext extends View {
                         .child(c.agent)
                     )
                 )
-                .child(div().text_size(10.5).truncate().max_w(200).text_color(t.dim).child(c.command))
+                .when(!isVeryNarrow, (el) =>
+                  el.child(div().text_size(10.5).truncate().max_w(isNarrow ? 110 : 200).text_color(t.dim).child(c.command))
+                )
             )
           )
       );
   }
 
-  renderRules(t) {
+  renderRules(t, isNarrow = false, isVeryNarrow = false) {
     const rules = this.data.rules || [];
     return h_flex()
       .w_full()
       .h_full()
+      .min_w(0)
       .child(
         // Left rules list
         v_flex()
-          .w(180)
+          .w(isVeryNarrow ? 118 : isNarrow ? 140 : 180)
+          .flex_none()
           .h_full()
           .border_r(1)
           .border_color(t.border)
@@ -567,25 +646,38 @@ export default class EnhancedAgentContext extends View {
                 .on_click((_e, cx) => this.selectRule(r, cx))
                 .child(
                   h_flex()
+                    .w_full()
+                    .min_w(0)
+                    .gap(4)
                     .items_center()
                     .justify_between()
-                    .child(div().text_size(12).font_medium().text_color(on ? t.foreground : t.muted).child(r.name))
-                    .child(
-                      div()
-                        .px(4)
-                        .h(14)
-                        .rounded(3)
-                        .bg(r.scope === "project" ? (t.working ?? "#10b981") + "22" : (t.accent ?? "#3b82f6") + "22")
-                        .text_size(9)
-                        .text_color(r.scope === "project" ? (t.working ?? "#10b981") : (t.accent ?? "#3b82f6"))
-                        .child(r.scope)
+                    .child(div().flex_1().min_w(0).truncate().text_size(isVeryNarrow ? 11 : 12).font_medium().text_color(on ? t.foreground : t.muted).child(r.name))
+                    .when(!isVeryNarrow, (el) =>
+                      el.child(
+                        div()
+                          .px(4)
+                          .h(14)
+                          .flex_none()
+                          .rounded(3)
+                          .bg(r.scope === "project" ? (t.working ?? "#10b981") + "22" : (t.accent ?? "#3b82f6") + "22")
+                          .text_size(9)
+                          .text_color(r.scope === "project" ? (t.working ?? "#10b981") : (t.accent ?? "#3b82f6"))
+                          .child(r.scope)
+                      )
                     )
                 )
                 .child(
                   div()
+                    .w_full()
+                    .min_w(0)
+                    .truncate()
                     .text_size(10)
                     .text_color(t.dim)
-                    .child(`${r.agent ? r.agent + " • " : ""}${r.lines} lines • ${(r.size / 1024).toFixed(1)} KB`)
+                    .child(
+                      isVeryNarrow
+                        ? `${r.scope} • ${r.lines}L`
+                        : `${r.agent ? r.agent + " • " : ""}${r.lines} lines • ${(r.size / 1024).toFixed(1)} KB`
+                    )
                 );
             })
           )
@@ -594,12 +686,15 @@ export default class EnhancedAgentContext extends View {
         // Right rule content reader
         v_flex()
           .flex_1()
+          .min_w(0)
           .h_full()
-          .p(10)
+          .p(isNarrow ? 8 : 10)
           .gap(6)
           .child(
             h_flex()
               .w_full()
+              .min_w(0)
+              .gap(6)
               .items_center()
               .justify_between()
               .border_b(1)
@@ -607,9 +702,14 @@ export default class EnhancedAgentContext extends View {
               .pb(6)
               .child(
                 v_flex()
-                  .child(div().text_size(13).font_bold().text_color(t.foreground).child(this.selectedRule?.name || "Instructions Viewer"))
+                  .flex_1()
+                  .min_w(0)
+                  .child(div().w_full().min_w(0).truncate().text_size(13).font_bold().text_color(t.foreground).child(this.selectedRule?.name || "Instructions Viewer"))
                   .child(
                     div()
+                      .w_full()
+                      .min_w(0)
+                      .truncate()
                       .text_size(10.5)
                       .text_color(t.dim)
                       .child(
@@ -621,6 +721,7 @@ export default class EnhancedAgentContext extends View {
               )
               .child(
                 h_flex()
+                  .flex_none()
                   .gap(4)
                   .child(
                     div()
@@ -641,7 +742,7 @@ export default class EnhancedAgentContext extends View {
                       })
                       .flex()
                       .items_center()
-                      .child("Copy Path")
+                      .child(isVeryNarrow ? "Copy" : "Copy Path")
                   )
               )
           )
@@ -649,7 +750,8 @@ export default class EnhancedAgentContext extends View {
             v_flex()
               .flex_1()
               .w_full()
-              .p(10)
+              .min_w(0)
+              .p(isNarrow ? 8 : 10)
               .rounded(6)
               .bg(t.raised)
               .overflow_y_scrollbar()
@@ -663,7 +765,7 @@ export default class EnhancedAgentContext extends View {
       );
   }
 
-  renderSkills(t) {
+  renderSkills(t, isNarrow = false, isVeryNarrow = false) {
     const allSkills = this.data.skills || [];
     const filter = this.skillFilter;
     const skills = filter === "all" ? allSkills : allSkills.filter((s) => s.agent === filter);
@@ -680,7 +782,7 @@ export default class EnhancedAgentContext extends View {
           .gap(4)
           .child(
             div()
-              .px(8)
+              .px(isNarrow ? 6 : 8)
               .h(22)
               .rounded(11)
               .bg(filter === "all" ? t.selected : t.raised)
@@ -699,7 +801,7 @@ export default class EnhancedAgentContext extends View {
           )
           .child(
             div()
-              .px(8)
+              .px(isNarrow ? 6 : 8)
               .h(22)
               .rounded(11)
               .bg(filter === "claude" ? t.selected : t.raised)
@@ -718,7 +820,7 @@ export default class EnhancedAgentContext extends View {
           )
           .child(
             div()
-              .px(8)
+              .px(isNarrow ? 6 : 8)
               .h(22)
               .rounded(11)
               .bg(filter === "codex" ? t.selected : t.raised)
@@ -737,7 +839,7 @@ export default class EnhancedAgentContext extends View {
           )
           .child(
             div()
-              .px(8)
+              .px(isNarrow ? 6 : 8)
               .h(22)
               .rounded(11)
               .bg(filter === "antigravity" ? t.selected : t.raised)
@@ -752,7 +854,7 @@ export default class EnhancedAgentContext extends View {
               })
               .flex()
               .items_center()
-              .child(`Antigravity (${allSkills.filter((s) => s.agent === "antigravity").length})`)
+              .child(`${isVeryNarrow ? "AGY" : "Antigravity"} (${allSkills.filter((s) => s.agent === "antigravity").length})`)
           )
       )
       .child(
@@ -783,18 +885,22 @@ export default class EnhancedAgentContext extends View {
                 .child(
                   h_flex()
                     .w_full()
+                    .gap(6)
                     .items_center()
                     .justify_between()
                     .child(
                       h_flex()
+                        .flex_1()
+                        .min_w(0)
                         .gap(6)
                         .items_center()
-                        .child(svg("mods/workspace-chrome/layers.svg").size(13).text_color(t.working ?? t.foreground))
-                        .child(div().text_size(12).font_bold().text_color(t.foreground).child(s.name))
+                        .child(svg("mods/workspace-chrome/layers.svg").size(13).flex_none().text_color(t.working ?? t.foreground))
+                        .child(div().flex_1().min_w(0).truncate().text_size(12).font_bold().text_color(t.foreground).child(s.name))
                         .child(
                           div()
                             .px(5)
                             .h(15)
+                            .flex_none()
                             .rounded(3)
                             .bg(t.chrome)
                             .text_size(9.5)
@@ -802,11 +908,12 @@ export default class EnhancedAgentContext extends View {
                             .child(s.agent)
                         )
                     )
-                    .child(svg(`mods/workspace-chrome/chevron-${expanded ? "down" : "right"}.svg`).size(12).text_color(t.dim))
+                    .child(svg(`mods/workspace-chrome/chevron-${expanded ? "down" : "right"}.svg`).size(12).flex_none().text_color(t.dim))
                 )
                 .child(
                   div()
                     .w_full()
+                    .min_w(0)
                     .text_size(11)
                     .text_color(t.muted)
                     .when(!expanded, (el) => el.truncate())
@@ -816,6 +923,9 @@ export default class EnhancedAgentContext extends View {
                 .when(expanded && Boolean(s.promptFile), (el) =>
                   el.child(
                     div()
+                      .w_full()
+                      .min_w(0)
+                      .truncate()
                       .mt(4)
                       .p(6)
                       .rounded(4)
@@ -831,7 +941,7 @@ export default class EnhancedAgentContext extends View {
       );
   }
 
-  renderConnectors(t) {
+  renderConnectors(t, isNarrow = false, isVeryNarrow = false) {
     const connectors = this.data.connectors || [];
     const plugins = this.data.plugins || [];
 
@@ -845,7 +955,7 @@ export default class EnhancedAgentContext extends View {
         h_flex()
           .items_center()
           .gap(6)
-          .child(svg("mods/workspace-chrome/server.svg").size(14).text_color(t.accent ?? t.foreground))
+          .child(svg("mods/workspace-chrome/server.svg").size(14).flex_none().text_color(t.accent ?? t.foreground))
           .child(div().text_size(13).font_bold().text_color(t.foreground).child(`MCP Connectors (${connectors.length})`))
       )
       .children(
@@ -861,18 +971,22 @@ export default class EnhancedAgentContext extends View {
             .child(
               h_flex()
                 .w_full()
+                .gap(6)
                 .items_center()
                 .justify_between()
                 .child(
                   h_flex()
+                    .flex_1()
+                    .min_w(0)
                     .gap(6)
                     .items_center()
-                    .child(div().size(7).rounded(4).bg(t.working ?? "#10b981"))
-                    .child(div().text_size(12.5).font_bold().text_color(t.foreground).child(c.name))
+                    .child(div().size(7).flex_none().rounded(4).bg(t.working ?? "#10b981"))
+                    .child(div().flex_1().min_w(0).truncate().text_size(12.5).font_bold().text_color(t.foreground).child(c.name))
                     .child(
                       div()
                         .px(5)
                         .h(16)
+                        .flex_none()
                         .rounded(3)
                         .bg(t.chrome)
                         .text_size(9.5)
@@ -880,15 +994,22 @@ export default class EnhancedAgentContext extends View {
                         .child(c.agent)
                     )
                 )
-                .child(div().text_size(10).text_color(t.dim).child(`Source: ${c.source}`))
+                .when(!isVeryNarrow, (el) =>
+                  el.child(div().flex_none().text_size(10).text_color(t.dim).child(`Source: ${c.source}`))
+                )
             )
             .child(
               h_flex()
+                .w_full()
+                .min_w(0)
                 .gap(6)
                 .items_center()
-                .child(div().text_size(10.5).font_semibold().text_color(t.dim).child("Command:"))
+                .child(div().flex_none().text_size(10.5).font_semibold().text_color(t.dim).child("Command:"))
                 .child(
                   div()
+                    .flex_1()
+                    .min_w(0)
+                    .truncate()
                     .text_size(11)
                     .font_family("monospace")
                     .text_color(t.foreground)
@@ -902,7 +1023,7 @@ export default class EnhancedAgentContext extends View {
           .items_center()
           .gap(6)
           .mt(6)
-          .child(svg("mods/workspace-chrome/layers.svg").size(14).text_color(t.working ?? t.foreground))
+          .child(svg("mods/workspace-chrome/layers.svg").size(14).flex_none().text_color(t.working ?? t.foreground))
           .child(div().text_size(13).font_bold().text_color(t.foreground).child(`Installed Plugins (${plugins.length})`))
       )
       .children(
@@ -911,18 +1032,21 @@ export default class EnhancedAgentContext extends View {
             .w_full()
             .p(6)
             .px(8)
+            .gap(6)
             .rounded(6)
             .bg(t.raised)
             .items_center()
             .justify_between()
             .child(
               h_flex()
+                .flex_1()
+                .min_w(0)
                 .gap(6)
                 .items_center()
-                .child(div().size(6).rounded(3).bg(t.working ?? "#10b981"))
-                .child(div().text_size(11.5).font_medium().text_color(t.foreground).child(p.name))
+                .child(div().size(6).flex_none().rounded(3).bg(t.working ?? "#10b981"))
+                .child(div().flex_1().min_w(0).truncate().text_size(11.5).font_medium().text_color(t.foreground).child(p.name))
             )
-            .child(div().text_size(10).text_color(t.dim).child(p.agent))
+            .child(div().flex_none().text_size(10).text_color(t.dim).child(p.agent))
         )
       );
   }
@@ -931,25 +1055,28 @@ export default class EnhancedAgentContext extends View {
     const t = theme();
     const { currentAgent, cwd, agentType, agentLabel } = this.resolveActiveContext();
     const summary = this.data.summary || {};
+    const panelWidth = getPanelWidth();
+    const isNarrow = panelWidth !== null && panelWidth < 420;
+    const isVeryNarrow = panelWidth !== null && panelWidth < 380;
 
     return v_flex()
       .size_full()
       .bg(t.chrome)
-      .child(this.renderHeader(t, currentAgent, cwd, agentType, agentLabel))
+      .child(this.renderHeader(t, currentAgent, cwd, agentType, agentLabel, isNarrow, isVeryNarrow))
       .child(
         // Tabs Navigation Bar
         h_flex()
           .w_full()
-          .px(8)
+          .px(isNarrow ? 6 : 8)
           .py(4)
           .gap(4)
           .border_b(1)
           .border_color(t.border)
           .bg(t.chrome)
-          .child(this.renderTabButton(t, "overview", "Overview", "mods/workspace-chrome/layers.svg"))
-          .child(this.renderTabButton(t, "rules", "Rules", "mods/workspace-chrome/file-text.svg", summary.rulesCount))
-          .child(this.renderTabButton(t, "skills", "Skills", "mods/workspace-chrome/layers.svg", summary.skillsCount))
-          .child(this.renderTabButton(t, "connectors", "Connectors", "mods/workspace-chrome/server.svg", summary.connectorsCount))
+          .child(this.renderTabButton(t, "overview", "Overview", "mods/workspace-chrome/layers.svg", null, isNarrow, isVeryNarrow))
+          .child(this.renderTabButton(t, "rules", "Rules", "mods/workspace-chrome/file-text.svg", summary.rulesCount, isNarrow, isVeryNarrow))
+          .child(this.renderTabButton(t, "skills", "Skills", "mods/workspace-chrome/layers.svg", summary.skillsCount, isNarrow, isVeryNarrow))
+          .child(this.renderTabButton(t, "connectors", "Connectors", "mods/workspace-chrome/server.svg", summary.connectorsCount, isNarrow, isVeryNarrow))
       )
       .child(
         // Tab View Body
@@ -957,10 +1084,10 @@ export default class EnhancedAgentContext extends View {
           .flex_1()
           .w_full()
           .min_h(0)
-          .when(this.activeTab === "overview", (el) => el.child(this.renderOverview(t)))
-          .when(this.activeTab === "rules", (el) => el.child(this.renderRules(t)))
-          .when(this.activeTab === "skills", (el) => el.child(this.renderSkills(t)))
-          .when(this.activeTab === "connectors", (el) => el.child(this.renderConnectors(t)))
+          .when(this.activeTab === "overview", (el) => el.child(this.renderOverview(t, isNarrow, isVeryNarrow)))
+          .when(this.activeTab === "rules", (el) => el.child(this.renderRules(t, isNarrow, isVeryNarrow)))
+          .when(this.activeTab === "skills", (el) => el.child(this.renderSkills(t, isNarrow, isVeryNarrow)))
+          .when(this.activeTab === "connectors", (el) => el.child(this.renderConnectors(t, isNarrow, isVeryNarrow)))
       );
   }
 }
