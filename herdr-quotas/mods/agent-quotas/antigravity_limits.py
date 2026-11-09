@@ -34,49 +34,61 @@ def get_antigravity_limits_from_cli(model_name):
             return None
 
         # Determine target group based on model_name
-        is_3p = any(k in (model_name or "").lower() for k in ["claude", "opus", "sonnet", "gpt"])
+        model_lower = (model_name or "").lower()
+        is_argon = "argon" in model_lower
+        is_3p = any(k in model_lower for k in ["claude", "opus", "sonnet", "gpt", "o1", "o3", "o4"])
 
-        target_group = None
-        for g in groups:
-            g_name = g.get("name", "").lower()
-            if is_3p and ("claude" in g_name or "gpt" in g_name):
-                target_group = g
-                break
-            elif not is_3p and "gemini" in g_name and "argon" not in g_name:
-                target_group = g
-                break
+        def parse_group(g):
+            g_name = g.get("name", "")
+            g_lower = g_name.lower()
+            if "argon" in g_lower:
+                short_label = "Argon"
+                is_match = is_argon
+            elif "claude" in g_lower or "gpt" in g_lower:
+                short_label = "GPT/Claude"
+                is_match = is_3p and not is_argon
+            else:
+                short_label = "Gemini"
+                is_match = not is_argon and not is_3p
 
-        if not target_group:
-            target_group = groups[0]
+            g_five = None
+            g_week = None
+            for b in g.get("buckets", []):
+                win = b.get("window")
+                rem_frac = b.get("remaining_fraction", 1.0)
+                used_pct = max(0, min(100, round((1.0 - rem_frac) * 100)))
+                rem_pct = max(0, min(100, round(rem_frac * 100)))
+                reset_time = b.get("reset_time")
+                bucket_info = {
+                    "percent": used_pct,
+                    "remainingPercent": rem_pct,
+                    "remainingFraction": rem_frac,
+                    "resetTime": reset_time,
+                    "displayName": b.get("name", ""),
+                }
+                if win == "5h":
+                    g_five = bucket_info
+                elif win == "weekly":
+                    g_week = bucket_info
 
-        five_hour = None
-        weekly = None
-
-        for b in target_group.get("buckets", []):
-            win = b.get("window")
-            rem_frac = b.get("remaining_fraction", 1.0)
-            used_pct = max(0, min(100, round((1.0 - rem_frac) * 100)))
-            rem_pct = max(0, min(100, round(rem_frac * 100)))
-            reset_time = b.get("reset_time")
-
-            bucket_info = {
-                "percent": used_pct,
-                "remainingPercent": rem_pct,
-                "remainingFraction": rem_frac,
-                "resetTime": reset_time,
-                "displayName": b.get("name", ""),
+            return {
+                "name": g_name or "Models",
+                "shortLabel": short_label,
+                "active": is_match,
+                "fiveHour": g_five,
+                "weekly": g_week,
             }
 
-            if win == "5h":
-                five_hour = bucket_info
-            elif win == "weekly":
-                weekly = bucket_info
+        parsed_groups = [parse_group(g) for g in groups]
+        target_group = next((pg for pg in parsed_groups if pg["active"]), parsed_groups[0])
 
         return {
             "source": "cli",
-            "groupName": target_group.get("name", "Gemini Models"),
-            "fiveHour": five_hour,
-            "weekly": weekly,
+            "groupName": target_group["name"],
+            "shortLabel": target_group["shortLabel"],
+            "fiveHour": target_group["fiveHour"],
+            "weekly": target_group["weekly"],
+            "groups": parsed_groups,
         }
     except Exception:
         return None
@@ -104,6 +116,9 @@ def get_antigravity_limits():
     cli_data = get_antigravity_limits_from_cli(model_name)
     five_hour = cli_data.get("fiveHour") if cli_data else None
     weekly = cli_data.get("weekly") if cli_data else None
+    group_name = cli_data.get("groupName") if cli_data else ""
+    short_label = cli_data.get("shortLabel") if cli_data else ""
+    groups = cli_data.get("groups", []) if cli_data else []
 
     # Retrieve account info / fallback from Keychain
     try:
@@ -122,8 +137,8 @@ def get_antigravity_limits():
             token_info = data.get("token") or {}
             access_token = token_info.get("access_token")
 
-            # Fallback if CLI did not provide limits
-            if (not five_hour or not weekly) and access_token:
+            # Fallback only if CLI did not return any bucket data
+            if (not five_hour and not weekly) and access_token:
                 headers = {
                     "Authorization": f"Bearer {access_token}",
                     "Content-Type": "application/json",
@@ -153,8 +168,11 @@ def get_antigravity_limits():
         "email": email,
         "tier": tier,
         "model": model_name,
+        "groupName": group_name,
+        "shortLabel": short_label,
         "fiveHour": five_hour,
         "weekly": weekly,
+        "groups": groups,
     }
 
 

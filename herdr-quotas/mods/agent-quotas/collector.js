@@ -73,6 +73,28 @@ export async function collectClaudeData() {
   let bestData = null;
   let bestFetchedAt = -1;
 
+  // 1. Try real-time OAuth usage helper script (fetches live usage from Anthropic API via Keychain)
+  if (typeof exec === "function") {
+    try {
+      const scriptPath = `${h}/.config/herdr-app/mods/agent-quotas/claude_limits.py`;
+      const res = await exec("python3", [scriptPath]).catch(() => null);
+      if (res?.code === 0 && res?.stdout?.trim()) {
+        const live = JSON.parse(res.stdout.trim());
+        if (live?.utilization) {
+          bestFetchedAt = live.fetchedAtMs ?? Date.now();
+          bestData = {
+            oauthAccount: live.oauthAccount ?? {},
+            cachedUsageUtilization: {
+              utilization: live.utilization,
+              fetchedAtMs: bestFetchedAt,
+            },
+          };
+        }
+      }
+    } catch {}
+  }
+
+  // 2. Read local .claude.json candidates (fallback or to enrich oauthAccount metadata)
   for (const path of candidates) {
     try {
       let raw = await readTextFile(path).catch(() => null);
@@ -89,6 +111,12 @@ export async function collectClaudeData() {
         if (!bestData || fetchedAt > bestFetchedAt) {
           bestData = parsed;
           bestFetchedAt = fetchedAt;
+        } else if (
+          bestData &&
+          !bestData.oauthAccount?.emailAddress &&
+          parsed.oauthAccount?.emailAddress
+        ) {
+          bestData.oauthAccount = parsed.oauthAccount;
         }
       }
     } catch {}
@@ -103,9 +131,11 @@ export async function collectClaudeData() {
     const u = data.cachedUsageUtilization?.utilization ?? {};
     const oauth = data.oauthAccount ?? {};
 
+    const hasFiveHourObj = u.five_hour !== undefined && u.five_hour !== null;
     const fiveHour = Math.round(u.five_hour?.utilization ?? 0);
     const fiveHourResetsAt = u.five_hour?.resets_at ?? null;
 
+    const hasWeekObj = u.seven_day !== undefined && u.seven_day !== null;
     const sevenDay = Math.round(u.seven_day?.utilization ?? 0);
     const sevenDayResetsAt = u.seven_day?.resets_at ?? null;
 
@@ -125,13 +155,21 @@ export async function collectClaudeData() {
     );
 
     // Active consuming pool:
-    // If seven_day is exhausted (>= 100%) and extra usage is enabled/active, Claude consumes extra credit.
-    // Otherwise, normal prompts consume the 5-hour rolling session limit.
-    const isConsumingCredit = hasCredit && (sevenDay >= 100 || usedCents > 0);
+    // Claude only consumes Extra Usage Credit when a plan limit (5-hour or 7-day) hits 100%
+    // (or when a profile has only credit data without 5h/7d windows).
+    // Otherwise, prompts directly consume the 5-hour rolling window (even when 5h is 0%).
+    const isConsumingCredit =
+      hasCredit && (fiveHour >= 100 || sevenDay >= 100 || (!hasFiveHourObj && !hasWeekObj));
     const primaryPercent = isConsumingCredit
       ? creditPercent
-      : (fiveHour > 0 ? fiveHour : (sevenDay > 0 ? sevenDay : 0));
-    const primaryLabel = isConsumingCredit ? "Credit" : (fiveHour > 0 || !sevenDay ? "5h" : "Week");
+      : hasFiveHourObj
+      ? fiveHour
+      : sevenDay;
+    const primaryLabel = isConsumingCredit
+      ? "Credit"
+      : hasFiveHourObj
+      ? "5h"
+      : "Week";
 
     return {
       name: "Claude Code",
@@ -291,6 +329,9 @@ export async function collectAntigravityData() {
 
   let email = "";
   let tier = "Antigravity";
+  let groupName = "";
+  let shortLabel = "";
+  let groups = [];
   let hasFiveHour = false;
   let fiveHour = { percent: 0, remainingPercent: 100, resetsAt: null, timeRemaining: null, modelId: "" };
   let hasWeek = false;
@@ -309,6 +350,27 @@ export async function collectAntigravityData() {
         if (parsed.email) email = parsed.email;
         if (parsed.tier) tier = parsed.tier;
         if (parsed.model) model = parsed.model;
+        if (parsed.groupName) groupName = parsed.groupName;
+        if (parsed.shortLabel) shortLabel = parsed.shortLabel;
+        if (Array.isArray(parsed.groups)) {
+          groups = parsed.groups.map((g) => ({
+            name: g.name || "Models",
+            shortLabel: g.shortLabel || "",
+            active: Boolean(g.active),
+            fiveHour: g.fiveHour
+              ? {
+                  ...g.fiveHour,
+                  timeRemaining: formatTimeRemaining(g.fiveHour.resetTime),
+                }
+              : null,
+            weekly: g.weekly
+              ? {
+                  ...g.weekly,
+                  timeRemaining: formatTimeRemaining(g.weekly.resetTime),
+                }
+              : null,
+          }));
+        }
 
         if (parsed.fiveHour && typeof parsed.fiveHour.percent === "number") {
           hasFiveHour = true;
@@ -335,16 +397,40 @@ export async function collectAntigravityData() {
     }
   } catch {}
 
-  // Antigravity directly consumes the 5-Hour rolling window on prompt execution.
-  // We prioritize fiveHour as the primary consuming pool.
-  const hasFiveHourActive = hasFiveHour && typeof fiveHour.percent === "number";
-  const primaryPercent = hasFiveHourActive
+  if (!shortLabel && model) {
+    const ml = model.toLowerCase();
+    if (ml.includes("argon")) shortLabel = "Argon";
+    else if (ml.includes("claude") || ml.includes("opus") || ml.includes("sonnet") || ml.includes("gpt")) {
+      shortLabel = "GPT/Claude";
+    }
+  }
+
+  // Determine active consuming pool for the currently configured Antigravity model:
+  // - If the active group has a 5-hour window that is not yet exhausted (< 100%), prompts consume the 5-hour window.
+  // - Otherwise (e.g. Gemini 4 Argon which only has a weekly pool, or when 5h hits 100%), prompts consume the weekly pool.
+  const isConsumingFiveHour =
+    hasFiveHour && typeof fiveHour.percent === "number" && (fiveHour.percent < 100 || !hasWeek);
+  const primaryPercent = isConsumingFiveHour
     ? fiveHour.percent
-    : (hasWeek ? week.percent : 0);
-  const primaryLabel = hasFiveHourActive ? "5h" : (hasWeek ? "Week" : "Quota");
-  const primaryRemainingPercent = hasFiveHourActive
+    : hasWeek
+    ? week.percent
+    : 0;
+  const primaryRemainingPercent = isConsumingFiveHour
     ? fiveHour.remainingPercent
-    : (hasWeek ? week.remainingPercent : 100);
+    : hasWeek
+    ? week.remainingPercent
+    : 100;
+  const primaryLabel = isConsumingFiveHour
+    ? shortLabel
+      ? `${shortLabel} 5h`
+      : "5h"
+    : hasWeek
+    ? shortLabel === "Argon"
+      ? "Argon"
+      : shortLabel
+      ? `${shortLabel} Wk`
+      : "Week"
+    : "Quota";
 
   return {
     name: "Antigravity",
@@ -352,6 +438,9 @@ export async function collectAntigravityData() {
     tier: tier,
     email: email,
     model: model,
+    groupName: groupName,
+    shortLabel: shortLabel,
+    groups: groups,
     hasFiveHour: hasFiveHour,
     fiveHour: fiveHour,
     hasWeek: hasWeek,

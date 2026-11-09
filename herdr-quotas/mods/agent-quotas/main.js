@@ -146,14 +146,16 @@ export default class AgentQuotas extends View {
                   .font_medium()
                   .text_color(claudeColor)
                   .child(
-                    claude?.isConsumingCredit
+                    !claude?.available
+                      ? "Offline"
+                      : claude?.isConsumingCredit
                       ? `Credit: ${claude.credit.used} (${claude.credit.percent}%)`
-                      : claude?.hasFiveHour && claude?.fiveHour?.percent > 0
+                      : claude?.hasFiveHour
                       ? `5h: ${claude.fiveHour.percent}%`
+                      : claude?.hasWeek
+                      ? `Week: ${claude.week.percent}%`
                       : claude?.hasCredit
                       ? `Credit: ${claude.credit.used} (${claude.credit.percent}%)`
-                      : claude?.available
-                      ? `Week: ${claude.week.percent}%`
                       : "Offline"
                   )
               )
@@ -703,8 +705,146 @@ export default class AgentQuotas extends View {
                       .child(antigravity?.email ? `${antigravity.email} • ${antigravity.model || "Gemini"}` : `Model: ${antigravity?.model || "Gemini"}`)
                   )
               )
-              // 5-Hour Limit Quota line (if hasFiveHour)
-              .when(Boolean(antigravity?.hasFiveHour), (fEl) =>
+              // All Model Quota Groups (if available from CLI)
+              .when(Boolean(antigravity?.groups?.length > 0), (gContainer) =>
+                gContainer.child(
+                  v_flex()
+                    .gap(8)
+                    .children(
+                      antigravity.groups.map((grp) =>
+                        v_flex()
+                          .p(8)
+                          .gap(6)
+                          .rounded(6)
+                          .bg(t.background)
+                          .border_1()
+                          .border_color(grp.active ? t.accent : t.border)
+                          .child(
+                            h_flex()
+                              .items_center()
+                              .justify_between()
+                              .child(
+                                h_flex()
+                                  .gap(6)
+                                  .items_center()
+                                  .child(
+                                    div()
+                                      .text_size(12)
+                                      .font_semibold()
+                                      .text_color(grp.active ? t.accent : t.foreground)
+                                      .child(grp.name)
+                                  )
+                                  .when(Boolean(grp.active), (bEl) =>
+                                    bEl.child(
+                                      div()
+                                        .px(5)
+                                        .py(1)
+                                        .rounded(4)
+                                        .bg(t.accent)
+                                        .text_size(9.5)
+                                        .font_semibold()
+                                        .text_color(t.background)
+                                        .child("ACTIVE")
+                                    )
+                                  )
+                              )
+                          )
+                          .when(Boolean(grp.fiveHour), (fEl) =>
+                            fEl.child(
+                              v_flex()
+                                .gap(3)
+                                .child(
+                                  h_flex()
+                                    .items_center()
+                                    .justify_between()
+                                    .child(
+                                      h_flex()
+                                        .gap(6)
+                                        .items_center()
+                                        .child(div().text_size(11).text_color(t.foreground).child("5-Hour Window"))
+                                        .child(
+                                          div()
+                                            .text_size(10.5)
+                                            .text_color(t.dim)
+                                            .child(grp.fiveHour.timeRemaining ? `(resets ${grp.fiveHour.timeRemaining})` : "")
+                                        )
+                                    )
+                                    .child(
+                                      div()
+                                        .text_size(11)
+                                        .font_semibold()
+                                        .text_color(getBarColor(t, grp.fiveHour.percent))
+                                        .child(`${grp.fiveHour.percent}% (${grp.fiveHour.remainingPercent}% left)`)
+                                    )
+                                )
+                                .child(
+                                  h_flex()
+                                    .h(5)
+                                    .w_full()
+                                    .rounded(3)
+                                    .bg(t.surface)
+                                    .overflow_hidden()
+                                    .child(
+                                      div()
+                                        .h_full()
+                                        .w(`${Math.max(2, Math.min(100, grp.fiveHour.percent))}%`)
+                                        .bg(getBarColor(t, grp.fiveHour.percent))
+                                        .rounded(3)
+                                    )
+                                )
+                            )
+                          )
+                          .when(Boolean(grp.weekly), (wEl) =>
+                            wEl.child(
+                              v_flex()
+                                .gap(3)
+                                .child(
+                                  h_flex()
+                                    .items_center()
+                                    .justify_between()
+                                    .child(
+                                      h_flex()
+                                        .gap(6)
+                                        .items_center()
+                                        .child(div().text_size(11).text_color(t.foreground).child("Weekly Window"))
+                                        .child(
+                                          div()
+                                            .text_size(10.5)
+                                            .text_color(t.dim)
+                                            .child(grp.weekly.timeRemaining ? `(resets ${grp.weekly.timeRemaining})` : "")
+                                        )
+                                    )
+                                    .child(
+                                      div()
+                                        .text_size(11)
+                                        .font_semibold()
+                                        .text_color(getBarColor(t, grp.weekly.percent))
+                                        .child(`${grp.weekly.percent}% (${grp.weekly.remainingPercent}% left)`)
+                                    )
+                                )
+                                .child(
+                                  h_flex()
+                                    .h(5)
+                                    .w_full()
+                                    .rounded(3)
+                                    .bg(t.surface)
+                                    .overflow_hidden()
+                                    .child(
+                                      div()
+                                        .h_full()
+                                        .w(`${Math.max(2, Math.min(100, grp.weekly.percent))}%`)
+                                        .bg(getBarColor(t, grp.weekly.percent))
+                                        .rounded(3)
+                                    )
+                                )
+                            )
+                          )
+                      )
+                    )
+                )
+              )
+              // Fallback: 5-Hour Limit Quota line (if no groups array)
+              .when(Boolean(!antigravity?.groups?.length && antigravity?.hasFiveHour), (fEl) =>
                 fEl.child(
                   v_flex()
                     .gap(4)
@@ -749,8 +889,8 @@ export default class AgentQuotas extends View {
                     )
                 )
               )
-              // Weekly Quota line (if hasWeek)
-              .when(Boolean(antigravity?.hasWeek), (wEl) =>
+              // Fallback: Weekly Quota line (if no groups array)
+              .when(Boolean(!antigravity?.groups?.length && antigravity?.hasWeek), (wEl) =>
                 wEl.child(
                   v_flex()
                     .gap(4)
