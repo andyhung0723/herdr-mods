@@ -1,4 +1,10 @@
 {
   "place": "panel",
-  "title": "Agent Context"
+  "title": "Agent Context",
+  "focusable": true,
+  "overlay": {
+    "kind": "dialog",
+    "width": 860,
+    "height": 640
+  }
 }

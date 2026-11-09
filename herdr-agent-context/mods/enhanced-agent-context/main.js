@@ -1,6 +1,6 @@
 import { View, div, svg } from "gpui-kit";
 import { h_flex, v_flex, TextView } from "gpui-base";
-import { theme, run, focused, panes, spaces, agents, terminals, notify, home, layout } from "herdr";
+import { theme, run, focused, panes, spaces, agents, terminals, notify, home, layout, closeOverlay, props } from "herdr";
 import { fetchAgentContext, readRuleContent } from "./collector.js";
 
 function cleanPath(p) {
@@ -41,6 +41,8 @@ function classifyAgentKind(rawString) {
 
 export default class EnhancedAgentContext extends View {
   init(_props, cx) {
+    const p = _props ?? props() ?? {};
+    this.overlayId = p.overlay ?? null;
     this.activeTab = "overview"; // overview | rules | skills | connectors
     this.scopeMode = "focused"; // focused (only current agent) | all (all agents)
     this.selectedRule = null;
@@ -316,6 +318,24 @@ export default class EnhancedAgentContext extends View {
                   .tooltip("Refresh context")
                   .on_click((_e, cx) => this.refresh(cx, true))
                   .child(svg("mods/workspace-chrome/clock.svg").size(13).text_color(this.loading ? (t.working ?? t.foreground) : t.dim))
+              )
+              .when(Boolean(this.overlayId), (el) =>
+                el.child(
+                  div()
+                    .id("btn-close-overlay")
+                    .size(22)
+                    .rounded(4)
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .cursor_pointer()
+                    .bg(t.raised)
+                    .text_size(11)
+                    .text_color(t.muted)
+                    .hover((s) => s.bg(t.hover).text_color(t.foreground))
+                    .on_click(() => closeOverlay(this.overlayId))
+                    .child("✕")
+                )
               )
           )
       )
