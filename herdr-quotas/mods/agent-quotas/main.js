@@ -284,6 +284,9 @@ export default class AgentQuotas extends View {
     const codex = this.data?.codex;
     const antigravity = this.data?.antigravity;
 
+    const fiveHourPercent = claude?.fiveHour?.percent ?? 0;
+    const fiveHourColor = getBarColor(t, fiveHourPercent);
+
     const sevenDayPercent = claude?.week?.percent ?? 0;
     const sevenDayColor = getBarColor(t, sevenDayPercent);
 
@@ -399,30 +402,49 @@ export default class AgentQuotas extends View {
               // Dimension: 5hr (shown only if available)
               .when(Boolean(claude?.hasFiveHour), (el) =>
                 el.child(
-                  h_flex()
+                  v_flex()
                     .p(8)
+                    .gap(6)
                     .rounded(6)
                     .bg(t.background)
-                    .items_center()
-                    .justify_between()
                     .child(
                       h_flex()
-                        .gap(6)
                         .items_center()
-                        .child(div().text_size(11.5).font_semibold().text_color(t.accent).child("5hr Window:"))
-                        .child(div().text_size(12).text_color(t.foreground).child(`${claude.fiveHour.percent}% used`))
+                        .justify_between()
+                        .child(
+                          h_flex()
+                            .gap(6)
+                            .items_center()
+                            .child(div().text_size(11.5).font_semibold().text_color(t.accent).child("5hr Window:"))
+                            .child(div().text_size(12).font_medium().text_color(fiveHourColor).child(`${fiveHourPercent}% used`))
+                        )
+                        .when(Boolean(claude.fiveHour.timeRemaining), (tEl) =>
+                          tEl.child(
+                            div()
+                              .px(5)
+                              .py(1)
+                              .rounded(4)
+                              .bg(t.surface)
+                              .text_size(10.5)
+                              .text_color(t.dim)
+                              .child(`Resets ${claude.fiveHour.timeRemaining}`)
+                          )
+                        )
                     )
-                    .when(Boolean(claude.fiveHour.timeRemaining), (tEl) =>
-                      tEl.child(
-                        div()
-                          .px(5)
-                          .py(1)
-                          .rounded(4)
-                          .bg(t.surface)
-                          .text_size(10.5)
-                          .text_color(t.dim)
-                          .child(`Resets ${claude.fiveHour.timeRemaining}`)
-                      )
+                    .child(
+                      h_flex()
+                        .h(6)
+                        .w_full()
+                        .rounded(3)
+                        .bg(t.surface)
+                        .overflow_hidden()
+                        .child(
+                          div()
+                            .h_full()
+                            .w(`${Math.max(1, Math.min(100, fiveHourPercent))}%`)
+                            .bg(fiveHourColor)
+                            .rounded(3)
+                        )
                     )
                 )
               )
