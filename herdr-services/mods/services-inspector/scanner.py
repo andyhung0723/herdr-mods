@@ -48,8 +48,66 @@ PROTECTED_PROCESSES = {
     "mDNSResponder", "syslogd", "opendirectoryd", "trustd",
 }
 
+KNOWN_IPC_PROCESSES = {
+    "zed": "Zed editor CLI & IPC",
+    "line": "LINE desktop internal IPC",
+    "linecall": "LINE VoIP call service",
+    "figma_agent": "Figma local fonts bridge",
+    "figma_age": "Figma local fonts bridge",
+    "agy": "Antigravity CLI & MCP daemon",
+    "codex": "Codex CLI agent IPC",
+    "claude": "Claude Code CLI IPC",
+    "cursor": "Cursor editor IPC",
+    "windsurf": "Windsurf editor IPC",
+    "raycast": "Raycast backend service",
+    "code helper": "VS Code background utility",
+    "code\\x20h": "VS Code background utility",
+    "code": "VS Code editor IPC",
+    "slack": "Slack desktop IPC",
+    "discord": "Discord desktop IPC",
+    "spotify": "Spotify local web helper",
+}
 
-def is_dev_port(port: int, cmd_name: str) -> bool:
+NON_HTTP_PORTS = {5432, 5433, 6379, 6380, 27017, 27018, 3306, 3307}
+
+
+def get_ipc_info(cmd_name: str, full_cmd: str = "") -> str | None:
+    cmd_lower = cmd_name.lower()
+    full_lower = full_cmd.lower() if full_cmd else ""
+    for name, desc in KNOWN_IPC_PROCESSES.items():
+        if name in cmd_lower or (full_lower and name in full_lower):
+            return desc
+    return None
+
+
+def is_http_web_port(port: int, cmd_name: str, full_cmd: str = "") -> bool:
+    if port in NON_HTTP_PORTS:
+        return False
+    if get_ipc_info(cmd_name, full_cmd):
+        return False
+    cmd_lower = (cmd_name + " " + full_cmd).lower()
+    for prot in PROTECTED_PROCESSES:
+        if prot.lower() in cmd_lower:
+            return False
+    web_ranges = [
+        (3000, 3100),   # Node, React, Next, Rails
+        (4000, 4200),   # Hexo, Jekyll, Angular
+        (5000, 5005),   # Flask
+        (5173, 5185),   # Vite
+        (8000, 8100),   # Django, FastAPI, HTTP
+        (8080, 8090),   # Vue, TomCat, Spring
+        (9000, 9010),   # PHP, Sonar
+    ]
+    for start, end in web_ranges:
+        if start <= port <= end:
+            return True
+    web_keywords = ["vite", "next", "nuxt", "astro", "webpack", "serve", "http-server", "live-server", "caddy", "nginx", "fastapi", "uvicorn", "flask", "django"]
+    return any(kw in cmd_lower for kw in web_keywords)
+
+
+def is_dev_port(port: int, cmd_name: str, full_cmd: str = "") -> bool:
+    if get_ipc_info(cmd_name, full_cmd):
+        return False
     cmd_lower = cmd_name.lower()
     for prot in PROTECTED_PROCESSES:
         if prot.lower() in cmd_lower or cmd_lower in prot.lower():
@@ -120,6 +178,12 @@ def scan_ports() -> list[dict]:
         pids_to_query.add(pid_str)
 
         if key not in ports_map:
+            ipc_info = get_ipc_info(cmd)
+            is_prot = is_protected_process(pid, cmd, user)
+            is_dev = is_dev_port(port, cmd) and not ipc_info and not is_prot
+            can_open = is_http_web_port(port, cmd)
+            cat = "dev" if is_dev else ("ipc" if ipc_info else ("system" if is_prot else "other"))
+
             ports_map[key] = {
                 "port": port,
                 "pid": pid,
@@ -128,9 +192,11 @@ def scan_ports() -> list[dict]:
                 "address": name,
                 "proto": proto,
                 "command": cmd,
-                "isDev": is_dev_port(port, cmd),
-                "isProtected": is_protected_process(pid, cmd, user),
-                "url": f"http://localhost:{port}" if port not in (5000, 7000) or not is_protected_process(pid, cmd, user) else "",
+                "category": cat,
+                "ipcDesc": ipc_info or "",
+                "isDev": is_dev,
+                "isProtected": is_prot,
+                "url": f"http://localhost:{port}" if can_open else "",
             }
         else:
             # Append protocol if dual-stack (IPv4 & IPv6)
@@ -159,20 +225,24 @@ def scan_ports() -> list[dict]:
                     for entry in ports_map.values():
                         if entry["pid"] == p_id:
                             entry["command"] = full_args
-                            entry["isProtected"] = is_protected_process(entry["pid"], entry["name"], entry["user"], full_args)
-                            if entry["isProtected"]:
-                                entry["isDev"] = False
-                                entry["url"] = ""
-                            else:
-                                entry["isDev"] = is_dev_port(entry["port"], full_args)
-                                if entry["isDev"] and not entry["url"]:
-                                    entry["url"] = f"http://localhost:{entry['port']}"
+                            ipc_info = get_ipc_info(entry["name"], full_args)
+                            is_prot = is_protected_process(entry["pid"], entry["name"], entry["user"], full_args)
+                            is_dev = is_dev_port(entry["port"], entry["name"], full_args) and not ipc_info and not is_prot
+                            can_open = is_http_web_port(entry["port"], entry["name"], full_args)
+                            cat = "dev" if is_dev else ("ipc" if ipc_info else ("system" if is_prot else "other"))
+
+                            entry["isProtected"] = is_prot
+                            entry["isDev"] = is_dev
+                            entry["ipcDesc"] = ipc_info or ""
+                            entry["category"] = cat
+                            entry["url"] = f"http://localhost:{entry['port']}" if can_open else ""
         except Exception:
             pass
 
-    # Sort: Dev ports first (by port), then others (by port)
+    # Sort: Category order (dev -> ipc -> other -> system), then by port
+    cat_order = {"dev": 0, "ipc": 1, "other": 2, "system": 3}
     res = list(ports_map.values())
-    res.sort(key=lambda x: (0 if x["isDev"] else 1, x["port"]))
+    res.sort(key=lambda x: (cat_order.get(x.get("category", "other"), 2), x["port"]))
     return res
 
 

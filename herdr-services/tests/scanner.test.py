@@ -24,6 +24,25 @@ class TestScanner(unittest.TestCase):
         self.assertFalse(scanner.is_dev_port(5000, "ControlCenter"))
         self.assertFalse(scanner.is_dev_port(7000, "ControlCe"))
         self.assertFalse(scanner.is_dev_port(59097, "rapportd"))
+        # Desktop app IPC should NOT be dev port
+        self.assertFalse(scanner.is_dev_port(44438, "zed"))
+        self.assertFalse(scanner.is_dev_port(49310, "LINE"))
+
+    def test_ipc_and_web_detection(self):
+        # IPC detection
+        self.assertIsNotNone(scanner.get_ipc_info("zed"))
+        self.assertIsNotNone(scanner.get_ipc_info("LINE"))
+        self.assertIsNotNone(scanner.get_ipc_info("figma_age"))
+        self.assertIsNotNone(scanner.get_ipc_info("agy"))
+        self.assertIsNone(scanner.get_ipc_info("vite"))
+
+        # Web vs non-web port detection
+        self.assertTrue(scanner.is_http_web_port(5173, "vite"))
+        self.assertTrue(scanner.is_http_web_port(3000, "node", "next-server"))
+        self.assertFalse(scanner.is_http_web_port(44438, "zed"))
+        self.assertFalse(scanner.is_http_web_port(49310, "LINE"))
+        self.assertFalse(scanner.is_http_web_port(5432, "postgres"))
+        self.assertFalse(scanner.is_http_web_port(6379, "redis-server"))
 
     def test_protected_process_detection(self):
         self.assertTrue(scanner.is_protected_process(1, "launchd", "root"))

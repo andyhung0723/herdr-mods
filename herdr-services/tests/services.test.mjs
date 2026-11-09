@@ -14,9 +14,25 @@ const MOCK_SCAN_DATA = {
       address: "127.0.0.1:5173",
       proto: "IPv4",
       command: "vite dev --port 5173",
+      category: "dev",
+      ipcDesc: "",
       isDev: true,
       isProtected: false,
       url: "http://localhost:5173",
+    },
+    {
+      port: 44438,
+      pid: 55227,
+      name: "zed",
+      user: "andy",
+      address: "127.0.0.1:44438",
+      proto: "IPv4",
+      command: "/Applications/Zed.app/Contents/MacOS/zed",
+      category: "ipc",
+      ipcDesc: "Zed editor CLI & IPC",
+      isDev: false,
+      isProtected: false,
+      url: "",
     },
     {
       port: 5000,
@@ -26,6 +42,8 @@ const MOCK_SCAN_DATA = {
       address: "*:5000",
       proto: "IPv4/IPv6",
       command: "/System/Library/CoreServices/ControlCenter.app/Contents/MacOS/ControlCenter",
+      category: "system",
+      ipcDesc: "",
       isDev: false,
       isProtected: true,
       url: "",
@@ -162,8 +180,10 @@ test("collector fetchServicesData, killProcess, and controlDocker invoke scanner
   const { collector, events } = await harness();
 
   const data = await collector.fetchServicesData({ force: true });
-  assert.equal(data.ports.length, 2);
+  assert.equal(data.ports.length, 3);
   assert.equal(data.ports[0].port, 5173);
+  assert.equal(data.ports[1].port, 44438);
+  assert.equal(data.ports[1].category, "ipc");
   assert.equal(data.docker.containers.length, 2);
 
   const killRes = await collector.killProcess(12345, 15);
@@ -187,7 +207,7 @@ test("services view renders ports list, dev filtering, and docker containers", a
   assert.equal(view.role, "panel");
   assert.equal(view.activeTab, "ports");
   assert.ok(view.data);
-  assert.equal(view.data.ports.length, 2);
+  assert.equal(view.data.ports.length, 3);
 
   // Render ports tab
   const portsElement = view.render(cx);
@@ -195,6 +215,10 @@ test("services view renders ports list, dev filtering, and docker containers", a
 
   // Switch to dev filter
   view.filterMode = "dev";
+  assert.ok(view.render(cx));
+
+  // Switch to ipc filter
+  view.filterMode = "ipc";
   assert.ok(view.render(cx));
 
   // Switch to docker tab

@@ -142,8 +142,10 @@ export default class ServicesInspector extends View {
     const ports = this.data?.ports ?? [];
     const docker = this.data?.docker ?? { installed: false, running: false, containers: [] };
 
-    const devPorts = ports.filter((p) => p.isDev);
-    const otherPorts = ports.filter((p) => !p.isDev);
+    const devPorts = ports.filter((p) => p.category === "dev");
+    const ipcPorts = ports.filter((p) => p.category === "ipc");
+    const systemPorts = ports.filter((p) => p.category === "system" || p.isProtected);
+    const otherPorts = ports.filter((p) => p.category === "other" && !p.isProtected);
 
     const dockerContainers = docker.containers ?? [];
     const dockerRunning = dockerContainers.filter((c) => c.state === "running").length;
@@ -157,7 +159,7 @@ export default class ServicesInspector extends View {
       // 1. Header Toolbar
       .child(this.renderHeader(t, ports.length, dockerContainers.length, dockerRunning, isVeryNarrow, cx))
       // 2. Filter / Search Bar
-      .child(this.renderFilterBar(t, devPorts.length, otherPorts.length, isNarrow, cx))
+      .child(this.renderFilterBar(t, devPorts.length, ipcPorts.length, otherPorts.length + systemPorts.length, isNarrow, cx))
       // 3. Main Content Area
       .child(
         v_flex()
@@ -167,7 +169,7 @@ export default class ServicesInspector extends View {
           .gap(8)
           .child(
             this.activeTab === "ports"
-              ? this.renderPortsView(t, devPorts, otherPorts, isNarrow, cx)
+              ? this.renderPortsView(t, devPorts, ipcPorts, otherPorts, systemPorts, isNarrow, cx)
               : this.renderDockerView(t, docker, isNarrow, cx)
           )
       );
@@ -282,9 +284,10 @@ export default class ServicesInspector extends View {
       );
   }
 
-  renderFilterBar(t, devCount, otherCount, isNarrow, cx) {
+  renderFilterBar(t, devCount, ipcCount, otherCount, isNarrow, cx) {
     if (this.activeTab !== "ports") return div();
 
+    const total = devCount + ipcCount + otherCount;
     return h_flex()
       .px(12)
       .py(5)
@@ -308,7 +311,7 @@ export default class ServicesInspector extends View {
                 this.filterMode = "all";
                 cx.notify();
               })
-              .child(`All (${devCount + otherCount})`)
+              .child(`All (${total})`)
           )
           .child(
             div()
@@ -323,15 +326,40 @@ export default class ServicesInspector extends View {
                 this.filterMode = "dev";
                 cx.notify();
               })
-              .child(`🚀 Dev Only (${devCount})`)
+              .child(`🚀 Dev (${devCount})`)
+          )
+          .child(
+            div()
+              .px(7)
+              .py(2)
+              .rounded(4)
+              .cursor_pointer()
+              .text_size(11)
+              .when(this.filterMode === "ipc", (el) => el.bg(t.accent ?? "#89b4fa"))
+              .text_color(this.filterMode === "ipc" ? (t.accentForeground ?? "#ffffff") : t.muted)
+              .on_click(() => {
+                this.filterMode = "ipc";
+                cx.notify();
+              })
+              .child(`📦 App IPC (${ipcCount})`)
           )
       );
   }
 
-  renderPortsView(t, devPorts, otherPorts, isNarrow, cx) {
-    const list = this.filterMode === "dev" ? devPorts : [...devPorts, ...otherPorts];
+  renderPortsView(t, devPorts, ipcPorts, otherPorts, systemPorts, isNarrow, cx) {
+    let list = [];
+    if (this.filterMode === "dev") list = devPorts;
+    else if (this.filterMode === "ipc") list = ipcPorts;
+    else list = [...devPorts, ...ipcPorts, ...otherPorts, ...systemPorts];
 
     if (list.length === 0) {
+      const emptyMsg =
+        this.filterMode === "dev"
+          ? "No Web Dev Servers running. (Vite, Next.js, and web frameworks will appear here)."
+          : this.filterMode === "ipc"
+          ? "No Desktop App IPC connections found."
+          : "No listening ports found.";
+
       return div()
         .p(24)
         .items_center()
@@ -340,55 +368,79 @@ export default class ServicesInspector extends View {
         .child(
           v_flex()
             .gap(6)
-            .child(div().text_size(14).font_bold().text_color(t.muted).child("No Listening Ports Found"))
-            .child(div().text_size(11).text_color(t.dim).child("Launch a dev server or app to see active ports here."))
+            .child(div().text_size(13).font_bold().text_color(t.muted).child("No Matching Ports"))
+            .child(div().text_size(11).text_color(t.dim).child(emptyMsg))
         );
     }
 
     const container = v_flex().gap(6);
 
     // Section 1: Dev Ports
-    if (this.filterMode === "all" && devPorts.length > 0) {
+    if ((this.filterMode === "all" || this.filterMode === "dev") && devPorts.length > 0) {
       container.child(
         h_flex()
           .items_center()
           .gap(6)
           .px(4)
           .pt(2)
-          .child(div().text_size(11).font_bold().text_color(t.accent ?? "#89b4fa").child("🚀 DEV SERVERS & APPS"))
+          .child(div().text_size(11).font_bold().text_color(t.ansi2 ?? "#a6e3a1").child("🚀 DEV SERVERS & WEBSITES"))
           .child(div().text_size(10.5).text_color(t.dim).child(`(${devPorts.length})`))
       );
       for (const p of devPorts) {
-        container.child(this.renderPortCard(t, p, true, isNarrow, cx));
+        container.child(this.renderPortCard(t, p, isNarrow, cx));
       }
     }
 
-    // Section 2: Other Services
-    if (this.filterMode === "all" && otherPorts.length > 0) {
+    // Section 2: App IPC Ports
+    if ((this.filterMode === "all" || this.filterMode === "ipc") && ipcPorts.length > 0) {
+      container.child(
+        h_flex()
+          .items_center()
+          .gap(6)
+          .px(4)
+          .pt(this.filterMode === "all" ? 6 : 2)
+          .child(div().text_size(11).font_bold().text_color(t.accent ?? "#89b4fa").child("📦 DESKTOP APPS & LOCAL IPC"))
+          .child(div().text_size(10.5).text_color(t.dim).child(`(${ipcPorts.length})`))
+      );
+      for (const p of ipcPorts) {
+        container.child(this.renderPortCard(t, p, isNarrow, cx));
+      }
+    }
+
+    // Section 3: Other / System Services
+    const systemAndOther = [...otherPorts, ...systemPorts];
+    if (this.filterMode === "all" && systemAndOther.length > 0) {
       container.child(
         h_flex()
           .items_center()
           .gap(6)
           .px(4)
           .pt(6)
-          .child(div().text_size(11).font_bold().text_color(t.muted).child("⚙️ OTHER LOCAL SERVICES"))
-          .child(div().text_size(10.5).text_color(t.dim).child(`(${otherPorts.length})`))
+          .child(div().text_size(11).font_bold().text_color(t.muted).child("⚙️ SYSTEM & LOCAL SERVICES"))
+          .child(div().text_size(10.5).text_color(t.dim).child(`(${systemAndOther.length})`))
       );
-      for (const p of otherPorts) {
-        container.child(this.renderPortCard(t, p, false, isNarrow, cx));
-      }
-    } else if (this.filterMode === "dev") {
-      for (const p of devPorts) {
-        container.child(this.renderPortCard(t, p, true, isNarrow, cx));
+      for (const p of systemAndOther) {
+        container.child(this.renderPortCard(t, p, isNarrow, cx));
       }
     }
 
     return container;
   }
 
-  renderPortCard(t, p, isDev, isNarrow, cx) {
+  renderPortCard(t, p, isNarrow, cx) {
     const isKilling = this.killingPid === p.pid;
-    const portColor = isDev ? (t.ansi2 ?? "#a6e3a1") : (t.accent ?? "#89b4fa");
+    const isDev = p.category === "dev";
+    const isIpc = p.category === "ipc";
+
+    const portColor = isDev
+      ? (t.ansi2 ?? "#a6e3a1")
+      : isIpc
+      ? (t.accent ?? "#89b4fa")
+      : p.isProtected
+      ? (t.dim ?? "#6c7086")
+      : (t.muted ?? "#a6adc8");
+
+    const subtitle = p.ipcDesc ? `${p.ipcDesc} • ${p.command || p.name}` : (p.command || p.address);
 
     return h_flex()
       .p(8)
@@ -429,6 +481,32 @@ export default class ServicesInspector extends View {
                   .items_center()
                   .gap(6)
                   .child(div().text_size(12).font_bold().text_color(t.foreground).truncate().child(p.name))
+                  .when(isDev, (el) =>
+                    el.child(
+                      div()
+                        .px(4)
+                        .py(1)
+                        .rounded(3)
+                        .bg(t.background)
+                        .text_size(9.5)
+                        .font_medium()
+                        .text_color(t.ansi2 ?? "#a6e3a1")
+                        .child("Dev")
+                    )
+                  )
+                  .when(isIpc, (el) =>
+                    el.child(
+                      div()
+                        .px(4)
+                        .py(1)
+                        .rounded(3)
+                        .bg(t.background)
+                        .text_size(9.5)
+                        .font_medium()
+                        .text_color(t.accent ?? "#89b4fa")
+                        .child("App IPC")
+                    )
+                  )
                   .child(div().text_size(10.5).text_color(t.dim).child(`PID ${p.pid}`))
                   .when(p.proto && p.proto.includes("/"), (el) =>
                     el.child(
@@ -446,9 +524,9 @@ export default class ServicesInspector extends View {
               .child(
                 div()
                   .text_size(10.5)
-                  .text_color(t.muted)
+                  .text_color(isIpc ? (t.accent ?? "#89b4fa") : t.muted)
                   .truncate()
-                  .child(p.command || p.address)
+                  .child(subtitle)
               )
           )
       )
@@ -457,7 +535,7 @@ export default class ServicesInspector extends View {
         h_flex()
           .items_center()
           .gap(4)
-          // Open URL Button
+          // Open URL Button: only shown if p.url is present!
           .when(Boolean(p.url), (el) =>
             el.child(
               div()
@@ -467,12 +545,12 @@ export default class ServicesInspector extends View {
                 .cursor_pointer()
                 .bg(t.background)
                 .text_size(11)
-                .text_color(t.accent ?? "#89b4fa")
+                .text_color(t.ansi2 ?? "#a6e3a1")
                 .on_click(() => this.handleOpenUrl(p.url, cx))
                 .child("🌐 Open")
             )
           )
-          // Kill Button
+          // Kill Button: available for dev, ipc, or other (as long as not system-protected)
           .when(!p.isProtected, (el) =>
             el.child(
               div()
