@@ -82,6 +82,8 @@ export default class WorkspaceStatus extends View {
   renderMusicWidget(t, song, cx) {
     const isPlaying = song.playing;
     const accentColor = t.ansi2 ?? "#a6e3a1";
+    const fullInfo = song.artist ? `${song.title} · ${song.artist}` : song.title;
+    const tooltipText = `${fullInfo} (${isPlaying ? "Playing" : "Paused"})`;
 
     return h_flex()
       .id("ytm-now-playing")
@@ -89,21 +91,23 @@ export default class WorkspaceStatus extends View {
       .gap(6)
       .px(8)
       .h(22)
+      .max_w(520)
       .rounded(5)
       .cursor_pointer()
+      .tooltip(tooltipText)
       .hover((s) => s.bg(t.selected ?? "#334155"))
       .on_click((_e, cx) => this.activateYTM(cx))
       // Music note icon
       .child(
         svg(MUSIC_ICON)
           .size(13)
-          .flex_none()
+          .flex_shrink_0()
           .text_color(isPlaying ? accentColor : t.dim)
       )
       // Song title
       .child(
         div()
-          .max_w(170)
+          .max_w(320)
           .truncate()
           .text_size(11.5)
           .font_medium()
@@ -114,7 +118,7 @@ export default class WorkspaceStatus extends View {
       .when(Boolean(song.artist), (el) =>
         el.child(
           div()
-            .max_w(130)
+            .max_w(180)
             .truncate()
             .text_size(11)
             .text_color(t.dim)
@@ -124,12 +128,14 @@ export default class WorkspaceStatus extends View {
       // Mini play / pause indicator button
       .child(
         div()
+          .flex_shrink_0()
           .px(4)
           .py(1)
           .rounded(3)
           .text_size(10)
           .text_color(isPlaying ? accentColor : t.dim)
           .hover((s) => s.bg(t.hover ?? t.surface))
+          .tooltip(isPlaying ? "Pause" : "Play")
           .on_click((e, cx) => {
             e.stop_propagation();
             this.togglePlay(cx);
