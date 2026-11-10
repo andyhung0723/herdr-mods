@@ -28,6 +28,7 @@ async function harness(overrides = {}) {
     spaces: () => [{ id: "s1", active: true, folder: "/repo" }],
     panes: () => [{ pane: "p1", space: "s1", cwd: "/repo" }],
     agents: () => [],
+    terminals: () => [],
     focused: () => ({ pane: "p1", cwd: "/repo" }),
     exec: async (cmd, args) => {
       events.push(["exec", cmd, args]);
@@ -495,6 +496,35 @@ test("render does not synchronously call cx.notify when switching spaces", async
   });
   assert.equal(notifyCalledDuringRender, false);
 });
+
+test("resolveLocation reads terminal cwd for Claude TUI pane instead of falling back to another tab", async () => {
+  const { git } = await harness({
+    focused: () => ({ pane: "p-claude", tab: "tab-herdr", space: "s-playground", cwd: null }),
+    spaces: () => [
+      {
+        id: "s-playground",
+        active: true,
+        folder: "/Users/dev",
+        tabs: [
+          { id: "tab-home", active: false },
+          { id: "tab-herdr", active: true },
+        ],
+      },
+    ],
+    panes: () => [
+      { pane: "p-home", tab: "tab-home", space: "s-playground", terminal: "t28", cwd: "/Users/dev" },
+      { pane: "p-claude", tab: "tab-herdr", space: "s-playground", terminal: "t25", cwd: null },
+    ],
+    terminals: () => [
+      { address: "t28", cwd: "/Users/dev" },
+      { address: "t25", cwd: "/Users/dev/workspace/sample-repo" },
+    ],
+  });
+
+  const loc = git.resolveLocation();
+  assert.equal(loc.cwd, "/Users/dev/workspace/sample-repo");
+});
+
 
 
 

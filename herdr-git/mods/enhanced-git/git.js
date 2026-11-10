@@ -1,5 +1,5 @@
 // Git Service & Parser for Herdr Enhanced Git mod
-import { spaces, panes, focused, agents, exec, readTextFile } from "herdr";
+import { spaces, panes, focused, agents, terminals, exec, readTextFile } from "herdr";
 
 const READ_FLAGS = [
   "--no-optional-locks",
@@ -13,24 +13,26 @@ export function resolveLocation() {
   const allSpaces = spaces() || [];
   const allPanes = panes() || [];
   const allAgents = (typeof agents === "function" ? agents() : null) || [];
+  const allTerminals = (typeof terminals === "function" ? terminals() : null) || [];
   const f = focused() || {};
 
   const activeSpace = allSpaces.find((s) => s.id === f?.space) ?? allSpaces.find((s) => s.active) ?? allSpaces[0];
+  const activeTabId = f.tab || activeSpace?.tabs?.find((t) => t.active)?.id;
 
   // 1. Highest priority: currently focused pane
   let pane = f.pane ? allPanes.find((p) => p.pane === f.pane) : null;
 
-  // 2. Second priority: pane in the currently active tab (e.g. Tab 2, Tab 3)
-  if (!pane?.cwd) {
-    const activeTabId = f.tab || activeSpace?.tabs?.find((t) => t.active)?.id;
-    if (activeTabId) {
-      pane = allPanes.find((p) => p.tab === activeTabId && p.cwd);
-    }
+  // 2. Second priority: pane in the currently active tab (do NOT cross into other tabs!)
+  if (!pane && activeTabId) {
+    pane =
+      allPanes.find((p) => p.tab === activeTabId && p.focused) ??
+      allPanes.find((p) => p.tab === activeTabId && p.cwd) ??
+      allPanes.find((p) => p.tab === activeTabId);
   }
 
-  // 3. Fallback to any pane in the active space
-  if (!pane && activeSpace) {
-    pane = allPanes.find((p) => p.space === activeSpace.id || activeSpace.tabs?.some((t) => t.id === p.tab));
+  // 3. Fallback to active space pane only if no active tab exists
+  if (!pane && !activeTabId && activeSpace) {
+    pane = allPanes.find((p) => p.space === activeSpace.id);
   }
 
   // Check matching agent in agents() list
@@ -40,16 +42,33 @@ export function resolveLocation() {
       (a) => a.pane === pane.pane || (pane.terminal && a.address === pane.terminal)
     );
   }
-  if (!currentAgent && f.tab) {
-    currentAgent = allAgents.find((a) => a.tab === f.tab);
+  if (!currentAgent && activeTabId) {
+    currentAgent = allAgents.find((a) => a.tab === activeTabId);
   }
 
-  const cwd = currentAgent?.cwd || pane?.cwd || f.cwd || activeSpace?.folder || activeSpace?.cwd || null;
+  // Check matching terminal in terminals() list (essential for TUI agents like claude-code)
+  const termAddr = pane?.terminal || f.terminal || currentAgent?.address || null;
+  const currentTerm = termAddr ? allTerminals.find((t) => t.address === termAddr) : null;
+
+  const cwd =
+    pane?.cwd ||
+    currentTerm?.cwd ||
+    currentAgent?.cwd ||
+    f.cwd ||
+    activeSpace?.folder ||
+    activeSpace?.cwd ||
+    null;
+
   const on = f.pane === null
     ? (f.terminal?.includes("/") ? f.terminal.split("/")[0] : null)
     : activeSpace?.machine ?? null;
 
   return { cwd, on };
+}
+
+function isHomeDirectory(cwd) {
+  const norm = cwd.replace(/\/+$/, "");
+  return norm === "~" || /^\/Users\/[^/]+$/.test(norm) || /^\/home\/[^/]+$/.test(norm);
 }
 
 export async function resolveRepoRoot(cwd, on) {
@@ -68,16 +87,18 @@ export async function resolveRepoRoot(cwd, on) {
     }
   } catch {}
 
-  const base = cwd.split("/").filter(Boolean).pop();
-  if (base) {
-    try {
-      const subRes = await exec("git", ["rev-parse", "--show-toplevel"], { cwd: `${cwd}/${base}`, on });
-      if (subRes.code === 0 && subRes.stdout.trim()) {
-        const root = subRes.stdout.trim();
-        rootCache.set(key, root);
-        return root;
-      }
-    } catch {}
+  if (!isHomeDirectory(cwd)) {
+    const base = cwd.split("/").filter(Boolean).pop();
+    if (base && !base.startsWith(".")) {
+      try {
+        const subRes = await exec("git", ["rev-parse", "--show-toplevel"], { cwd: `${cwd}/${base}`, on });
+        if (subRes.code === 0 && subRes.stdout.trim()) {
+          const root = subRes.stdout.trim();
+          rootCache.set(key, root);
+          return root;
+        }
+      } catch {}
+    }
   }
 
   return null;

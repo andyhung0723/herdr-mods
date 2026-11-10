@@ -27,7 +27,7 @@ def find_gh_binary() -> str | None:
 
 
 def resolve_repo_dir(cwd: str) -> str:
-    """Find directory containing .git, checking cwd, parents, or immediate children."""
+    """Find directory containing .git, checking cwd, parents, or same-name child."""
     if not cwd or not os.path.exists(cwd):
         return cwd
     try:
@@ -42,14 +42,14 @@ def resolve_repo_dir(cwd: str) -> str:
     except Exception:
         pass
     try:
-        entries = os.listdir(cwd)
+        resolved_cwd = Path(cwd).resolve()
+        if resolved_cwd == Path.home().resolve():
+            return cwd
         base = os.path.basename(os.path.normpath(cwd))
-        if base in entries and os.path.isdir(os.path.join(cwd, base, ".git")):
-            return os.path.join(cwd, base)
-        for entry in entries:
-            sub = os.path.join(cwd, entry)
-            if os.path.isdir(sub) and os.path.isdir(os.path.join(sub, ".git")):
-                return sub
+        if base and not base.startswith("."):
+            candidate = os.path.join(cwd, base)
+            if os.path.isdir(candidate) and os.path.isdir(os.path.join(candidate, ".git")):
+                return candidate
     except Exception:
         pass
     return cwd

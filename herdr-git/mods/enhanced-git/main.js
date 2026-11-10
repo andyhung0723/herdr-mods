@@ -690,12 +690,8 @@ export default class EnhancedGit extends View {
       spawnCx.spawn(async (scx) => {
         try {
           const data = await this.runGithubProbe(["--action", "bundle"]);
-          if (data.ok || data.hasRepo) {
-            this.githubCache.set(cacheKey, { data, time: Date.now() });
-            this.applyGithubData(data);
-          } else {
-            this.githubStatus = data;
-          }
+          this.githubCache.set(cacheKey, { data, time: Date.now() });
+          this.applyGithubData(data);
           resolve(data);
         } catch (e) {
           this.githubError = e.message || String(e);
