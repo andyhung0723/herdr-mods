@@ -1,0 +1,10 @@
+{
+  "place": "none",
+  "title": "GitHub Hub",
+  "focusable": true,
+  "overlay": {
+    "kind": "dialog",
+    "width": 880,
+    "height": 640
+  }
+}
