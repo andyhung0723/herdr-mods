@@ -32,7 +32,8 @@ export default class EnhancedGit extends View {
   init(props, cx) {
     this.role = props?.role || "panel"; // "panel" or "dialog"
     this.overlayId = props?.overlayId || null;
-    this.tab = props?.tab || "changes"; // "changes" | "graph" | "branches" | "stashes" | "github"
+    this.gitMode = props?.mode || (props?.tab === "github" ? "github" : "local");
+    this.tab = props?.tab === "github" ? "changes" : (props?.tab || "changes");
 
     // GitHub tab state
     this.githubActiveTab = "prs"; // "prs" | "runs" | "issues"
@@ -176,6 +177,11 @@ export default class EnhancedGit extends View {
       this.lastKey = currentKey;
       this.cwd = cwd;
       this.on = on;
+      this.githubStatus = null;
+      this.fetchGithubStatus(cx);
+      if (this.gitMode === "github") {
+        this.fetchGithubActiveTab(cx);
+      }
 
       if (cached && !force) {
         // Stale-While-Revalidate: instant render from cache (0ms)
@@ -442,6 +448,15 @@ export default class EnhancedGit extends View {
 
   doStashDrop(stashId, cx) {
     this.runAction(() => gitStashDrop(this.cwd, this.on, stashId), `Dropped ${stashId}`, cx);
+  }
+
+  switchGitMode(mode, cx) {
+    if (this.gitMode === mode) return;
+    this.gitMode = mode;
+    cx?.notify?.();
+    if (mode === "github") {
+      this.fetchGithubStatus(cx).then(() => this.fetchGithubActiveTab(cx));
+    }
   }
 
   doCheckout(branch, cx) {
@@ -1612,105 +1627,90 @@ export default class EnhancedGit extends View {
     const stagedCount = status?.stagedFiles?.length || 0;
     const unstagedCount = status?.unstagedFiles?.length || 0;
     const totalChanges = stagedCount + unstagedCount;
+    const prCount = this.githubStatus?.prs_count ?? 0;
+    const issueCount = this.githubStatus?.issues_count ?? 0;
 
     return v_flex()
       .w_full()
       .flex_none()
       .border_b(1)
       .border_color(t.border)
-      // Top Row: Branch, Sync Indicators & Actions
+      // Row 0: Mode Toggle [ 💻 Local ]  [ ☁️ GitHub ] + Repo/Sync info
       .child(
         h_flex()
-          .h(36)
+          .h(32)
           .flex_none()
-          .px(10)
-          .gap(8)
+          .px(8)
           .items_center()
           .justify_between()
-          // Left: Branch & Sync Indicators
-          .child(
-            h_flex()
-              .gap(6)
-              .items_center()
-              .child(
-                h_flex()
-                  .gap(4)
-                  .px(6)
-                  .py(2)
-                  .rounded(4)
-                  .bg(t.raised)
-                  .items_center()
-                  .child(div().text_size(11.5).child("⎇"))
-                  .child(div().font_semibold().text_size(11.5).text_color(t.foreground).child(branch))
-              )
-              .when(ahead > 0, (el) =>
-                el.child(
-                  div()
-                    .text_size(10.5)
-                    .font_semibold()
-                    .text_color(t.accent)
-                    .child(`↑${ahead}`)
-                )
-              )
-              .when(behind > 0, (el) =>
-                el.child(
-                  div()
-                    .text_size(10.5)
-                    .font_semibold()
-                    .text_color("#f59e0b")
-                    .child(`↓${behind}`)
-                )
-              )
-              // Pull / Push / Fetch buttons
-              .child(
-                h_flex()
-                  .gap(4)
-                  .child(
-                    div()
-                      .px(6)
-                      .py(1.5)
-                      .rounded(3)
-                      .bg(t.surface)
-                      .hover((s) => s.bg(t.hover))
-                      .cursor_pointer()
-                      .text_size(10.5)
-                      .text_color(t.foreground)
-                      .on_click((_e, cx) => this.doPush(cx))
-                      .child("⇪ Push")
-                  )
-                  .child(
-                    div()
-                      .px(6)
-                      .py(1.5)
-                      .rounded(3)
-                      .bg(t.surface)
-                      .hover((s) => s.bg(t.hover))
-                      .cursor_pointer()
-                      .text_size(10.5)
-                      .text_color(t.foreground)
-                      .on_click((_e, cx) => this.doPull(cx))
-                      .child("⇩ Pull")
-                  )
-                  .child(
-                    div()
-                      .px(6)
-                      .py(1.5)
-                      .rounded(3)
-                      .bg(t.surface)
-                      .hover((s) => s.bg(t.hover))
-                      .cursor_pointer()
-                      .text_size(10.5)
-                      .text_color(t.foreground)
-                      .on_click((_e, cx) => this.doFetch(cx))
-                      .child("↻ Fetch")
-                  )
-              )
-          )
-          // Right: Refresh & Popout/Close
+          .bg(t.chrome ?? t.surface)
+          .border_b(1)
+          .border_color(t.border)
+          // Mode Toggle Buttons
           .child(
             h_flex()
               .gap(4)
               .items_center()
+              .child(
+                div()
+                  .px(8)
+                  .py(2)
+                  .rounded(4)
+                  .cursor_pointer()
+                  .when(this.gitMode === "local", (el) => el.bg(t.raised).text_color(t.foreground).font_bold())
+                  .when(this.gitMode !== "local", (el) => el.text_color(t.dim).hover((s) => s.text_color(t.foreground)))
+                  .text_size(11)
+                  .child("💻 Local")
+                  .on_click((_e, cx) => this.switchGitMode("local", cx))
+              )
+              .child(
+                h_flex()
+                  .px(8)
+                  .py(2)
+                  .gap(5)
+                  .items_center()
+                  .rounded(4)
+                  .cursor_pointer()
+                  .when(this.gitMode === "github", (el) => el.bg(t.raised).text_color(t.foreground).font_bold())
+                  .when(this.gitMode !== "github", (el) => el.text_color(t.dim).hover((s) => s.text_color(t.foreground)))
+                  .text_size(11)
+                  .child("☁️ GitHub")
+                  .when(Boolean(prCount > 0 || issueCount > 0), (el) =>
+                    el.child(
+                      div()
+                        .px(4)
+                        .py(0.2)
+                        .rounded(8)
+                        .bg(this.gitMode === "github" ? t.accent : t.surface)
+                        .text_size(9)
+                        .font_bold()
+                        .text_color(this.gitMode === "github" ? t.background : t.dim)
+                        .child(String(prCount + issueCount))
+                    )
+                  )
+                  .on_click((_e, cx) => this.switchGitMode("github", cx))
+              )
+          )
+          // Right Side Actions in Mode Bar
+          .child(
+            h_flex()
+              .gap(4)
+              .items_center()
+              .when(this.gitMode === "github" && Boolean(this.githubStatus?.repo), (el) =>
+                el.child(
+                  div()
+                    .max_w(160)
+                    .px(6)
+                    .py(1.5)
+                    .rounded(3)
+                    .bg(t.background)
+                    .text_size(10.5)
+                    .font_medium()
+                    .text_color(t.accent ?? "#89b4fa")
+                    .truncate()
+                    .child(this.githubStatus.repo)
+                )
+              )
               .child(
                 div()
                   .p(3)
@@ -1719,7 +1719,13 @@ export default class EnhancedGit extends View {
                   .hover((s) => s.bg(t.hover))
                   .text_size(11)
                   .text_color(t.dim)
-                  .on_click((_e, cx) => this.refresh(cx))
+                  .on_click((_e, cx) => {
+                    this.refresh(cx, true);
+                    this.fetchGithubStatus(cx);
+                    if (this.gitMode === "github") {
+                      this.fetchGithubActiveTab(cx);
+                    }
+                  })
                   .child("↻")
               )
               .when(this.role === "panel", (el) =>
@@ -1750,26 +1756,68 @@ export default class EnhancedGit extends View {
               )
           )
       )
-      // Bottom Row: Fork Navigation Tabs
+      // Row 1: Contextual Navigation Tabs
+      .child(
+        this.gitMode === "local"
+          ? this.renderLocalHeaderRow(t, branch, ahead, behind, totalChanges, cx)
+          : this.renderGithubHeaderRow(t, prCount, issueCount, cx)
+      );
+  }
+
+  renderLocalHeaderRow(t, branch, ahead, behind, totalChanges, cx) {
+    return h_flex()
+      .h(32)
+      .flex_none()
+      .px(8)
+      .gap(4)
+      .items_center()
+      .justify_between()
+      // Left: Branch
       .child(
         h_flex()
-          .h(32)
-          .flex_none()
-          .px(10)
           .gap(4)
           .items_center()
-          // Tab: Changes
           .child(
             h_flex()
-              .px(8)
-              .py(2)
-              .gap(5)
+              .gap(3)
+              .px(5)
+              .py(1.5)
+              .rounded(3)
+              .bg(t.raised)
               .items_center()
-              .rounded(4)
+              .child(div().text_size(10.5).child("⎇"))
+              .child(div().font_semibold().text_size(10.5).text_color(t.foreground).truncate().max_w(90).child(branch))
+          )
+          .when(ahead > 0, (el) => el.child(div().text_size(10).font_semibold().text_color(t.accent).child(`↑${ahead}`)))
+          .when(behind > 0, (el) => el.child(div().text_size(10).font_semibold().text_color("#f59e0b").child(`↓${behind}`)))
+          .child(
+            h_flex()
+              .gap(2)
+              .child(
+                div().px(4).py(1).rounded(3).bg(t.surface).hover((s) => s.bg(t.hover)).cursor_pointer().text_size(9.5).text_color(t.foreground).on_click((_e, cx) => this.doPush(cx)).child("Push")
+              )
+              .child(
+                div().px(4).py(1).rounded(3).bg(t.surface).hover((s) => s.bg(t.hover)).cursor_pointer().text_size(9.5).text_color(t.foreground).on_click((_e, cx) => this.doPull(cx)).child("Pull")
+              )
+          )
+      )
+      // Right: Local 4 Tabs
+      .child(
+        h_flex()
+          .gap(2)
+          .items_center()
+          // Changes
+          .child(
+            h_flex()
+              .px(6)
+              .py(1.5)
+              .gap(3)
+              .items_center()
+              .rounded(3)
               .cursor_pointer()
               .when(this.tab === "changes", (el) => el.bg(t.raised).text_color(t.foreground))
               .when(this.tab !== "changes", (el) => el.text_color(t.dim).hover((s) => s.text_color(t.foreground)))
-              .text_size(11)
+              .text_size(10.5)
               .font_medium()
               .on_click((_e, cx) => {
                 if (this.tab !== "changes") {
@@ -1780,28 +1828,20 @@ export default class EnhancedGit extends View {
               .child(div().child("Changes"))
               .when(totalChanges > 0, (el) =>
                 el.child(
-                  div()
-                    .px(5)
-                    .py(0.2)
-                    .rounded(8)
-                    .bg(t.accent)
-                    .text_size(9.5)
-                    .font_bold()
-                    .text_color(t.background)
-                    .child(String(totalChanges))
+                  div().px(4).py(0.2).rounded(8).bg(t.accent).text_size(8.5).font_bold().text_color(t.background).child(String(totalChanges))
                 )
               )
           )
-          // Tab: Subway Graph
+          // Graph
           .child(
             div()
-              .px(8)
-              .py(2)
-              .rounded(4)
+              .px(6)
+              .py(1.5)
+              .rounded(3)
               .cursor_pointer()
               .when(this.tab === "graph", (el) => el.bg(t.raised).text_color(t.foreground))
               .when(this.tab !== "graph", (el) => el.text_color(t.dim).hover((s) => s.text_color(t.foreground)))
-              .text_size(11)
+              .text_size(10.5)
               .font_medium()
               .on_click((_e, cx) => {
                 if (this.tab !== "graph") {
@@ -1812,18 +1852,18 @@ export default class EnhancedGit extends View {
                   }
                 }
               })
-              .child("🌿 Commits Graph")
+              .child("Graph")
           )
-          // Tab: Branches
+          // Branches
           .child(
             div()
-              .px(8)
-              .py(2)
-              .rounded(4)
+              .px(6)
+              .py(1.5)
+              .rounded(3)
               .cursor_pointer()
               .when(this.tab === "branches", (el) => el.bg(t.raised).text_color(t.foreground))
               .when(this.tab !== "branches", (el) => el.text_color(t.dim).hover((s) => s.text_color(t.foreground)))
-              .text_size(11)
+              .text_size(10.5)
               .font_medium()
               .on_click((_e, cx) => {
                 if (this.tab !== "branches") {
@@ -1834,18 +1874,18 @@ export default class EnhancedGit extends View {
                   }
                 }
               })
-              .child("⎇ Branches")
+              .child("Branches")
           )
-          // Tab: Stashes
+          // Stashes
           .child(
             div()
-              .px(8)
-              .py(2)
-              .rounded(4)
+              .px(6)
+              .py(1.5)
+              .rounded(3)
               .cursor_pointer()
               .when(this.tab === "stashes", (el) => el.bg(t.raised).text_color(t.foreground))
               .when(this.tab !== "stashes", (el) => el.text_color(t.dim).hover((s) => s.text_color(t.foreground)))
-              .text_size(11)
+              .text_size(10.5)
               .font_medium()
               .on_click((_e, cx) => {
                 if (this.tab !== "stashes") {
@@ -1856,51 +1896,77 @@ export default class EnhancedGit extends View {
                   }
                 }
               })
-              .child("📦 Stashes")
+              .child("Stashes")
           )
-          // Tab: GitHub (PRs & CI)
-          .child(
-            h_flex()
-              .px(8)
-              .py(2)
-              .gap(4)
-              .items_center()
-              .rounded(4)
-              .cursor_pointer()
-              .when(this.tab === "github", (el) => el.bg(t.raised).text_color(t.foreground))
-              .when(this.tab !== "github", (el) => el.text_color(t.dim).hover((s) => s.text_color(t.foreground)))
-              .text_size(11)
-              .font_medium()
-              .on_click((_e, cx) => {
-                if (this.tab !== "github") {
-                  this.tab = "github";
-                  cx.notify();
-                  if (!this.githubStatus) {
-                    this.fetchGithubStatus(cx).then(() => this.fetchGithubActiveTab(cx));
-                  }
-                }
-              })
-              .child(div().child("🔀 GitHub"))
-              .when(Boolean(this.githubStatus?.prs_count > 0), (el) =>
-                el.child(
-                  div()
-                    .px(4)
-                    .py(0.2)
-                    .rounded(8)
-                    .bg(t.accent)
-                    .text_size(9.5)
-                    .font_bold()
-                    .text_color(t.background)
-                    .child(String(this.githubStatus.prs_count))
-                )
+      );
+  }
+
+  renderGithubHeaderRow(t, prCount, issueCount, cx) {
+    const subTab = (key, label, badge) => {
+      const active = this.githubActiveTab === key;
+      return div()
+        .px(8)
+        .py(2)
+        .cursor_pointer()
+        .rounded(3)
+        .when(active, (el) => el.bg(t.raised).text_color(t.foreground))
+        .when(!active, (el) => el.text_color(t.dim).hover((s) => s.text_color(t.foreground)))
+        .text_size(10.5)
+        .font_medium()
+        .child(
+          h_flex()
+            .gap(4)
+            .items_center()
+            .child(label)
+            .when(badge !== null && badge !== undefined && badge > 0, (el) =>
+              el.child(
+                div()
+                  .px(4)
+                  .py(0.2)
+                  .rounded(8)
+                  .bg(active ? t.accent : t.surface)
+                  .text_size(8.5)
+                  .font_bold()
+                  .text_color(active ? t.background : t.dim)
+                  .child(String(badge))
               )
-              .when(Boolean(this.githubStatus?.ci), (el) => {
-                const ci = this.githubStatus.ci;
-                const isSuccess = ci.conclusion === "success";
-                const isFail = ci.conclusion === "failure";
-                const color = isSuccess ? (t.ansi2 ?? "#a6e3a1") : isFail ? (t.ansi1 ?? "#f38ba8") : (t.blocked ?? "#fab387");
-                return el.child(div().text_size(9).text_color(color).child(isSuccess ? "●" : isFail ? "✖" : "●"));
-              })
+            )
+        )
+        .on_click(() => this.switchGithubSubTab(key, cx));
+    };
+
+    return h_flex()
+      .h(32)
+      .flex_none()
+      .px(8)
+      .gap(4)
+      .items_center()
+      .justify_between()
+      .child(
+        h_flex()
+          .gap(4)
+          .items_center()
+          .child(subTab("prs", "🔀 PRs", prCount))
+          .child(subTab("runs", "🟢 CI Runs", null))
+          .child(subTab("issues", "🎫 Issues", issueCount))
+      )
+      .child(
+        h_flex()
+          .gap(4)
+          .items_center()
+          .when(Boolean(this.githubStatus?.url), (el) =>
+            el.child(
+              div()
+                .px(6)
+                .py(1.5)
+                .rounded(3)
+                .cursor_pointer()
+                .text_size(10)
+                .text_color(t.dim)
+                .hover((s) => s.text_color(t.foreground))
+                .on_click(() => exec("open", [this.githubStatus.url]))
+                .child("🌐 Web")
+            )
           )
       );
   }
@@ -1960,15 +2026,15 @@ export default class EnhancedGit extends View {
           .min_h(0)
           .p(10)
           .child(
-            this.tab === "changes"
+            this.gitMode === "github"
+              ? this.renderGitHubTab(t, cx)
+              : this.tab === "changes"
               ? this.renderChangesTab(t, cx)
               : this.tab === "graph"
               ? this.renderGraphTab(t, cx)
               : this.tab === "branches"
               ? this.renderBranchesTab(t, cx)
-              : this.tab === "stashes"
-              ? this.renderStashesTab(t, cx)
-              : this.renderGitHubTab(t, cx)
+              : this.renderStashesTab(t, cx)
           )
       );
   }

@@ -408,11 +408,11 @@ test("EnhancedGit supports GitHub tab with PR review agent action", async () => 
   cx.write_to_clipboard = (text) => clipboard.push(text);
 
   const view = new View();
-  view.init({ role: "panel", tab: "github" }, cx);
+  view.init({ role: "panel", mode: "github" }, cx);
   await view.fetchGithubStatus(cx);
   await view.fetchGithubActiveTab(cx);
 
-  assert.equal(view.tab, "github");
+  assert.equal(view.gitMode, "github");
   assert.ok(view.githubStatus);
   assert.equal(view.githubStatus.repo, "acme-org/sample-app");
   assert.equal(view.githubPrs.length, 1);

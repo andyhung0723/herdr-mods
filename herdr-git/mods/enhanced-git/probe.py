@@ -25,12 +25,37 @@ def find_gh_binary() -> str | None:
     return None
 
 
+def resolve_repo_dir(cwd: str) -> str:
+    """Find directory containing .git, checking cwd, parents, or immediate children."""
+    if not cwd or not os.path.exists(cwd):
+        return cwd
+    try:
+        res = subprocess.run(["git", "-C", cwd, "rev-parse", "--show-toplevel"], capture_output=True, text=True, timeout=2)
+        if res.returncode == 0 and res.stdout.strip():
+            return res.stdout.strip()
+    except Exception:
+        pass
+    try:
+        entries = os.listdir(cwd)
+        base = os.path.basename(os.path.normpath(cwd))
+        if base in entries and os.path.isdir(os.path.join(cwd, base, ".git")):
+            return os.path.join(cwd, base)
+        for entry in entries:
+            sub = os.path.join(cwd, entry)
+            if os.path.isdir(sub) and os.path.isdir(os.path.join(sub, ".git")):
+                return sub
+    except Exception:
+        pass
+    return cwd
+
+
 def get_git_repo_info(cwd: str) -> tuple[str | None, str | None]:
     """Extract owner/repo and current branch from git directory."""
+    actual_dir = resolve_repo_dir(cwd)
     try:
         # Check remote origin url
         res = subprocess.run(
-            ["git", "-C", cwd, "config", "--get", "remote.origin.url"],
+            ["git", "-C", actual_dir, "config", "--get", "remote.origin.url"],
             capture_output=True,
             text=True,
             timeout=2,
@@ -44,7 +69,7 @@ def get_git_repo_info(cwd: str) -> tuple[str | None, str | None]:
 
         # Check current branch
         b_res = subprocess.run(
-            ["git", "-C", cwd, "rev-parse", "--abbrev-ref", "HEAD"],
+            ["git", "-C", actual_dir, "rev-parse", "--abbrev-ref", "HEAD"],
             capture_output=True,
             text=True,
             timeout=2,
