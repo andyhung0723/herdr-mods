@@ -32,8 +32,20 @@ async function harness(overrides = {}) {
     exec: async (cmd, args) => {
       events.push(["exec", cmd, args]);
       if (cmd === "python3") {
-        if (args.includes("status")) {
-          return { code: 0, stdout: JSON.stringify({ hasRepo: true, repo: "acme-org/sample-app", prs_count: 2, ci: { conclusion: "success" } }) };
+        if (args.includes("bundle") || args.includes("status")) {
+          return {
+            code: 0,
+            stdout: JSON.stringify({
+              ok: true,
+              hasRepo: true,
+              repo: "acme-org/sample-app",
+              prs_count: 2,
+              issues_count: 1,
+              prs: [{ number: 7, title: "Refactor video pipeline", author: { login: "andy" }, headRefName: "feat/video" }],
+              runs: [],
+              ci: { conclusion: "success" },
+            }),
+          };
         }
         if (args.includes("prs")) {
           return { code: 0, stdout: JSON.stringify({ ok: true, prs: [{ number: 7, title: "Refactor video pipeline", author: { login: "andy" }, headRefName: "feat/video" }] }) };

@@ -87,11 +87,23 @@ export function parseBranchHeader(rawHeader) {
 export async function getGitStatus(cwd, on) {
   if (!cwd) return { isRepo: false, error: "No folder" };
 
+  let root = null;
   const topRes = await exec("git", ["rev-parse", "--show-toplevel"], { cwd, on });
-  if (topRes.code !== 0) {
+  if (topRes.code === 0 && topRes.stdout.trim()) {
+    root = topRes.stdout.trim();
+  } else {
+    const base = cwd.split("/").filter(Boolean).pop();
+    if (base) {
+      const subRes = await exec("git", ["rev-parse", "--show-toplevel"], { cwd: `${cwd}/${base}`, on });
+      if (subRes.code === 0 && subRes.stdout.trim()) {
+        root = subRes.stdout.trim();
+      }
+    }
+  }
+
+  if (!root) {
     return { isRepo: false, error: "Not a git repository" };
   }
-  const root = topRes.stdout.trim();
   const git = (args) => exec("git", [...READ_FLAGS, ...args], { cwd: root, on });
 
   const statusRes = await git(["status", "--porcelain=v1", "-b", "-z", "--no-renames", "--untracked-files=all"]);

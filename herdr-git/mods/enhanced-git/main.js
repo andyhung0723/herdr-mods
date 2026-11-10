@@ -485,30 +485,37 @@ export default class EnhancedGit extends View {
     return JSON.parse(res.stdout || "{}");
   }
 
-  async fetchGithubStatus(cx) {
-    try {
-      const data = await this.runGithubProbe(["--action", "status"]);
-      this.githubStatus = data;
-      cx?.notify?.();
-    } catch (e) {
-      this.githubError = String(e);
-    }
+  applyGithubData(data, cx) {
+    this.githubStatus = data;
+    this.githubPrs = data.prs || [];
+    this.githubRuns = data.runs || [];
+    this.githubIssues = data.issues || [];
+    cx?.notify?.();
   }
 
-  async fetchGithubActiveTab(cx) {
+  async fetchGithubData(cx, force = false) {
+    const loc = resolveLocation();
+    const dir = this.cwd || loc?.cwd || "";
+    const now = Date.now();
+    const cached = this.githubCache?.get(dir);
+
+    if (!force && cached && (now - cached.time < 60000)) {
+      this.applyGithubData(cached.data, cx);
+      return;
+    }
+
     this.githubLoading = true;
     this.githubError = null;
     cx?.notify?.();
+
     try {
-      if (this.githubActiveTab === "prs") {
-        const res = await this.runGithubProbe(["--action", "prs"]);
-        this.githubPrs = res.prs || [];
-      } else if (this.githubActiveTab === "runs") {
-        const res = await this.runGithubProbe(["--action", "runs"]);
-        this.githubRuns = res.runs || [];
-      } else if (this.githubActiveTab === "issues") {
-        const res = await this.runGithubProbe(["--action", "issues"]);
-        this.githubIssues = res.issues || [];
+      const data = await this.runGithubProbe(["--action", "bundle"]);
+      if (data.ok || data.hasRepo) {
+        if (!this.githubCache) this.githubCache = new Map();
+        this.githubCache.set(dir, { data, time: now });
+        this.applyGithubData(data, cx);
+      } else {
+        this.githubStatus = data;
       }
     } catch (e) {
       this.githubError = e.message || String(e);
@@ -518,14 +525,19 @@ export default class EnhancedGit extends View {
     }
   }
 
-  async switchGithubSubTab(tab, cx) {
+  fetchGithubStatus(cx) {
+    return this.fetchGithubData(cx);
+  }
+
+  fetchGithubActiveTab(cx) {
+    return this.fetchGithubData(cx);
+  }
+
+  switchGithubSubTab(tab, cx) {
     if (this.githubActiveTab === tab) return;
     this.githubActiveTab = tab;
     this.githubAgentPrompt = null;
     cx?.notify?.();
-    if (this.githubStatus?.hasRepo) {
-      await this.fetchGithubActiveTab(cx);
-    }
   }
 
   copyGithubText(text, label, cx) {
@@ -1979,26 +1991,6 @@ export default class EnhancedGit extends View {
     }
 
     const t = theme();
-
-    if (this.error) {
-      return v_flex()
-        .id("enhanced-git-view")
-        .size_full()
-        .p(16)
-        .gap(10)
-        .bg(t.background)
-        .border_1()
-        .border_color(t.border)
-        .rounded(8)
-        .child(
-          h_flex()
-            .justify_between()
-            .child(div().font_semibold().text_size(13).text_color(t.foreground).child("Git Manager (Fork Style)"))
-            .child(div().cursor_pointer().on_click((_e, cx) => this.refresh(cx)).child("↻"))
-        )
-        .child(div().text_size(12).text_color(t.dim).child(this.error));
-    }
-
     const isDialog = this.role === "dialog";
 
     return v_flex()
@@ -2028,6 +2020,8 @@ export default class EnhancedGit extends View {
           .child(
             this.gitMode === "github"
               ? this.renderGitHubTab(t, cx)
+              : this.error
+              ? this.renderLocalErrorState(t, cx)
               : this.tab === "changes"
               ? this.renderChangesTab(t, cx)
               : this.tab === "graph"
@@ -2035,6 +2029,32 @@ export default class EnhancedGit extends View {
               : this.tab === "branches"
               ? this.renderBranchesTab(t, cx)
               : this.renderStashesTab(t, cx)
+          )
+      );
+  }
+
+  renderLocalErrorState(t, cx) {
+    return div()
+      .py(40)
+      .items_center()
+      .justify_center()
+      .child(
+        v_flex()
+          .items_center()
+          .gap(8)
+          .child(div().text_size(13).font_medium().text_color(t.foreground).child("Not a Git Repository"))
+          .child(div().text_size(11.5).text_color(t.dim).child(String(this.error)))
+          .child(
+            div()
+              .px(8)
+              .py(3)
+              .rounded(4)
+              .cursor_pointer()
+              .bg(t.raised)
+              .text_size(11)
+              .text_color(t.foreground)
+              .on_click((_e, cx) => this.refresh(cx, true))
+              .child("↻ Retry")
           )
       );
   }
@@ -2226,7 +2246,32 @@ export default class EnhancedGit extends View {
 
   renderGithubPrs(t, cx) {
     if (!this.githubPrs || this.githubPrs.length === 0) {
-      return div().py(30).items_center().justify_center().child(div().text_size(12).text_color(t.dim).child("No open pull requests."));
+      const issueCount = this.githubIssues?.length || this.githubStatus?.issues_count || 0;
+      return div()
+        .py(30)
+        .items_center()
+        .justify_center()
+        .child(
+          v_flex()
+            .items_center()
+            .gap(6)
+            .child(div().text_size(12).font_medium().text_color(t.foreground).child("No open pull requests"))
+            .when(issueCount > 0, (el) =>
+              el.child(
+                div()
+                  .cursor_pointer()
+                  .px(8)
+                  .py(3)
+                  .rounded(4)
+                  .bg(t.raised)
+                  .text_size(11)
+                  .text_color(t.accent ?? "#89b4fa")
+                  .hover((s) => s.text_color(t.foreground))
+                  .on_click(() => this.switchGithubSubTab("issues", cx))
+                  .child(`View ${issueCount} open issues in Issues tab ➔`)
+              )
+            )
+        );
     }
     const list = v_flex().gap(6);
     for (const pr of this.githubPrs) {

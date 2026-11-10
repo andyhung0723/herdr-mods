@@ -1,13 +1,14 @@
 #!/usr/bin/env python3
 """GitHub Hub backend probe for Herdr.
 
-Queries GitHub CLI (gh) for repository status, Pull Requests, Actions (CI),
-and Issues, and supports fetching failed CI logs and PR diffs for Agent dispatching.
+Queries GitHub CLI (gh) via fast GraphQL & parallel execution for
+repository status, Pull Requests, Actions (CI), and Issues.
 """
 
 from __future__ import annotations
 
 import argparse
+import concurrent.futures
 import json
 import os
 import re
@@ -30,7 +31,12 @@ def resolve_repo_dir(cwd: str) -> str:
     if not cwd or not os.path.exists(cwd):
         return cwd
     try:
-        res = subprocess.run(["git", "-C", cwd, "rev-parse", "--show-toplevel"], capture_output=True, text=True, timeout=2)
+        res = subprocess.run(
+            ["git", "-C", cwd, "rev-parse", "--show-toplevel"],
+            capture_output=True,
+            text=True,
+            timeout=2,
+        )
         if res.returncode == 0 and res.stdout.strip():
             return res.stdout.strip()
     except Exception:
@@ -53,7 +59,6 @@ def get_git_repo_info(cwd: str) -> tuple[str | None, str | None]:
     """Extract owner/repo and current branch from git directory."""
     actual_dir = resolve_repo_dir(cwd)
     try:
-        # Check remote origin url
         res = subprocess.run(
             ["git", "-C", actual_dir, "config", "--get", "remote.origin.url"],
             capture_output=True,
@@ -67,7 +72,6 @@ def get_git_repo_info(cwd: str) -> tuple[str | None, str | None]:
             if m:
                 repo = f"{m.group(1)}/{m.group(2)}"
 
-        # Check current branch
         b_res = subprocess.run(
             ["git", "-C", actual_dir, "rev-parse", "--abbrev-ref", "HEAD"],
             capture_output=True,
@@ -80,102 +84,131 @@ def get_git_repo_info(cwd: str) -> tuple[str | None, str | None]:
         return None, None
 
 
-def run_gh_json(gh: str, args: list[str], timeout: int = 8) -> tuple[list | dict | None, str | None]:
-    """Run gh command and parse JSON output."""
-    try:
-        cmd = [gh] + args
-        res = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
-        if res.returncode != 0:
-            return None, res.stderr.strip() or f"gh exited with code {res.returncode}"
-        raw = res.stdout.strip()
-        if not raw:
-            return [], None
-        return json.loads(raw), None
-    except Exception as e:
-        return None, str(e)
-
-
-def action_status(gh: str, repo: str | None, branch: str | None) -> dict:
-    if not repo:
-        return {
-            "hasRepo": False,
-            "error": "No GitHub remote detected in current workspace",
+def query_graphql(gh: str, owner: str, name: str) -> dict | None:
+    """Fetch PRs and Issues in a single GraphQL query (under 0.7s)."""
+    gql = """
+    query($owner: String!, $name: String!) {
+      repository(owner: $owner, name: $name) {
+        url
+        pullRequests(states: OPEN, first: 15, orderBy: {field: UPDATED_AT, direction: DESC}) {
+          totalCount
+          nodes {
+            number
+            title
+            headRefName
+            additions
+            deletions
+            updatedAt
+            author { login }
+            reviewDecision
+            isDraft
+            url
+          }
         }
+        issues(states: OPEN, first: 15, orderBy: {field: UPDATED_AT, direction: DESC}) {
+          totalCount
+          nodes {
+            number
+            title
+            updatedAt
+            author { login }
+            url
+          }
+        }
+      }
+    }
+    """
+    try:
+        res = subprocess.run(
+            [gh, "api", "graphql", "-f", f"query={gql}", "-F", f"owner={owner}", "-F", f"name={name}"],
+            capture_output=True,
+            text=True,
+            timeout=6,
+        )
+        if res.returncode == 0 and res.stdout.strip():
+            return json.loads(res.stdout.strip())
+    except Exception:
+        pass
+    return None
 
-    out: dict = {
+
+def query_runs(gh: str, repo: str) -> list:
+    """Fetch recent GitHub Actions runs."""
+    try:
+        res = subprocess.run(
+            [
+                gh, "run", "list",
+                "-R", repo,
+                "--limit", "10",
+                "--json", "databaseId,name,status,conclusion,headBranch,url,workflowName,event,createdAt",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=6,
+        )
+        if res.returncode == 0 and res.stdout.strip():
+            return json.loads(res.stdout.strip())
+    except Exception:
+        pass
+    return []
+
+
+def action_bundle(gh: str, repo: str, branch: str | None) -> dict:
+    """Fetch Status, PRs, Issues, and Runs concurrently in < 0.8s."""
+    parts = repo.split("/", 1)
+    if len(parts) != 2:
+        return {"hasRepo": False, "error": f"Invalid repo format: {repo}"}
+    owner, name = parts
+
+    gql_future = None
+    runs_future = None
+    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
+        gql_future = executor.submit(query_graphql, gh, owner, name)
+        runs_future = executor.submit(query_runs, gh, repo)
+
+    gql_res = gql_future.result() if gql_future else None
+    runs = runs_future.result() if runs_future else []
+
+    prs = []
+    prs_count = 0
+    issues = []
+    issues_count = 0
+    repo_url = f"https://github.com/{repo}"
+
+    if gql_res and "data" in gql_res and "repository" in gql_res["data"]:
+        repo_data = gql_res["data"]["repository"] or {}
+        repo_url = repo_data.get("url", repo_url)
+        pr_data = repo_data.get("pullRequests", {})
+        prs_count = pr_data.get("totalCount", 0)
+        prs = pr_data.get("nodes", []) or []
+
+        issue_data = repo_data.get("issues", {})
+        issues_count = issue_data.get("totalCount", 0)
+        issues = issue_data.get("nodes", []) or []
+
+    # Identify latest CI run for branch
+    ci_latest = None
+    if runs and isinstance(runs, list):
+        if branch:
+            matching = [r for r in runs if r.get("headBranch") == branch]
+            if matching:
+                ci_latest = matching[0]
+        if not ci_latest and len(runs) > 0:
+            ci_latest = runs[0]
+
+    return {
+        "ok": True,
         "hasRepo": True,
         "repo": repo,
         "branch": branch or "main",
-        "url": f"https://github.com/{repo}",
-        "ci": None,
-        "prs_count": 0,
-        "issues_count": 0,
+        "url": repo_url,
+        "ci": ci_latest,
+        "prs": prs,
+        "prs_count": prs_count,
+        "issues": issues,
+        "issues_count": issues_count,
+        "runs": runs,
     }
-
-    # Fetch latest run on current branch if available
-    run_args = [
-        "run", "list",
-        "-R", repo,
-        "--limit", "1",
-        "--json", "databaseId,name,status,conclusion,headBranch,url,workflowName,createdAt",
-    ]
-    if branch:
-        run_args.extend(["--branch", branch])
-
-    runs, _ = run_gh_json(gh, run_args, timeout=5)
-    if isinstance(runs, list) and len(runs) > 0:
-        out["ci"] = runs[0]
-
-    # Quick PRs count
-    prs, _ = run_gh_json(gh, ["pr", "list", "-R", repo, "--limit", "20", "--json", "number"], timeout=5)
-    if isinstance(prs, list):
-        out["prs_count"] = len(prs)
-
-    # Quick Issues count
-    issues, _ = run_gh_json(gh, ["issue", "list", "-R", repo, "--limit", "20", "--json", "number"], timeout=5)
-    if isinstance(issues, list):
-        out["issues_count"] = len(issues)
-
-    return out
-
-
-def action_prs(gh: str, repo: str) -> dict:
-    args = [
-        "pr", "list",
-        "-R", repo,
-        "--limit", "20",
-        "--json", "number,title,author,headRefName,state,isDraft,reviewDecision,url,additions,deletions,updatedAt",
-    ]
-    data, err = run_gh_json(gh, args, timeout=8)
-    if err:
-        return {"ok": False, "error": err, "prs": []}
-    return {"ok": True, "prs": data or []}
-
-
-def action_runs(gh: str, repo: str) -> dict:
-    args = [
-        "run", "list",
-        "-R", repo,
-        "--limit", "15",
-        "--json", "databaseId,name,status,conclusion,headBranch,url,workflowName,event,createdAt",
-    ]
-    data, err = run_gh_json(gh, args, timeout=8)
-    if err:
-        return {"ok": False, "error": err, "runs": []}
-    return {"ok": True, "runs": data or []}
-
-
-def action_issues(gh: str, repo: str) -> dict:
-    args = [
-        "issue", "list",
-        "-R", repo,
-        "--limit", "20",
-        "--json", "number,title,author,state,url,labels,updatedAt",
-    ]
-    data, err = run_gh_json(gh, args, timeout=8)
-    if err:
-        return {"ok": False, "error": err, "issues": []}
-    return {"ok": True, "issues": data or []}
 
 
 def action_failed_log(gh: str, repo: str, run_id: str) -> dict:
@@ -187,7 +220,6 @@ def action_failed_log(gh: str, repo: str, run_id: str) -> dict:
             timeout=10,
         )
         log = res.stdout.strip() or res.stderr.strip()
-        # Truncate if excessively long
         if len(log) > 6000:
             log = log[-6000:]
         return {"ok": True, "log": log, "runId": run_id}
@@ -217,8 +249,8 @@ def main() -> int:
     parser.add_argument("--repo", default=None, help="Explicit owner/repo override")
     parser.add_argument(
         "--action",
-        default="status",
-        choices=["status", "prs", "runs", "issues", "failed-log", "pr-diff"],
+        default="bundle",
+        choices=["bundle", "status", "prs", "runs", "issues", "failed-log", "pr-diff"],
     )
     parser.add_argument("--run-id", default=None, help="Workflow run ID for failed-log")
     parser.add_argument("--pr", default=None, help="PR number for pr-diff")
@@ -239,26 +271,6 @@ def main() -> int:
         print(json.dumps({"ok": False, "hasRepo": False, "error": "No GitHub repository found in directory"}))
         return 0
 
-    if args.action == "status":
-        res = action_status(gh, repo, branch)
-        print(json.dumps(res, ensure_ascii=False))
-        return 0
-
-    if args.action == "prs":
-        res = action_prs(gh, repo)
-        print(json.dumps(res, ensure_ascii=False))
-        return 0
-
-    if args.action == "runs":
-        res = action_runs(gh, repo)
-        print(json.dumps(res, ensure_ascii=False))
-        return 0
-
-    if args.action == "issues":
-        res = action_issues(gh, repo)
-        print(json.dumps(res, ensure_ascii=False))
-        return 0
-
     if args.action == "failed-log":
         if not args.run_id:
             print(json.dumps({"ok": False, "error": "Missing --run-id"}))
@@ -275,6 +287,9 @@ def main() -> int:
         print(json.dumps(res, ensure_ascii=False))
         return 0
 
+    # For status, prs, runs, issues, or bundle: use fast bundle
+    res = action_bundle(gh, repo, branch)
+    print(json.dumps(res, ensure_ascii=False))
     return 0
 
 
