@@ -1,0 +1,52 @@
+# Herdr Loadout
+
+[agent-loadout](../../agent-loadout) 的 Herdr 桌面版介面：資源 × 帳號矩陣，點一下就切換某個 skill / hook / MCP / plugin 在某個帳號（`claude`、`claude-work`、`codex`、`codex-work`）的開關。
+
+## 功能
+
+- **矩陣檢視**：每列一個資源，每欄一個帳號；格子顯示 `✓ on`、`+ pending`、`! conflict`、`✗ unresolved`、`○ observed`、`◌ absent`、`· off`、`– unsupported`。
+- **切換**：點格子或游標移過去按 `Space`，等同 `loadout toggle <resource> <target> on|off`。只改 manifest 那一行 `to`，並只 apply 該資源。
+- **重開提示**：切換過的帳號欄位標示 `↻ restart sessions`（skills / MCP / hooks 在 session 啟動時載入）。
+- **Apply pending**：manifest 在外部被改過時，標題列出現 `Apply N pending`（`a`）。
+- **篩選**：依種類篩選（`Tab` / `Shift-Tab` 或點 chip）。
+- 失敗（conflict、unresolved、寫檔錯誤）會發 toast，並在底部顯示。
+
+| 鍵 | 動作 |
+| --- | --- |
+| `↑↓` / `jk` | 上下移動 |
+| `←→` / `hl` | 切換帳號欄 |
+| `Space` / `Enter` | 切換開關 |
+| `Tab` / `Shift-Tab` | 切換種類篩選 |
+| `r` | 重新整理 |
+| `a` | 套用所有 pending |
+| `Esc` | 關閉 |
+
+## 安裝
+
+```bash
+python3 herdr-loadout/install.py              # 用 loadout 預設的 manifest / state
+python3 herdr-loadout/install.py --dry-run    # 只預覽
+
+# 在不動真實設定的沙盒裡試玩
+python3 herdr-loadout/install.py --manifest /path/to/preview/loadout.toml --state /path/to/preview/state.json
+```
+
+安裝程式會：
+
+1. 跑 `herdr-app check`；
+2. 複製 mod 到 `~/.config/herdr-app/mods/loadout`；
+3. 寫入 `config.json`，內容是 node（需 >= 24）與 `agent-loadout/bin/loadout.js` 的絕對路徑。從 GUI 啟動的 Herdr 不會繼承 nvm 的 `PATH`，所以 mod 不依賴 `PATH`；
+4. 綁定 `ctrl-b l` → `mod.open:loadout`。該鍵已被其他功能佔用時會拒絕安裝，可用 `--key` 改鍵。
+
+## 架構
+
+- `client.js`：呼叫 `loadout … --json`（接受 exit 0/2），以及純邏輯（`nextEnabled`、`visibleRows`、`summarize`、`failuresOf`）。
+- `main.js`：只負責 UI 與鍵盤；資料一律來自 `loadout status --json`，不自行解析任何設定檔。
+- 每 30 秒重新整理一次；有操作進行中時會跳過。
+
+## 測試
+
+```bash
+node --experimental-vm-modules --test herdr-loadout/tests/*.test.mjs
+herdr-app check herdr-loadout/mods/loadout
+```

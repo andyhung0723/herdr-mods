@@ -1,0 +1,10 @@
+{
+  "place": "none",
+  "title": "Loadout",
+  "focusable": true,
+  "overlay": {
+    "kind": "dialog",
+    "width": 1000,
+    "height": 680
+  }
+}
