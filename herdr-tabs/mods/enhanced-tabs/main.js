@@ -124,7 +124,7 @@ export default class Tabs extends View {
       .child(h_flex().id("tab-scroll").flex_1().min_w(0).h_full().items_center().gap(3).overflow_x_scrollbar().children(shown.map(item)))
       .child(button("tab-new", "+", () => openOverlay({ mod: "new-menu", kind: "popup", width: 250, height: 512 })))
       .when(enabled.includes("files"), el => el.child(panelButton("files", "Files", "mods/files/file.svg")))
-      .when(enabled.includes("changes"), el => el.child(panelButton("changes", "Git", "icons/git.svg")))
+      .when(enabled.includes("changes"), el => el.child(panelButton("changes", "Git", "mods/workspace-chrome/git-branch.svg")))
       .when(enabled.includes("context"), el => el.child(panelButton("context", "Agent", "mods/workspace-chrome/layers.svg")))
       .when(enabled.includes("spectra"), el => el.child(panelButton("spectra", "Spectra", "mods/spectra-status/spectra.svg")))
       .when(enabled.includes("services"), el => el.child(panelButton("services", "Services", "mods/services-inspector/services.svg")))

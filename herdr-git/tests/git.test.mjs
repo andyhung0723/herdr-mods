@@ -126,6 +126,7 @@ async function harness(overrides = {}) {
   const base = synthetic({
     v_flex: () => element,
     h_flex: () => element,
+    v_virtual_list: () => element,
     InputState: { new: () => ({ on: () => {}, value: () => "", set_value: () => {} }) },
     Input: { new: () => element },
   });
@@ -438,6 +439,63 @@ test("EnhancedGit supports GitHub tab with PR review agent action", async () => 
   const rendered = view.render(cx);
   assert.ok(rendered);
 });
+
+test("resolveRepoRoot penetrates nested basename folder and previews untracked files via readTextFile", async () => {
+  const { git } = await harness({
+    exec: async (_cmd, args, opts) => {
+      if (args.includes("rev-parse") && args.includes("--show-toplevel")) {
+        if (opts?.cwd === "/workspace/AI-Media") {
+          return { code: 128, stdout: "", stderr: "fatal: not a git repository" };
+        }
+        if (opts?.cwd === "/workspace/AI-Media/AI-Media") {
+          return { code: 0, stdout: "/workspace/AI-Media/AI-Media\n" };
+        }
+      }
+      return { code: 0, stdout: "" };
+    },
+    readTextFile: async (path) => {
+      if (path === "/workspace/AI-Media/AI-Media/docs/flow.html") {
+        return "<h1>Hello</h1>\n<p>Flow</p>\n";
+      }
+      return null;
+    },
+  });
+
+  const root = await git.resolveRepoRoot("/workspace/AI-Media", null);
+  assert.equal(root, "/workspace/AI-Media/AI-Media");
+
+  const diff = await git.getFileDiff("/workspace/AI-Media", null, "docs/flow.html", false, true);
+  assert.equal(diff[0], "@@ -0,0 +1,2 @@");
+  assert.equal(diff[1], "+<h1>Hello</h1>");
+  assert.equal(diff[2], "+<p>Flow</p>");
+});
+
+test("render does not synchronously call cx.notify when switching spaces", async () => {
+  let currentFolder = "/repo-a";
+  const { View, cx } = await harness({
+    spaces: () => [{ id: "s1", active: true, folder: currentFolder }],
+    panes: () => [{ pane: "p1", space: "s1", cwd: currentFolder }],
+    focused: () => ({ pane: "p1", cwd: currentFolder }),
+  });
+
+  const view = new View();
+  view.init({ role: "panel" }, cx);
+
+  currentFolder = "/repo-b";
+  let notifyCalledDuringRender = false;
+  const renderCx = {
+    notify: () => {
+      notifyCalledDuringRender = true;
+      throw new Error("Calling notify() during render throws in GPUI");
+    },
+  };
+
+  assert.doesNotThrow(() => {
+    view.render(renderCx);
+  });
+  assert.equal(notifyCalledDuringRender, false);
+});
+
 
 
 

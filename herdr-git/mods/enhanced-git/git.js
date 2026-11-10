@@ -7,6 +7,8 @@ const READ_FLAGS = [
   "-c", "diff.autoRefreshIndex=false",
 ];
 
+const rootCache = new Map();
+
 export function resolveLocation() {
   const allSpaces = spaces() || [];
   const allPanes = panes() || [];
@@ -50,6 +52,37 @@ export function resolveLocation() {
   return { cwd, on };
 }
 
+export async function resolveRepoRoot(cwd, on) {
+  if (!cwd) return null;
+  const key = `${on || ""}:${cwd}`;
+  if (rootCache.has(key)) {
+    return rootCache.get(key);
+  }
+
+  try {
+    const topRes = await exec("git", ["rev-parse", "--show-toplevel"], { cwd, on });
+    if (topRes.code === 0 && topRes.stdout.trim()) {
+      const root = topRes.stdout.trim();
+      rootCache.set(key, root);
+      return root;
+    }
+  } catch {}
+
+  const base = cwd.split("/").filter(Boolean).pop();
+  if (base) {
+    try {
+      const subRes = await exec("git", ["rev-parse", "--show-toplevel"], { cwd: `${cwd}/${base}`, on });
+      if (subRes.code === 0 && subRes.stdout.trim()) {
+        const root = subRes.stdout.trim();
+        rootCache.set(key, root);
+        return root;
+      }
+    } catch {}
+  }
+
+  return null;
+}
+
 export function parseBranchHeader(rawHeader) {
   let branch = "HEAD";
   let upstream = null;
@@ -59,11 +92,11 @@ export function parseBranchHeader(rawHeader) {
   const content = rawHeader.replace(/^##\s*/, "").trim();
   if (content.startsWith("No commits yet on ")) {
     branch = content.replace("No commits yet on ", "");
-    return { branch, upstream, ahead, behind };
+    return { branch, upstream, ahead, behind, hasHead: false };
   }
   if (content.startsWith("Initial commit on ")) {
     branch = content.replace("Initial commit on ", "");
-    return { branch, upstream, ahead, behind };
+    return { branch, upstream, ahead, behind, hasHead: false };
   }
 
   const parts = content.split("...");
@@ -81,67 +114,54 @@ export function parseBranchHeader(rawHeader) {
     }
   }
 
-  return { branch, upstream, ahead, behind };
+  return { branch, upstream, ahead, behind, hasHead: true };
 }
 
 export async function getGitStatus(cwd, on) {
   if (!cwd) return { isRepo: false, error: "No folder" };
 
-  let root = null;
-  const topRes = await exec("git", ["rev-parse", "--show-toplevel"], { cwd, on });
-  if (topRes.code === 0 && topRes.stdout.trim()) {
-    root = topRes.stdout.trim();
-  } else {
-    const base = cwd.split("/").filter(Boolean).pop();
-    if (base) {
-      const subRes = await exec("git", ["rev-parse", "--show-toplevel"], { cwd: `${cwd}/${base}`, on });
-      if (subRes.code === 0 && subRes.stdout.trim()) {
-        root = subRes.stdout.trim();
-      }
-    }
-  }
-
+  const root = await resolveRepoRoot(cwd, on);
   if (!root) {
     return { isRepo: false, error: "Not a git repository" };
   }
+
   const git = (args) => exec("git", [...READ_FLAGS, ...args], { cwd: root, on });
 
-  const statusRes = await git(["status", "--porcelain=v1", "-b", "-z", "--no-renames", "--untracked-files=all"]);
+  const [statusRes, cachedNumstat, unstagedNumstat] = await Promise.all([
+    git(["status", "--porcelain=v1", "-b", "-z", "--no-renames", "--untracked-files=all"]),
+    git(["diff", "--cached", "--numstat", "-z", "--no-renames"]).catch(() => ({ code: 1, stdout: "" })),
+    git(["diff", "--numstat", "-z", "--no-renames"]).catch(() => ({ code: 1, stdout: "" })),
+  ]);
+
   if (statusRes.code !== 0) {
     return { isRepo: true, root, error: statusRes.stderr || "Status check failed" };
   }
 
   const entries = statusRes.stdout.split("\0").filter(Boolean);
   const branchHeader = entries[0] || "## HEAD";
-  const { branch, upstream, ahead, behind } = parseBranchHeader(branchHeader);
-
-  // Check stats via numstat
-  const headRes = await git(["rev-parse", "--verify", "HEAD"]);
-  const hasHead = headRes.code === 0;
+  const { branch, upstream, ahead, behind, hasHead } = parseBranchHeader(branchHeader);
 
   const stats = {};
-  try {
-    const numstatCmd = hasHead
-      ? [await git(["diff", "--cached", "--numstat", "-z", "--no-renames"]), await git(["diff", "--numstat", "-z", "--no-renames"])]
-      : [await git(["diff", "--cached", "--numstat", "-z", "--no-renames"])];
-
-    for (const res of numstatCmd) {
-      if (res.code === 0 && res.stdout) {
-        for (const item of res.stdout.split("\0")) {
-          const [a, d, ...pathParts] = item.split("\t");
-          if (!pathParts.length) continue;
-          const p = pathParts.join("\t");
-          const old = stats[p] ?? { add: 0, del: 0 };
-          stats[p] = { add: old.add + (Number(a) || 0), del: old.del + (Number(d) || 0) };
-        }
+  for (const res of [cachedNumstat, unstagedNumstat]) {
+    if (res && res.code === 0 && res.stdout) {
+      for (const item of res.stdout.split("\0")) {
+        const [a, d, ...pathParts] = item.split("\t");
+        if (!pathParts.length) continue;
+        const p = pathParts.join("\t");
+        const old = stats[p] ?? { add: 0, del: 0 };
+        stats[p] = {
+          add: old.add + (Number(a) || 0),
+          del: old.del + (Number(d) || 0),
+          binary: a === "-",
+        };
       }
     }
-  } catch {}
+  }
 
   const stagedFiles = [];
   const unstagedFiles = [];
 
-  for (const entry of entries.slice(1)) {
+  for (const entry of entries.slice(1, 1001)) {
     const x = entry[0];
     const y = entry[1];
     const path = entry.slice(3);
@@ -153,6 +173,7 @@ export async function getGitStatus(cwd, on) {
         path,
         status: x,
         staged: true,
+        fresh: false,
         ...fileStat,
       });
     }
@@ -180,6 +201,7 @@ export async function getGitStatus(cwd, on) {
         path,
         status: "U",
         conflict: true,
+        fresh: false,
         staged: false,
         ...fileStat,
       });
@@ -229,7 +251,6 @@ export function parseRefBadge(refStr) {
 export function parseGraphRow(rawLine) {
   const parts = rawLine.split("\t");
   if (parts.length < 2) {
-    // Pure graph line connecting branches, e.g. "| \", "|/", "| |"
     return {
       isCommit: false,
       graph: rawLine,
@@ -304,15 +325,7 @@ export function parseGraphRow(rawLine) {
 export async function getGitGraph(cwd, on, limit = 50) {
   if (!cwd) return { rows: [], error: "No folder" };
 
-  // Resolve to repository root if possible
-  let repoCwd = cwd;
-  try {
-    const topRes = await exec("git", ["rev-parse", "--show-toplevel"], { cwd, on });
-    if (topRes.code === 0 && topRes.stdout.trim()) {
-      repoCwd = topRes.stdout.trim();
-    }
-  } catch {}
-
+  const repoCwd = (await resolveRepoRoot(cwd, on)) || cwd;
   const fmt = `--format=format:%h%x09%p%x09%d%x09%s%x09%cr%x09%an`;
 
   // 1. Try full graph with all refs and date order
@@ -327,7 +340,7 @@ export async function getGitGraph(cwd, on, limit = 50) {
     String(limit),
   ], { cwd: repoCwd, on });
 
-  // 2. If --all fails (e.g. huge DAG, invalid remote ref), fallback to HEAD and local branches
+  // 2. Fallback to HEAD and local branches
   if (res.code !== 0) {
     res = await exec("git", [
       ...READ_FLAGS,
@@ -342,7 +355,7 @@ export async function getGitGraph(cwd, on, limit = 50) {
     ], { cwd: repoCwd, on });
   }
 
-  // 3. If still fails, fallback to current HEAD only
+  // 3. Fallback to current HEAD only
   if (res.code !== 0) {
     res = await exec("git", [
       ...READ_FLAGS,
@@ -370,7 +383,8 @@ export async function getGitGraph(cwd, on, limit = 50) {
 }
 
 export async function getCommitFiles(cwd, on, hash) {
-  const res = await exec("git", [...READ_FLAGS, "show", "--numstat", "--format=", hash], { cwd, on });
+  const repoCwd = (await resolveRepoRoot(cwd, on)) || cwd;
+  const res = await exec("git", [...READ_FLAGS, "show", "--numstat", "--format=", hash], { cwd: repoCwd, on });
   if (res.code !== 0) return [];
   const files = [];
   for (const line of res.stdout.split("\n")) {
@@ -386,104 +400,132 @@ export async function getCommitFiles(cwd, on, hash) {
   return files;
 }
 
-export async function getFileDiff(cwd, on, path, staged = false) {
+const sanitizeDiffLines = (lines) =>
+  lines.slice(0, 1500).map((l) => (l.length > 4000 ? l.slice(0, 4000) + "… (truncated)" : l));
+
+export async function getFileDiff(cwd, on, path, staged = false, fresh = false) {
+  const repoCwd = (await resolveRepoRoot(cwd, on)) || cwd;
+
+  if (fresh && !staged) {
+    try {
+      const text = await readTextFile(`${repoCwd}/${path}`, { on });
+      if (text !== null && text !== undefined) {
+        if (text.includes("\0")) return ["Binary file · no text diff"];
+        const rawLines = text.slice(0, 400000).replace(/\n$/, "").split("\n");
+        const count = rawLines.length;
+        return sanitizeDiffLines([
+          `@@ -0,0 +1,${count} @@`,
+          ...rawLines.map((l) => `+${l}`),
+        ]);
+      }
+    } catch {}
+  }
+
   const args = staged
-    ? ["diff", "--cached", "--no-color", "--", path]
-    : ["diff", "--no-color", "--", path];
-  const res = await exec("git", [...READ_FLAGS, ...args], { cwd, on });
+    ? ["diff", "--cached", "--no-ext-diff", "--no-textconv", "--no-color", "--", path]
+    : ["diff", "--no-ext-diff", "--no-textconv", "--no-color", "--", path];
+  const res = await exec("git", [...READ_FLAGS, ...args], { cwd: repoCwd, on });
   if (res.code !== 0) return ["Error loading diff: " + res.stderr];
   const all = res.stdout.replace(/\n$/, "").split("\n");
   const first = all.findIndex((l) => l.startsWith("@@"));
   if (first < 0) {
-    return all.length && all[0] ? all : ["No changes detected"];
+    return sanitizeDiffLines(all.length && all[0] ? all : ["No text diff available"]);
   }
-  return all.slice(first);
+  return sanitizeDiffLines(all.slice(first));
 }
 
 export async function getCommitDiff(cwd, on, hash, path) {
+  const repoCwd = (await resolveRepoRoot(cwd, on)) || cwd;
   const args = path
-    ? ["show", "--no-color", hash, "--", path]
-    : ["show", "--no-color", hash];
-  const res = await exec("git", [...READ_FLAGS, ...args], { cwd, on });
+    ? ["show", "--no-ext-diff", "--no-textconv", "--no-color", hash, "--", path]
+    : ["show", "--no-ext-diff", "--no-textconv", "--no-color", hash];
+  const res = await exec("git", [...READ_FLAGS, ...args], { cwd: repoCwd, on });
   if (res.code !== 0) return ["Error loading commit diff: " + res.stderr];
   const all = res.stdout.replace(/\n$/, "").split("\n");
   const first = all.findIndex((l) => l.startsWith("@@"));
-  return first < 0 ? all : all.slice(first);
+  return sanitizeDiffLines(first < 0 ? all : all.slice(first));
 }
 
 // Git Mutation Operations
 export async function gitStageFile(cwd, on, path) {
-  return exec("git", ["add", "--", path], { cwd, on });
+  const repoCwd = (await resolveRepoRoot(cwd, on)) || cwd;
+  return exec("git", ["add", "--", path], { cwd: repoCwd, on });
 }
 
 export async function gitUnstageFile(cwd, on, path) {
-  return exec("git", ["reset", "HEAD", "--", path], { cwd, on });
+  const repoCwd = (await resolveRepoRoot(cwd, on)) || cwd;
+  return exec("git", ["reset", "HEAD", "--", path], { cwd: repoCwd, on });
 }
 
 export async function gitDiscardFile(cwd, on, path, isUntracked = false) {
+  const repoCwd = (await resolveRepoRoot(cwd, on)) || cwd;
   if (isUntracked) {
-    return exec("rm", ["-f", path], { cwd, on });
+    return exec("rm", ["-f", path], { cwd: repoCwd, on });
   }
-  return exec("git", ["checkout", "--", path], { cwd, on });
+  return exec("git", ["checkout", "--", path], { cwd: repoCwd, on });
 }
 
 export async function gitStageAll(cwd, on) {
-  return exec("git", ["add", "-A"], { cwd, on });
+  const repoCwd = (await resolveRepoRoot(cwd, on)) || cwd;
+  return exec("git", ["add", "-A"], { cwd: repoCwd, on });
 }
 
 export async function gitUnstageAll(cwd, on) {
-  return exec("git", ["reset", "HEAD"], { cwd, on });
+  const repoCwd = (await resolveRepoRoot(cwd, on)) || cwd;
+  return exec("git", ["reset", "HEAD"], { cwd: repoCwd, on });
 }
 
 export async function gitCommit(cwd, on, message) {
-  return exec("git", ["commit", "-m", message], { cwd, on });
+  const repoCwd = (await resolveRepoRoot(cwd, on)) || cwd;
+  return exec("git", ["commit", "-m", message], { cwd: repoCwd, on });
 }
 
 export async function gitPush(cwd, on) {
-  return exec("git", ["push"], { cwd, on });
+  const repoCwd = (await resolveRepoRoot(cwd, on)) || cwd;
+  return exec("git", ["push"], { cwd: repoCwd, on });
 }
 
 export async function gitPull(cwd, on) {
-  return exec("git", ["pull"], { cwd, on });
+  const repoCwd = (await resolveRepoRoot(cwd, on)) || cwd;
+  return exec("git", ["pull"], { cwd: repoCwd, on });
 }
 
 export async function gitFetch(cwd, on) {
-  return exec("git", ["fetch"], { cwd, on });
+  const repoCwd = (await resolveRepoRoot(cwd, on)) || cwd;
+  return exec("git", ["fetch"], { cwd: repoCwd, on });
 }
 
 export async function gitStash(cwd, on, message = "Herdr stash") {
-  return exec("git", ["stash", "push", "-m", message], { cwd, on });
+  const repoCwd = (await resolveRepoRoot(cwd, on)) || cwd;
+  return exec("git", ["stash", "push", "-m", message], { cwd: repoCwd, on });
 }
 
 export async function gitStashPop(cwd, on) {
-  return exec("git", ["stash", "pop"], { cwd, on });
+  const repoCwd = (await resolveRepoRoot(cwd, on)) || cwd;
+  return exec("git", ["stash", "pop"], { cwd: repoCwd, on });
 }
 
 export async function gitStashApply(cwd, on, stashId) {
+  const repoCwd = (await resolveRepoRoot(cwd, on)) || cwd;
   const args = stashId ? ["stash", "apply", stashId] : ["stash", "apply"];
-  return exec("git", args, { cwd, on });
+  return exec("git", args, { cwd: repoCwd, on });
 }
 
 export async function gitStashDrop(cwd, on, stashId) {
+  const repoCwd = (await resolveRepoRoot(cwd, on)) || cwd;
   const args = stashId ? ["stash", "drop", stashId] : ["stash", "drop"];
-  return exec("git", args, { cwd, on });
+  return exec("git", args, { cwd: repoCwd, on });
 }
 
 export async function gitCheckout(cwd, on, branch) {
-  return exec("git", ["checkout", branch], { cwd, on });
+  const repoCwd = (await resolveRepoRoot(cwd, on)) || cwd;
+  return exec("git", ["checkout", branch], { cwd: repoCwd, on });
 }
 
 export async function getGitRefs(cwd, on) {
   if (!cwd) return { branches: [], remotes: [], tags: [], stashes: [], error: "No folder" };
 
-  let repoCwd = cwd;
-  try {
-    const topRes = await exec("git", ["rev-parse", "--show-toplevel"], { cwd, on });
-    if (topRes.code === 0 && topRes.stdout.trim()) {
-      repoCwd = topRes.stdout.trim();
-    }
-  } catch {}
-
+  const repoCwd = (await resolveRepoRoot(cwd, on)) || cwd;
   const git = (args) => exec("git", [...READ_FLAGS, ...args], { cwd: repoCwd, on });
 
   const [branchesRes, remotesRes, tagsRes, stashesRes] = await Promise.all([
