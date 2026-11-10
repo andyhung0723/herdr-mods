@@ -74,7 +74,32 @@ async function harness({ execResult, configText } = {}) {
 
   const herdr = synthetic(api);
   const kit = synthetic({ View: class {}, div: () => element });
-  const base = synthetic({ v_flex: () => element, h_flex: () => element });
+  const inputs = [];
+  const InputState = {
+    new: () => {
+      const state = {
+        text: "",
+        focused: false,
+        handlers: {},
+        value: () => state.text,
+        set_value: (next) => (state.text = next),
+        on: (event, handler) => ((state.handlers[event] = handler), true),
+        focus: () => (state.focused = true),
+        type: (text, cx) => {
+          state.text = text;
+          state.handlers.change?.({}, cx);
+        },
+      };
+      inputs.push(state);
+      return state;
+    },
+  };
+  const base = synthetic({
+    v_flex: () => element,
+    h_flex: () => element,
+    InputState,
+    Input: { new: () => element },
+  });
 
   const load = async (file, links) => {
     const code = await readFile(new URL(`../mods/loadout/${file}`, import.meta.url), "utf8");
@@ -98,7 +123,7 @@ async function harness({ execResult, configText } = {}) {
     while (pending.length) await pending.shift();
   };
 
-  return { client: client.namespace, View: main.namespace.default, cx, settle, calls, notifications };
+  return { client: client.namespace, View: main.namespace.default, cx, settle, calls, notifications, inputs };
 }
 
 test("cliArgs always asks for JSON and forwards manifest/state overrides", async () => {
@@ -207,4 +232,55 @@ test("a missing config shows an actionable error instead of crashing", async () 
   assert.match(view.error, /Missing \/app\/mods\/loadout\/config.json.*install.py/);
   assert.equal(calls.length, 0);
   view.render(cx);
+});
+
+test("typing in search filters rows and resets the cursor", async () => {
+  const { View, cx, settle, inputs } = await harness();
+  const view = new View();
+  view.init({}, cx);
+  await settle();
+  view.cursor = { row: 3, col: 0 };
+
+  inputs[0].type("list", cx);
+  same(view.rows().map((row) => row.resource), ["command:list-pr"]);
+  assert.equal(view.cursor.row, 0);
+  view.render(cx);
+});
+
+test("/ focuses search; while typing, matrix keys are not hijacked", async () => {
+  const { View, cx, settle, inputs, calls } = await harness();
+  const view = new View();
+  view.init({}, cx);
+  await settle();
+
+  view.onKey({ keystroke: "/" }, cx);
+  assert.equal(inputs[0].focused, true);
+  assert.equal(view.typing, true);
+
+  view.onKey({ keystroke: "j" }, cx);
+  view.onKey({ keystroke: "space" }, cx);
+  await settle();
+  same(view.cursor, { row: 0, col: 0 });
+  assert.equal(calls.filter((call) => call.args[1] === "toggle").length, 0);
+});
+
+test("escape clears the query first, then leaves search; enter leaves at once", async () => {
+  const { View, cx, settle, inputs } = await harness();
+  const view = new View();
+  view.init({}, cx);
+  await settle();
+
+  view.onKey({ keystroke: "/" }, cx);
+  inputs[0].type("review", cx);
+  view.onKey({ keystroke: "escape" }, cx);
+  assert.equal(view.query, "");
+  assert.equal(view.typing, true);
+  view.onKey({ keystroke: "escape" }, cx);
+  assert.equal(view.typing, false);
+
+  view.onKey({ keystroke: "/" }, cx);
+  inputs[0].type("ds", cx);
+  view.onKey({ keystroke: "enter" }, cx);
+  assert.equal(view.typing, false);
+  assert.equal(view.query, "ds");
 });

@@ -1,6 +1,6 @@
 // Loadout: resource × account matrix for agent-loadout. Click a cell (or Space) to switch it.
 import { View, div } from "gpui-kit";
-import { h_flex, v_flex } from "gpui-base";
+import { h_flex, Input, InputState, v_flex } from "gpui-base";
 import { notify, props, theme } from "herdr";
 import {
   applyPending,
@@ -45,9 +45,26 @@ export default class Loadout extends View {
     this.kindFilter = "all";
     this.cursor = { row: 0, col: 0 };
     this.message = null;
+    this.query = "";
+    this.typing = false;
 
     this.handle = cx.focus_handle();
     this.handle.focus();
+    this.search = InputState.new({ placeholder: "Search  ( / )" });
+    this.search.on("change", (_event, cx) => {
+      this.query = this.search.value();
+      this.cursor = { ...this.cursor, row: 0 };
+      cx.notify();
+    });
+    this.search.on("focus", (_event, cx) => {
+      this.typing = true;
+      cx.notify();
+    });
+    this.search.on("blur", (_event, cx) => {
+      this.typing = false;
+      cx.notify();
+    });
+    this.search.on("submit", (_event, cx) => this.leaveSearch(cx));
     this.refresh(cx);
     cx.timer.every(REFRESH_MS, (cx) => {
       if (this.busy.size === 0) this.refresh(cx);
@@ -70,7 +87,34 @@ export default class Loadout extends View {
   }
 
   rows() {
-    return this.status ? visibleRows(this.status, this.kindFilter) : [];
+    return this.status ? visibleRows(this.status, this.kindFilter, this.query) : [];
+  }
+
+  leaveSearch(cx) {
+    this.typing = false;
+    this.handle.focus();
+    cx.notify();
+  }
+
+  onSearchKey(event, cx) {
+    switch (event.keystroke) {
+      case "escape":
+        if (this.query) {
+          this.search.set_value("");
+          this.query = "";
+        } else {
+          this.leaveSearch(cx);
+        }
+        break;
+      case "enter":
+      case "down":
+        this.leaveSearch(cx);
+        break;
+      default:
+        return;
+    }
+    cx.stop_propagation();
+    cx.notify();
   }
 
   clampCursor() {
@@ -142,6 +186,7 @@ export default class Loadout extends View {
   }
 
   onKey(event, cx) {
+    if (this.typing) return this.onSearchKey(event, cx);
     if (!this.status) return;
     const rows = this.rows();
     const move = (dRow, dCol) => {
@@ -176,6 +221,10 @@ export default class Loadout extends View {
         break;
       case "shift-tab":
         this.cycleFilter(-1);
+        break;
+      case "/":
+        this.typing = true;
+        this.search.focus();
         break;
       case "r":
         this.refresh(cx);
@@ -262,8 +311,10 @@ export default class Loadout extends View {
       .px(16)
       .py(8)
       .gap(6)
+      .items_center()
       .border_b(1)
       .border_color(t.border)
+      .child(this.renderSearch(t))
       .children(
         chips.map(({ kind, count }) => {
           const active = this.kindFilter === kind;
@@ -285,6 +336,28 @@ export default class Loadout extends View {
             .child(`${kind} ${count}`);
         }),
       );
+  }
+
+  renderSearch(t) {
+    const matches = this.query ? `${this.rows().length}` : null;
+    return h_flex()
+      .id("loadout-search")
+      .w(240)
+      .h(28)
+      .flex_none()
+      .px(10)
+      .mr(6)
+      .gap(6)
+      .items_center()
+      .rounded(8)
+      .border_1()
+      .border_color(this.typing ? t.accent : t.border)
+      .bg(t.surface)
+      .cursor_text()
+      .on_mouse_down("left", (_event, cx) => cx.stop_propagation())
+      .child(div().text_color(t.dim).child("⌕"))
+      .child(Input.new(this.search).flex_1().min_w(0).text_size(12).text_color(t.foreground))
+      .when(matches !== null, (el) => el.child(div().text_size(11).text_color(t.dim).child(matches)));
   }
 
   renderColumns(t) {
@@ -391,7 +464,7 @@ export default class Loadout extends View {
       .bg(t.surface)
       .text_size(11)
       .children(notes.map((note) => div().truncate().text_color(t.muted).child(note)))
-      .child(div().text_color(t.dim).child(`${LEGEND}    ↑↓←→ move · space toggle · tab filter`));
+      .child(div().text_color(t.dim).child(`${LEGEND}    ↑↓←→ move · space toggle · / search · tab filter`));
   }
 }
 
