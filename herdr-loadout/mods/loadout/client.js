@@ -50,9 +50,11 @@ export const applyPending = (config) => runLoadout(config, ["apply"]);
 export const toggle = (config, resource, target, enabled) =>
   runLoadout(config, ["toggle", resource, target, enabled ? "on" : "off"]);
 
-/** true → turn on, false → turn off, null → not toggleable here. */
+const INERT_CELLS = new Set(["n/a", "inherited"]);
+
+/** true → turn on, false → turn off, null → not toggleable here (unsupported, or inherited from a shared layer). */
 export function nextEnabled(cell) {
-  if (cell === "n/a" || cell === undefined) return null;
+  if (cell === undefined || INERT_CELLS.has(cell)) return null;
   return !SELECTED_CELLS.has(cell);
 }
 

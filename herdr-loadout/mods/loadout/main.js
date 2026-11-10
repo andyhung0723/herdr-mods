@@ -27,11 +27,13 @@ const CELL_LOOK = {
   unresolved: { glyph: "✗", color: (t) => t.ansi1 },
   observed: { glyph: "○", color: (t) => t.accent },
   absent: { glyph: "◌", color: (t) => t.dim },
+  inherited: { glyph: "↥", color: (t) => t.accent },
   off: { glyph: "·", color: (t) => t.dim },
   "n/a": { glyph: "–", color: (t) => t.border },
 };
 
-const LEGEND = "✓ on  + pending  ! conflict  ✗ unresolved  ○ observed  ◌ absent  · off  – unsupported";
+const LEGEND =
+  "✓ on  + pending  ! conflict  ✗ unresolved  ○ observed  ◌ absent  ↥ shared (all Codex profiles)  · off  – unsupported";
 
 export default class Loadout extends View {
   init(initialProps, cx) {

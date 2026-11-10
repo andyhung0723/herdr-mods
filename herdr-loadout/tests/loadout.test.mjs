@@ -141,6 +141,7 @@ test("nextEnabled: off turns on, any selected state turns off, n/a is inert", as
     assert.equal(client.nextEnabled(cell), false, cell);
   }
   assert.equal(client.nextEnabled("n/a"), null);
+  assert.equal(client.nextEnabled("inherited"), null);
 });
 
 test("visibleRows sorts by kind order then name and filters by kind/query", async () => {
