@@ -1,9 +1,9 @@
 // Enhanced Git Manager for Herdr with Fork-style Sidebar, Subway Git Graph, and LRU Cache
-import { View, div, image } from "gpui-kit";
+import { View, div, image, svg } from "gpui-kit";
 import { v_flex, h_flex, InputState, Input } from "gpui-base";
 import {
   theme, settings, run, openOverlay, closeOverlay, watchFolder,
-  setShared, shared
+  setShared, shared, exec, appHome,
 } from "herdr";
 import {
   resolveLocation, getGitStatus, getGitGraph, getCommitFiles,
@@ -32,7 +32,18 @@ export default class EnhancedGit extends View {
   init(props, cx) {
     this.role = props?.role || "panel"; // "panel" or "dialog"
     this.overlayId = props?.overlayId || null;
-    this.tab = props?.tab || "changes"; // "changes" | "graph" | "branches" | "stashes"
+    this.tab = props?.tab || "changes"; // "changes" | "graph" | "branches" | "stashes" | "github"
+
+    // GitHub tab state
+    this.githubActiveTab = "prs"; // "prs" | "runs" | "issues"
+    this.githubLoading = false;
+    this.githubError = null;
+    this.githubStatus = null; // { hasRepo, repo, branch, url, ci, prs_count, issues_count }
+    this.githubPrs = [];
+    this.githubRuns = [];
+    this.githubIssues = [];
+    this.githubAgentPrompt = null;
+    this.githubInflightAction = null;
 
     this.status = null;
     this.graphRows = [];
@@ -406,6 +417,7 @@ export default class EnhancedGit extends View {
 
   doPush(cx) {
     this.runAction(() => gitPush(this.cwd, this.on), "Pushed to remote", cx);
+    setTimeout(() => this.fetchGithubStatus(cx), 1500);
   }
 
   doPull(cx) {
@@ -434,6 +446,125 @@ export default class EnhancedGit extends View {
 
   doCheckout(branch, cx) {
     this.runAction(() => gitCheckout(this.cwd, this.on, branch), `Checked out ${branch}`, cx);
+  }
+
+  resolveGithubProbePath() {
+    const h = appHome();
+    return `${h}/mods/enhanced-git/probe.py`;
+  }
+
+  async runGithubProbe(args) {
+    const script = this.resolveGithubProbePath();
+    const loc = resolveLocation();
+    const dir = this.cwd || loc?.cwd || "";
+    const cmdArgs = [script];
+    if (dir) {
+      cmdArgs.push("--dir", dir);
+    }
+    cmdArgs.push(...args);
+
+    const res = await exec("python3", cmdArgs);
+    if (res.code !== 0 && !res.stdout) {
+      throw new Error(res.stderr || `Probe failed with code ${res.code}`);
+    }
+    return JSON.parse(res.stdout || "{}");
+  }
+
+  async fetchGithubStatus(cx) {
+    try {
+      const data = await this.runGithubProbe(["--action", "status"]);
+      this.githubStatus = data;
+      cx?.notify?.();
+    } catch (e) {
+      this.githubError = String(e);
+    }
+  }
+
+  async fetchGithubActiveTab(cx) {
+    this.githubLoading = true;
+    this.githubError = null;
+    cx?.notify?.();
+    try {
+      if (this.githubActiveTab === "prs") {
+        const res = await this.runGithubProbe(["--action", "prs"]);
+        this.githubPrs = res.prs || [];
+      } else if (this.githubActiveTab === "runs") {
+        const res = await this.runGithubProbe(["--action", "runs"]);
+        this.githubRuns = res.runs || [];
+      } else if (this.githubActiveTab === "issues") {
+        const res = await this.runGithubProbe(["--action", "issues"]);
+        this.githubIssues = res.issues || [];
+      }
+    } catch (e) {
+      this.githubError = e.message || String(e);
+    } finally {
+      this.githubLoading = false;
+      cx?.notify?.();
+    }
+  }
+
+  async switchGithubSubTab(tab, cx) {
+    if (this.githubActiveTab === tab) return;
+    this.githubActiveTab = tab;
+    this.githubAgentPrompt = null;
+    cx?.notify?.();
+    if (this.githubStatus?.hasRepo) {
+      await this.fetchGithubActiveTab(cx);
+    }
+  }
+
+  copyGithubText(text, label, cx) {
+    if (typeof cx?.write_to_clipboard === "function") {
+      cx.write_to_clipboard(text);
+    } else {
+      exec("sh", ["-c", `printf "%s" "$1" | pbcopy`, "_", text]).catch(() => {});
+    }
+    this.githubAgentPrompt = `📋 Copied ${label} to clipboard!`;
+    cx?.notify?.();
+  }
+
+  async reviewPrWithAgent(pr, cx) {
+    this.githubInflightAction = `pr-${pr.number}`;
+    cx?.notify?.();
+    try {
+      const diffData = await this.runGithubProbe(["--action", "pr-diff", "--pr", String(pr.number)]);
+      const diffSnippet = diffData.diff ? `\n\n\`\`\`diff\n${diffData.diff}\n\`\`\`` : "";
+      const prompt = `Please review Pull Request #${pr.number}: "${pr.title}" (branch: ${pr.headRefName}) from ${pr.author?.login}.\n` +
+        `Check for potential bugs, security concerns, test coverage, and code quality.${diffSnippet}`;
+
+      this.copyGithubText(prompt, `Agent Review Prompt for PR #${pr.number}`, cx);
+    } catch (e) {
+      this.githubError = `Failed to prepare PR review: ${e.message}`;
+    } finally {
+      this.githubInflightAction = null;
+      cx?.notify?.();
+    }
+  }
+
+  async fixCiWithAgent(run, cx) {
+    this.githubInflightAction = `run-${run.databaseId}`;
+    cx?.notify?.();
+    try {
+      const logData = await this.runGithubProbe(["--action", "failed-log", "--run-id", String(run.databaseId)]);
+      const failedLog = logData.log ? `\n\n\`\`\`\n${logData.log}\n\`\`\`` : "";
+      const prompt = `GitHub Actions workflow "${run.workflowName || run.name}" failed on branch "${run.headBranch}" (Run ID: ${run.databaseId}).\n` +
+        `Here is the failed log output:${failedLog}\n\nPlease analyze the root cause and fix the failing code.`;
+
+      this.copyGithubText(prompt, `Agent CI Fix Prompt for Run #${run.databaseId}`, cx);
+    } catch (e) {
+      this.githubError = `Failed to get failed CI log: ${e.message}`;
+    } finally {
+      this.githubInflightAction = null;
+      cx?.notify?.();
+    }
+  }
+
+  startIssueWithAgent(issue, cx) {
+    const prompt = `Please work on GitHub Issue #${issue.number}: "${issue.title}".\n` +
+      `URL: ${issue.url}\n` +
+      `Please create an appropriate feature/fix branch, implement the required changes, and verify with tests.`;
+
+    this.copyGithubText(prompt, `Agent Task Prompt for Issue #${issue.number}`, cx);
   }
 
   openOverlayDialog() {
@@ -1727,6 +1858,50 @@ export default class EnhancedGit extends View {
               })
               .child("📦 Stashes")
           )
+          // Tab: GitHub (PRs & CI)
+          .child(
+            h_flex()
+              .px(8)
+              .py(2)
+              .gap(4)
+              .items_center()
+              .rounded(4)
+              .cursor_pointer()
+              .when(this.tab === "github", (el) => el.bg(t.raised).text_color(t.foreground))
+              .when(this.tab !== "github", (el) => el.text_color(t.dim).hover((s) => s.text_color(t.foreground)))
+              .text_size(11)
+              .font_medium()
+              .on_click((_e, cx) => {
+                if (this.tab !== "github") {
+                  this.tab = "github";
+                  cx.notify();
+                  if (!this.githubStatus) {
+                    this.fetchGithubStatus(cx).then(() => this.fetchGithubActiveTab(cx));
+                  }
+                }
+              })
+              .child(div().child("🔀 GitHub"))
+              .when(Boolean(this.githubStatus?.prs_count > 0), (el) =>
+                el.child(
+                  div()
+                    .px(4)
+                    .py(0.2)
+                    .rounded(8)
+                    .bg(t.accent)
+                    .text_size(9.5)
+                    .font_bold()
+                    .text_color(t.background)
+                    .child(String(this.githubStatus.prs_count))
+                )
+              )
+              .when(Boolean(this.githubStatus?.ci), (el) => {
+                const ci = this.githubStatus.ci;
+                const isSuccess = ci.conclusion === "success";
+                const isFail = ci.conclusion === "failure";
+                const color = isSuccess ? (t.ansi2 ?? "#a6e3a1") : isFail ? (t.ansi1 ?? "#f38ba8") : (t.blocked ?? "#fab387");
+                return el.child(div().text_size(9).text_color(color).child(isSuccess ? "●" : isFail ? "✖" : "●"));
+              })
+          )
       );
   }
 
@@ -1791,8 +1966,420 @@ export default class EnhancedGit extends View {
               ? this.renderGraphTab(t, cx)
               : this.tab === "branches"
               ? this.renderBranchesTab(t, cx)
-              : this.renderStashesTab(t, cx)
+              : this.tab === "stashes"
+              ? this.renderStashesTab(t, cx)
+              : this.renderGitHubTab(t, cx)
           )
       );
+  }
+
+  renderGitHubTab(t, cx) {
+    const hasRepo = Boolean(this.githubStatus && this.githubStatus.hasRepo);
+    const prCount = this.githubStatus?.prs_count ?? 0;
+    const issueCount = this.githubStatus?.issues_count ?? 0;
+
+    const subTab = (key, label, badge) => {
+      const active = this.githubActiveTab === key;
+      return div()
+        .px(10)
+        .py(4)
+        .cursor_pointer()
+        .rounded(4)
+        .when(active, (el) => el.bg(t.raised).text_color(t.foreground))
+        .when(!active, (el) => el.text_color(t.dim).hover((s) => s.text_color(t.foreground)))
+        .text_size(11)
+        .font_medium()
+        .child(
+          h_flex()
+            .gap(5)
+            .items_center()
+            .child(label)
+            .when(badge !== null && badge !== undefined && badge > 0, (el) =>
+              el.child(
+                div()
+                  .px(4)
+                  .py(0.2)
+                  .rounded(8)
+                  .bg(active ? t.accent : t.surface)
+                  .text_size(9)
+                  .font_bold()
+                  .text_color(active ? t.background : t.dim)
+                  .child(String(badge))
+              )
+            )
+        )
+        .on_click(() => this.switchGithubSubTab(key, cx));
+    };
+
+    return v_flex()
+      .size_full()
+      .gap(8)
+      // Agent prompt banner (if any)
+      .when(Boolean(this.githubAgentPrompt), (el) =>
+        el.child(
+          h_flex()
+            .px(10)
+            .py(6)
+            .rounded(4)
+            .items_center()
+            .justify_between()
+            .bg(t.selected ?? "#1e293b")
+            .border_1()
+            .border_color(t.accent ?? "#89b4fa")
+            .child(
+              h_flex()
+                .gap(6)
+                .items_center()
+                .child(
+                  div()
+                    .text_size(11.5)
+                    .font_medium()
+                    .text_color(t.accent ?? "#89b4fa")
+                    .child(this.githubAgentPrompt)
+                )
+                .child(
+                  div()
+                    .text_size(10.5)
+                    .text_color(t.dim)
+                    .child("(Paste into Agent terminal)")
+                )
+            )
+            .child(
+              div()
+                .cursor_pointer()
+                .text_size(11)
+                .text_color(t.dim)
+                .hover((s) => s.text_color(t.foreground))
+                .on_click(() => {
+                  this.githubAgentPrompt = null;
+                  cx.notify();
+                })
+                .child("✕")
+            )
+        )
+      )
+      // Sub-Tabs Header
+      .child(
+        h_flex()
+          .items_center()
+          .justify_between()
+          .child(
+            h_flex()
+              .gap(6)
+              .items_center()
+              .child(subTab("prs", "🔀 PRs", prCount))
+              .child(subTab("runs", "🟢 CI Runs", null))
+              .child(subTab("issues", "🎫 Issues", issueCount))
+          )
+          .child(
+            h_flex()
+              .gap(6)
+              .items_center()
+              .when(Boolean(this.githubStatus?.url), (el) =>
+                el.child(
+                  div()
+                    .px(6)
+                    .py(2)
+                    .rounded(3)
+                    .cursor_pointer()
+                    .text_size(10.5)
+                    .text_color(t.dim)
+                    .hover((s) => s.text_color(t.foreground))
+                    .on_click(() => exec("open", [this.githubStatus.url]))
+                    .child("🌐 Web")
+                )
+              )
+              .child(
+                div()
+                  .px(6)
+                  .py(2)
+                  .rounded(3)
+                  .cursor_pointer()
+                  .text_size(10.5)
+                  .text_color(t.dim)
+                  .hover((s) => s.text_color(t.foreground))
+                  .on_click(() => {
+                    this.fetchGithubStatus(cx).then(() => this.fetchGithubActiveTab(cx));
+                  })
+                  .child(this.githubLoading ? "↻ ..." : "↻ Refresh")
+              )
+          )
+      )
+      // Sub-View Content
+      .child(
+        v_flex()
+          .flex_1()
+          .overflow_y_scroll()
+          .when(!hasRepo, (el) =>
+            el.child(
+              div()
+                .py(30)
+                .items_center()
+                .justify_center()
+                .child(
+                  v_flex()
+                    .items_center()
+                    .gap(6)
+                    .child(div().text_size(12).font_medium().text_color(t.foreground).child("No GitHub Remote in Workspace"))
+                    .child(div().text_size(11).text_color(t.dim).child("Current directory is not connected to a GitHub repository."))
+                )
+            )
+          )
+          .when(hasRepo && this.githubLoading, (el) =>
+            el.child(
+              div()
+                .py(30)
+                .items_center()
+                .justify_center()
+                .child(div().text_size(12).text_color(t.dim).child("Connecting to GitHub..."))
+            )
+          )
+          .when(hasRepo && !this.githubLoading && Boolean(this.githubError), (el) =>
+            el.child(
+              div()
+                .py(20)
+                .items_center()
+                .justify_center()
+                .child(
+                  v_flex()
+                    .items_center()
+                    .gap(4)
+                    .child(div().text_size(12).text_color(t.ansi1 ?? "#f38ba8").child("Failed to load GitHub data"))
+                    .child(div().text_size(11).text_color(t.dim).child(String(this.githubError)))
+                )
+            )
+          )
+          .when(hasRepo && !this.githubLoading && !this.githubError, (el) => {
+            if (this.githubActiveTab === "prs") return el.child(this.renderGithubPrs(t, cx));
+            if (this.githubActiveTab === "runs") return el.child(this.renderGithubRuns(t, cx));
+            if (this.githubActiveTab === "issues") return el.child(this.renderGithubIssues(t, cx));
+            return el;
+          })
+      );
+  }
+
+  renderGithubPrs(t, cx) {
+    if (!this.githubPrs || this.githubPrs.length === 0) {
+      return div().py(30).items_center().justify_center().child(div().text_size(12).text_color(t.dim).child("No open pull requests."));
+    }
+    const list = v_flex().gap(6);
+    for (const pr of this.githubPrs) {
+      const isInflight = this.githubInflightAction === `pr-${pr.number}`;
+      list.child(
+        div()
+          .p(8)
+          .rounded(4)
+          .bg(t.raised)
+          .border_1()
+          .border_color(t.border)
+          .child(
+            v_flex()
+              .gap(4)
+              .child(
+                h_flex()
+                  .items_center()
+                  .justify_between()
+                  .child(
+                    h_flex()
+                      .gap(6)
+                      .items_center()
+                      .child(div().text_size(11.5).font_bold().text_color(t.accent).child(`#${pr.number}`))
+                      .child(div().text_size(11.5).font_medium().text_color(t.foreground).truncate().child(pr.title))
+                  )
+                  .child(
+                    h_flex()
+                      .gap(4)
+                      .child(
+                        div()
+                          .px(6)
+                          .py(2)
+                          .rounded(3)
+                          .cursor_pointer()
+                          .bg(t.surface)
+                          .text_size(10.5)
+                          .text_color(t.foreground)
+                          .hover((s) => s.bg(t.hover ?? t.border))
+                          .on_click(() => this.reviewPrWithAgent(pr, cx))
+                          .child(isInflight ? "..." : "🤖 Review")
+                      )
+                      .child(
+                        div()
+                          .px(6)
+                          .py(2)
+                          .rounded(3)
+                          .cursor_pointer()
+                          .bg(t.surface)
+                          .text_size(10.5)
+                          .text_color(t.dim)
+                          .hover((s) => s.text_color(t.foreground))
+                          .on_click(() => exec("open", [pr.url]))
+                          .child("Open ↗")
+                      )
+                  )
+              )
+              .child(
+                h_flex()
+                  .gap(8)
+                  .text_size(10.5)
+                  .text_color(t.dim)
+                  .child(`by ${pr.author?.login || "unknown"}`)
+                  .child(`🌿 ${pr.headRefName}`)
+                  .child(
+                    h_flex()
+                      .gap(3)
+                      .child(div().text_color(t.ansi2 ?? "#a6e3a1").child(`+${pr.additions || 0}`))
+                      .child(div().text_color(t.ansi1 ?? "#f38ba8").child(`-${pr.deletions || 0}`))
+                  )
+              )
+          )
+      );
+    }
+    return list;
+  }
+
+  renderGithubRuns(t, cx) {
+    if (!this.githubRuns || this.githubRuns.length === 0) {
+      return div().py(30).items_center().justify_center().child(div().text_size(12).text_color(t.dim).child("No recent workflow runs."));
+    }
+    const list = v_flex().gap(6);
+    for (const run of this.githubRuns) {
+      const isSuccess = run.conclusion === "success";
+      const isFailure = run.conclusion === "failure";
+      const isInflight = this.githubInflightAction === `run-${run.databaseId}`;
+      const statusColor = isSuccess ? (t.ansi2 ?? "#a6e3a1") : isFailure ? (t.ansi1 ?? "#f38ba8") : (t.blocked ?? "#fab387");
+
+      list.child(
+        div()
+          .p(8)
+          .rounded(4)
+          .bg(t.raised)
+          .border_1()
+          .border_color(t.border)
+          .child(
+            v_flex()
+              .gap(4)
+              .child(
+                h_flex()
+                  .items_center()
+                  .justify_between()
+                  .child(
+                    h_flex()
+                      .gap(6)
+                      .items_center()
+                      .child(div().text_size(10).font_bold().text_color(statusColor).child(isSuccess ? "✔" : isFailure ? "✖" : "●"))
+                      .child(div().text_size(11.5).font_medium().text_color(t.foreground).truncate().child(run.workflowName || run.name))
+                  )
+                  .child(
+                    h_flex()
+                      .gap(4)
+                      .when(isFailure, (el) =>
+                        el.child(
+                          div()
+                            .px(6)
+                            .py(2)
+                            .rounded(3)
+                            .cursor_pointer()
+                            .bg(t.ansi1 ?? "#f38ba8")
+                            .text_size(10.5)
+                            .font_medium()
+                            .text_color("#181825")
+                            .on_click(() => this.fixCiWithAgent(run, cx))
+                            .child(isInflight ? "..." : "🤖 Fix")
+                        )
+                      )
+                      .child(
+                        div()
+                          .px(6)
+                          .py(2)
+                          .rounded(3)
+                          .cursor_pointer()
+                          .bg(t.surface)
+                          .text_size(10.5)
+                          .text_color(t.dim)
+                          .hover((s) => s.text_color(t.foreground))
+                          .on_click(() => exec("open", [run.url]))
+                          .child("Open ↗")
+                      )
+                  )
+              )
+              .child(
+                h_flex()
+                  .gap(8)
+                  .text_size(10.5)
+                  .text_color(t.dim)
+                  .child(`🌿 ${run.headBranch}`)
+                  .child(`event: ${run.event || "push"}`)
+              )
+          )
+      );
+    }
+    return list;
+  }
+
+  renderGithubIssues(t, cx) {
+    if (!this.githubIssues || this.githubIssues.length === 0) {
+      return div().py(30).items_center().justify_center().child(div().text_size(12).text_color(t.dim).child("No open issues."));
+    }
+    const list = v_flex().gap(6);
+    for (const issue of this.githubIssues) {
+      list.child(
+        div()
+          .p(8)
+          .rounded(4)
+          .bg(t.raised)
+          .border_1()
+          .border_color(t.border)
+          .child(
+            v_flex()
+              .gap(4)
+              .child(
+                h_flex()
+                  .items_center()
+                  .justify_between()
+                  .child(
+                    h_flex()
+                      .gap(6)
+                      .items_center()
+                      .child(div().text_size(11.5).font_bold().text_color(t.ansi2 ?? "#a6e3a1").child(`#${issue.number}`))
+                      .child(div().text_size(11.5).font_medium().text_color(t.foreground).truncate().child(issue.title))
+                  )
+                  .child(
+                    h_flex()
+                      .gap(4)
+                      .child(
+                        div()
+                          .px(6)
+                          .py(2)
+                          .rounded(3)
+                          .cursor_pointer()
+                          .bg(t.surface)
+                          .text_size(10.5)
+                          .text_color(t.foreground)
+                          .hover((s) => s.bg(t.hover ?? t.border))
+                          .on_click(() => this.startIssueWithAgent(issue, cx))
+                          .child("🤖 Start")
+                      )
+                      .child(
+                        div()
+                          .px(6)
+                          .py(2)
+                          .rounded(3)
+                          .cursor_pointer()
+                          .bg(t.surface)
+                          .text_size(10.5)
+                          .text_color(t.dim)
+                          .hover((s) => s.text_color(t.foreground))
+                          .on_click(() => exec("open", [issue.url]))
+                          .child("Open ↗")
+                      )
+                  )
+              )
+              .child(
+                div().text_size(10.5).text_color(t.dim).child(`opened by ${issue.author?.login || "unknown"}`)
+              )
+          )
+      );
+    }
+    return list;
   }
 }

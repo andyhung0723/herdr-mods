@@ -31,6 +31,17 @@ async function harness(overrides = {}) {
     focused: () => ({ pane: "p1", cwd: "/repo" }),
     exec: async (cmd, args) => {
       events.push(["exec", cmd, args]);
+      if (cmd === "python3") {
+        if (args.includes("status")) {
+          return { code: 0, stdout: JSON.stringify({ hasRepo: true, repo: "acme-org/sample-app", prs_count: 2, ci: { conclusion: "success" } }) };
+        }
+        if (args.includes("prs")) {
+          return { code: 0, stdout: JSON.stringify({ ok: true, prs: [{ number: 7, title: "Refactor video pipeline", author: { login: "andy" }, headRefName: "feat/video" }] }) };
+        }
+        if (args.includes("pr-diff")) {
+          return { code: 0, stdout: JSON.stringify({ ok: true, diff: "+ export function processVideo() {}" }) };
+        }
+      }
       if (args.includes("rev-parse") && args.includes("--show-toplevel")) {
         return { code: 0, stdout: "/repo\n" };
       }
@@ -49,6 +60,7 @@ async function harness(overrides = {}) {
       return { code: 0, stdout: "" };
     },
     readTextFile: async () => null,
+    appHome: () => "/Users/dev/.config/herdr-app",
     closeOverlay: () => {},
     openOverlay: () => "overlay-1",
     theme: () => ({
@@ -97,6 +109,7 @@ async function harness(overrides = {}) {
     View: class {},
     div: () => element,
     image: () => element,
+    svg: () => element,
   });
   const base = synthetic({
     v_flex: () => element,
@@ -388,6 +401,32 @@ test("EnhancedGit clears selectedFile and diffLines when working tree becomes cl
   view.doCommit(cx);
   assert.equal(view.selectedFile, null);
 });
+
+test("EnhancedGit supports GitHub tab with PR review agent action", async () => {
+  const clipboard = [];
+  const { View, cx } = await harness();
+  cx.write_to_clipboard = (text) => clipboard.push(text);
+
+  const view = new View();
+  view.init({ role: "panel", tab: "github" }, cx);
+  await view.fetchGithubStatus(cx);
+  await view.fetchGithubActiveTab(cx);
+
+  assert.equal(view.tab, "github");
+  assert.ok(view.githubStatus);
+  assert.equal(view.githubStatus.repo, "acme-org/sample-app");
+  assert.equal(view.githubPrs.length, 1);
+  assert.equal(view.githubPrs[0].number, 7);
+
+  await view.reviewPrWithAgent(view.githubPrs[0], cx);
+  assert.equal(clipboard.length, 1);
+  assert.match(clipboard[0], /Please review Pull Request #7/);
+  assert.match(clipboard[0], /processVideo/);
+
+  const rendered = view.render(cx);
+  assert.ok(rendered);
+});
+
 
 
 
