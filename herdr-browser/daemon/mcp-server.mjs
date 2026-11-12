@@ -11,7 +11,12 @@ import readline from "node:readline";
 import { fileURLToPath } from "node:url";
 import { DAEMON_LOG_PATH, DAEMON_URL, openDaemonLog, readToken } from "./state.mjs";
 
-const PROTOCOL_VERSION = "2025-06-18";
+// Newest first. A client asking for an unknown version gets our newest; it decides whether to continue.
+const SUPPORTED_PROTOCOL_VERSIONS = ["2025-06-18", "2025-03-26", "2024-11-05"];
+
+export function negotiateProtocolVersion(requested) {
+  return SUPPORTED_PROTOCOL_VERSIONS.includes(requested) ? requested : SUPPORTED_PROTOCOL_VERSIONS[0];
+}
 const ACTION_TIMEOUT_MS = 60_000;
 const DAEMON_BOOT_TIMEOUT_MS = 15_000;
 
@@ -238,7 +243,7 @@ async function handleMessage({ id, method, params }) {
       send({
         id,
         result: {
-          protocolVersion: params?.protocolVersion ?? PROTOCOL_VERSION,
+          protocolVersion: negotiateProtocolVersion(params?.protocolVersion),
           capabilities: { tools: {} },
           serverInfo: { name: "herdr-browser", version: "1.1.0" },
         },

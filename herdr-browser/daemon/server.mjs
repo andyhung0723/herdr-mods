@@ -13,7 +13,7 @@ import { promisify } from "node:util";
 import { ActionError, HumanDrivingError } from "./agent-session.mjs";
 import { BrowserHub } from "./browser-hub.mjs";
 import { stopEdge } from "./edge-launcher.mjs";
-import { DAEMON_HOST, DAEMON_PORT, loadOrCreateToken } from "./state.mjs";
+import { DAEMON_HOST, DAEMON_PORT, loadOrCreateToken, removePidFile, writePidFile } from "./state.mjs";
 import { normalizeNavigationUrl } from "./url-policy.mjs";
 
 const ALLOWED_HOSTS = new Set([`${DAEMON_HOST}:${DAEMON_PORT}`, `localhost:${DAEMON_PORT}`]);
@@ -156,12 +156,6 @@ async function handleRequest(req, res, url) {
     return;
   }
 
-  if (pathname.startsWith("/session/") && req.method === "POST") {
-    const session = await hub.getOrCreateSession(parseAgentId(pathname, "/session/"));
-    sendJson(res, 200, { ok: true, ...session.describe() });
-    return;
-  }
-
   if (pathname.startsWith("/frame/") && req.method === "GET") {
     await handleFrame(res, parseAgentId(pathname, "/frame/"), url);
     return;
@@ -224,7 +218,8 @@ server.on("error", (err) => {
 });
 
 server.listen(DAEMON_PORT, DAEMON_HOST, async () => {
-  console.log(`Herdr Agent Browser Hub Daemon listening on http://${DAEMON_HOST}:${DAEMON_PORT}`);
+  writePidFile();
+  console.log(`Herdr Agent Browser Hub Daemon listening on http://${DAEMON_HOST}:${DAEMON_PORT} (pid ${process.pid})`);
   try {
     await hub.init();
     console.log("Browser core initialized and ready.");
@@ -237,6 +232,7 @@ async function shutdown() {
   console.log("Shutting down Browser Hub Daemon...");
   await hub.destroy({ closeBrowser: true }).catch(() => {});
   stopEdge();
+  removePidFile();
   server.close(() => process.exit(0));
   setTimeout(() => process.exit(0), 2000).unref();
 }

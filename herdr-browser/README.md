@@ -52,7 +52,10 @@ Agent 第一次呼叫 `browser_*` 工具時，若 daemon 沒在跑會自動在�
 
 ```bash
 node herdr-browser/daemon/server.mjs
+kill "$(cat ~/.config/herdr-browser/daemon.pid)"   # 停止（同時關閉 headless Edge）
 ```
+
+`daemon.log` 超過 5 MiB 時，下次自動啟動會輪替成 `daemon.log.1`。
 
 ### 安全模型
 
@@ -76,6 +79,8 @@ Herdr 的 `image()` 只能讀 app home 底下的相對路徑，而且以路徑�
 ---
 
 ## 測試與驗證
+
+需要 Edge/Chrome 的測試在找不到瀏覽器時會自動 skip；每個測試用隨機 port 與暫存 state dir，不會碰到正在跑的 daemon。
 
 ```bash
 node --test herdr-browser/tests/*.test.mjs
