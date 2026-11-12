@@ -72,27 +72,56 @@ export function detectActiveAgent({ focused, panes, agents }) {
   const allPanes = typeof panes === "function" ? panes() : [];
   const allAgents = typeof agents === "function" ? agents() : [];
 
-  const currentPane = allPanes.find((p) => p.focused || (f && p.pane === f.pane));
-  const currentAgent = allAgents.find(
-    (a) => a.focused || (f && (a.pane === f.pane || a.address === f.agent))
+  // Match focused pane safely (require truthy pane id)
+  const currentPane = allPanes.find(
+    (p) => p.focused || (f?.pane && p.pane === f.pane)
   );
 
-  const probe = [
-    currentPane?.app,
-    currentPane?.program?.name,
-    currentPane?.program?.agent,
-    currentPane?.title,
-    currentAgent?.app,
-    currentAgent?.program?.name,
-    currentAgent?.title,
-  ]
-    .filter(Boolean)
-    .map((s) => String(s).toLowerCase());
+  // If focused pane is a regular shell (zsh/bash/fish), no agent is active
+  if (currentPane?.program?.shell) {
+    return null;
+  }
 
-  for (const str of probe) {
-    if (str.includes("claude")) return "claude";
-    if (str.includes("codex")) return "codex";
-    if (str.includes("antigravity") || str.includes("agy") || str.includes("gemini")) return "antigravity";
+  // Match focused agent safely (require truthy id)
+  const currentAgent = allAgents.find(
+    (a) => a.focused || (f?.agent && a.address === f.agent) || (f?.pane && a.pane === f.pane)
+  );
+
+  const apps = [
+    currentPane?.app,
+    currentAgent?.app,
+  ].filter(Boolean).map((s) => String(s).toLowerCase());
+
+  for (const app of apps) {
+    if (app === "claude-code" || app === "claude") return "claude";
+    if (app === "codex") return "codex";
+    if (app === "antigravity" || app === "agy") return "antigravity";
+  }
+
+  const progKeys = [
+    currentPane?.program?.key,
+    currentPane?.program?.name,
+    currentAgent?.program?.key,
+    currentAgent?.program?.name,
+  ].filter(Boolean).map((s) => String(s).toLowerCase());
+
+  for (const key of progKeys) {
+    if (key === "shell") continue;
+    if (key === "claude" || key === "claude-code" || key === "claude code") return "claude";
+    if (key === "codex") return "codex";
+    if (key === "antigravity" || key === "agy") return "antigravity";
+  }
+
+  // Strict title check (only if not a path containing slashes)
+  const titles = [currentPane?.title, currentAgent?.title]
+    .filter(Boolean)
+    .map((s) => String(s).trim().toLowerCase())
+    .filter((s) => !s.includes("/"));
+
+  for (const title of titles) {
+    if (title === "claude" || title === "claude code" || title.startsWith("claude code -")) return "claude";
+    if (title === "codex" || title.startsWith("codex -")) return "codex";
+    if (title === "antigravity" || title === "agy" || title.startsWith("agy -")) return "antigravity";
   }
 
   return null;

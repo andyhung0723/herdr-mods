@@ -565,12 +565,13 @@ export default class WorkspaceStatus extends View {
     const space = spaces().find((s) => s.active);
 
     const activeAgent = detectActiveAgent({ focused, panes, agents });
-    const agentCwd =
-      (activeAgent === "claude" && this.agentStatus?.claude?.cwd) ||
-      f?.cwd ||
-      currentPane?.cwd ||
-      space?.cwd ||
-      null;
+    const agentCwd = activeAgent
+      ? (activeAgent === "claude" && this.agentStatus?.claude?.cwd) ||
+        f?.cwd ||
+        currentPane?.cwd ||
+        space?.cwd ||
+        null
+      : null;
 
     const branchName = currentPane?.branch || space?.branch || null;
     const list = agents();

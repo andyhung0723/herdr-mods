@@ -377,11 +377,17 @@ test("agent collector detects active Antigravity pane and renders expanded Antig
   assert.ok(codexBadge, "Should render compact Codex badge flanking");
 });
 
-test("neutral mode without active agent renders 3 compact badges", async () => {
+test("neutral mode without active agent renders 3 compact badges and does not expand anything", async () => {
   const { View, cx } = await harness({
     focused: { pane: "p0", terminal: "t0", agent: null },
     panes: [
-      { pane: "p0", app: "zsh", title: "zsh terminal", focused: true, program: { name: "zsh" } },
+      {
+        pane: "p0",
+        app: "zsh",
+        title: "/Users/dev/Workspace/claude/test-repo", // path mentions claude, but it's a shell!
+        focused: true,
+        program: { key: "shell", name: "zsh", shell: true },
+      },
     ],
   });
 
@@ -392,6 +398,13 @@ test("neutral mode without active agent renders 3 compact badges", async () => {
   const rendered = view.render(cx);
   assert.ok(rendered);
 
+  // Assert NO agent is expanded
+  assert.equal(findElementById(rendered, "agent-status-claude-expanded"), null);
+  assert.equal(findElementById(rendered, "agent-status-codex-expanded"), null);
+  assert.equal(findElementById(rendered, "agent-status-antigravity-expanded"), null);
+  assert.equal(findElementById(rendered, "agent-cwd"), null, "agent-cwd should not render when no agent is active");
+
+  // Assert all 3 compact badges are rendered
   const claudeBadge = findElementById(rendered, "agent-badge-claude");
   const codexBadge = findElementById(rendered, "agent-badge-codex");
   const agyBadge = findElementById(rendered, "agent-badge-antigravity");
