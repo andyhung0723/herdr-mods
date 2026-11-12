@@ -308,7 +308,7 @@ export default class AgentBrowserMain extends View {
       .cursor_pointer()
       .bg(selected ? color + "26" : t.surface)
       .border(1)
-      .border_color(selected ? color : "transparent")
+      .border_color(selected ? color : t.surface)
       .on_click(() => this.selectAgent(s.agentId))
       .child(div().size(6).rounded(3).flex_none().bg(color))
       .child(div().text_size(10.5).font_semibold().truncate().text_color(selected ? color : t.muted).child(sessionLabel(s)));

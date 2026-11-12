@@ -85,6 +85,7 @@ export default class AgentBrowserSidebar extends View {
 
   renderSession(t, s, selected, isFocusedAgent) {
     const color = vendorColor(s, t);
+    const background = selected ? (t.selected ?? t.raised) : t.surface;
     let host = s.url;
     try {
       host = new URL(s.url).host || s.url;
@@ -93,9 +94,9 @@ export default class AgentBrowserSidebar extends View {
       .p(5)
       .gap(2)
       .rounded(4)
-      .bg(selected ? (t.selected ?? t.raised) : t.surface)
+      .bg(background)
       .border(1)
-      .border_color(isFocusedAgent ? color : "transparent")
+      .border_color(isFocusedAgent ? color : background)
       .cursor_pointer()
       .hover((h) => h.bg(t.hover))
       .on_click(() => this.openBrowser(s.agentId))
