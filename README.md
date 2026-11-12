@@ -5,7 +5,7 @@
 [![Herdr](https://img.shields.io/badge/Designed%20for-Herdr%20App-purple.svg)]()
 [![Tests](https://img.shields.io/badge/Tests-All%20Passing-brightgreen.svg)]()
 
-為 [Herdr](https://github.com/kaochenlong/herdr) 桌面版打造的專業級模組套裝（Monorepo of Custom Mods）。  
+為 [Herdr](https://herdr.dev/) 桌面版打造的專業級模組套裝（Monorepo of Custom Mods）。  
 整合了 **AI Agent 治理、Git 與 GitHub Hub、服務與連接埠監控、快速筆記、即時音樂與客製化 UI 增強**，將 Herdr 打造為全方位的 AI 開發作戰駕駛艙（Cockpit）。
 
 ---
