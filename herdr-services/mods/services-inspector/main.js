@@ -10,6 +10,16 @@ import { fetchServicesData, killProcess, controlDocker } from "./collector.js";
 
 const MOD = "services-inspector";
 const ICON = `mods/${MOD}/services.svg`;
+const ICON_REFRESH = `mods/${MOD}/refresh.svg`;
+const ICON_CODE = `mods/${MOD}/code.svg`;
+const ICON_PACKAGE = `mods/${MOD}/package.svg`;
+const ICON_SETTINGS = `mods/${MOD}/settings.svg`;
+const ICON_GLOBE = `mods/${MOD}/globe.svg`;
+const ICON_SHIELD = `mods/${MOD}/shield.svg`;
+const ICON_DOCKER = `mods/${MOD}/docker.svg`;
+const ICON_PLAY = `mods/${MOD}/play.svg`;
+const ICON_STOP = `mods/${MOD}/stop.svg`;
+const ICON_X = `mods/${MOD}/x.svg`;
 const OVERLAY_KEY = "services-inspector.open-overlay";
 
 function getPanelWidth() {
@@ -256,7 +266,9 @@ export default class ServicesInspector extends View {
           .items_center()
           .gap(6)
           .child(
-            div()
+            h_flex()
+              .items_center()
+              .gap(4)
               .px(6)
               .py(2)
               .rounded(4)
@@ -265,20 +277,22 @@ export default class ServicesInspector extends View {
               .text_size(11)
               .text_color(this.loading ? t.accent : t.muted)
               .on_click(() => this.reload(cx, true))
-              .child(this.loading ? "⟳ ..." : "⟳ Refresh")
+              .child(svg(ICON_REFRESH).size(11).flex_none())
+              .child(div().child(this.loading ? "..." : "Refresh"))
           )
           .when(this.role === "dialog", (el) =>
             el.child(
-              div()
-                .px(6)
-                .py(2)
+              h_flex()
+                .items_center()
+                .justify_center()
+                .size(20)
                 .rounded(4)
                 .cursor_pointer()
                 .bg(t.surface)
-                .text_size(11)
                 .text_color(t.muted)
+                .hover((s) => s.text_color(t.foreground))
                 .on_click(() => closeOverlay(this.overlayId))
-                .child("✕")
+                .child(svg(ICON_X).size(12).flex_none())
             )
           )
       );
@@ -314,7 +328,9 @@ export default class ServicesInspector extends View {
               .child(`All (${total})`)
           )
           .child(
-            div()
+            h_flex()
+              .items_center()
+              .gap(4)
               .px(7)
               .py(2)
               .rounded(4)
@@ -326,10 +342,13 @@ export default class ServicesInspector extends View {
                 this.filterMode = "dev";
                 cx.notify();
               })
-              .child(`🚀 Dev (${devCount})`)
+              .child(svg(ICON_CODE).size(11).flex_none())
+              .child(div().child(`Dev (${devCount})`))
           )
           .child(
-            div()
+            h_flex()
+              .items_center()
+              .gap(4)
               .px(7)
               .py(2)
               .rounded(4)
@@ -341,7 +360,8 @@ export default class ServicesInspector extends View {
                 this.filterMode = "ipc";
                 cx.notify();
               })
-              .child(`📦 App IPC (${ipcCount})`)
+              .child(svg(ICON_PACKAGE).size(11).flex_none())
+              .child(div().child(`App IPC (${ipcCount})`))
           )
       );
   }
@@ -383,7 +403,8 @@ export default class ServicesInspector extends View {
           .gap(6)
           .px(4)
           .pt(2)
-          .child(div().text_size(11).font_bold().text_color(t.ansi2 ?? "#a6e3a1").child("🚀 DEV SERVERS & WEBSITES"))
+          .child(svg(ICON_CODE).size(13).flex_none().text_color(t.ansi2 ?? "#a6e3a1"))
+          .child(div().text_size(11).font_bold().text_color(t.ansi2 ?? "#a6e3a1").child("DEV SERVERS & WEBSITES"))
           .child(div().text_size(10.5).text_color(t.dim).child(`(${devPorts.length})`))
       );
       for (const p of devPorts) {
@@ -399,7 +420,8 @@ export default class ServicesInspector extends View {
           .gap(6)
           .px(4)
           .pt(this.filterMode === "all" ? 6 : 2)
-          .child(div().text_size(11).font_bold().text_color(t.accent ?? "#89b4fa").child("📦 DESKTOP APPS & LOCAL IPC"))
+          .child(svg(ICON_PACKAGE).size(13).flex_none().text_color(t.accent ?? "#89b4fa"))
+          .child(div().text_size(11).font_bold().text_color(t.accent ?? "#89b4fa").child("DESKTOP APPS & LOCAL IPC"))
           .child(div().text_size(10.5).text_color(t.dim).child(`(${ipcPorts.length})`))
       );
       for (const p of ipcPorts) {
@@ -416,7 +438,8 @@ export default class ServicesInspector extends View {
           .gap(6)
           .px(4)
           .pt(6)
-          .child(div().text_size(11).font_bold().text_color(t.muted).child("⚙️ SYSTEM & LOCAL SERVICES"))
+          .child(svg(ICON_SETTINGS).size(13).flex_none().text_color(t.muted))
+          .child(div().text_size(11).font_bold().text_color(t.muted).child("SYSTEM & LOCAL SERVICES"))
           .child(div().text_size(10.5).text_color(t.dim).child(`(${systemAndOther.length})`))
       );
       for (const p of systemAndOther) {
@@ -538,7 +561,9 @@ export default class ServicesInspector extends View {
           // Open URL Button: only shown if p.url is present!
           .when(Boolean(p.url), (el) =>
             el.child(
-              div()
+              h_flex()
+                .items_center()
+                .gap(4)
                 .px(7)
                 .py(3)
                 .rounded(4)
@@ -547,7 +572,8 @@ export default class ServicesInspector extends View {
                 .text_size(11)
                 .text_color(t.ansi2 ?? "#a6e3a1")
                 .on_click(() => this.handleOpenUrl(p.url, cx))
-                .child("🌐 Open")
+                .child(svg(ICON_GLOBE).size(11).flex_none())
+                .child(div().child("Open"))
             )
           )
           // Kill Button: available for dev, ipc, or other (as long as not system-protected)
@@ -568,14 +594,17 @@ export default class ServicesInspector extends View {
           )
           .when(Boolean(p.isProtected), (el) =>
             el.child(
-              div()
+              h_flex()
+                .items_center()
+                .gap(3)
                 .px(6)
                 .py(2)
                 .rounded(4)
                 .bg(t.background)
                 .text_size(10)
                 .text_color(t.dim)
-                .child("🛡️ System")
+                .child(svg(ICON_SHIELD).size(10.5).flex_none())
+                .child(div().child("System"))
             )
           )
       );
@@ -592,7 +621,13 @@ export default class ServicesInspector extends View {
         .child(
           v_flex()
             .gap(6)
-            .child(div().text_size(13).font_bold().text_color(t.ansi1 ?? "#f38ba8").child("🐳 Docker CLI Not Found"))
+            .child(
+              h_flex()
+                .items_center()
+                .gap(6)
+                .child(svg(ICON_DOCKER).size(15).flex_none().text_color(t.ansi1 ?? "#f38ba8"))
+                .child(div().text_size(13).font_bold().text_color(t.ansi1 ?? "#f38ba8").child("Docker CLI Not Found"))
+            )
             .child(
               div()
                 .text_size(11.5)
@@ -616,7 +651,8 @@ export default class ServicesInspector extends View {
               h_flex()
                 .items_center()
                 .gap(6)
-                .child(div().text_size(13).font_bold().text_color(t.blocked ?? "#e3814f").child("🐳 Docker Daemon Offline"))
+                .child(svg(ICON_DOCKER).size(15).flex_none().text_color(t.blocked ?? "#e3814f"))
+                .child(div().text_size(13).font_bold().text_color(t.blocked ?? "#e3814f").child("Docker Daemon Offline"))
             )
             .child(
               div()
@@ -637,7 +673,9 @@ export default class ServicesInspector extends View {
               )
             )
             .child(
-              div()
+              h_flex()
+                .items_center()
+                .gap(4)
                 .px(8)
                 .py(4)
                 .rounded(4)
@@ -646,7 +684,8 @@ export default class ServicesInspector extends View {
                 .text_size(11.5)
                 .text_color(t.foreground)
                 .on_click(() => this.reload(cx, true))
-                .child("⟳ Check Again")
+                .child(svg(ICON_REFRESH).size(12).flex_none())
+                .child(div().child("Check Again"))
             )
         );
     }
@@ -741,7 +780,9 @@ export default class ServicesInspector extends View {
           .when(isRunning, (el) =>
             el
               .child(
-                div()
+                h_flex()
+                  .items_center()
+                  .gap(4)
                   .px(6)
                   .py(3)
                   .rounded(4)
@@ -750,10 +791,13 @@ export default class ServicesInspector extends View {
                   .text_size(11)
                   .text_color(t.foreground)
                   .on_click(() => this.handleDockerAction(c.id, "restart", cx))
-                  .child(isActionInflight ? "..." : "🔄 Restart")
+                  .when(!isActionInflight, (btn) => btn.child(svg(ICON_REFRESH).size(11).flex_none()))
+                  .child(div().child(isActionInflight ? "..." : "Restart"))
               )
               .child(
-                div()
+                h_flex()
+                  .items_center()
+                  .gap(4)
                   .px(6)
                   .py(3)
                   .rounded(4)
@@ -762,12 +806,15 @@ export default class ServicesInspector extends View {
                   .text_size(11)
                   .text_color(t.accentForeground ?? "#ffffff")
                   .on_click(() => this.handleDockerAction(c.id, "stop", cx))
-                  .child(isActionInflight ? "..." : "⏹ Stop")
+                  .when(!isActionInflight, (btn) => btn.child(svg(ICON_STOP).size(11).flex_none()))
+                  .child(div().child(isActionInflight ? "..." : "Stop"))
               )
           )
           .when(!isRunning, (el) =>
             el.child(
-              div()
+              h_flex()
+                .items_center()
+                .gap(4)
                 .px(7)
                 .py(3)
                 .rounded(4)
@@ -776,7 +823,8 @@ export default class ServicesInspector extends View {
                 .text_size(11)
                 .text_color("#181825")
                 .on_click(() => this.handleDockerAction(c.id, "start", cx))
-                .child(isActionInflight ? "..." : "▶ Start")
+                .when(!isActionInflight, (btn) => btn.child(svg(ICON_PLAY).size(11).flex_none()))
+                .child(div().child(isActionInflight ? "..." : "Start"))
             )
           )
       );

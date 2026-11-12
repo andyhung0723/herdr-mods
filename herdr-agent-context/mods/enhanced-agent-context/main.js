@@ -3,6 +3,12 @@ import { h_flex, v_flex, TextView } from "gpui-base";
 import { theme, run, focused, panes, spaces, agents, terminals, notify, home, layout, closeOverlay, props } from "herdr";
 import { fetchAgentContext, readRuleContent } from "./collector.js";
 
+const MOD = "enhanced-agent-context";
+const ICON_TARGET = `mods/${MOD}/target.svg`;
+const ICON_CORNER = `mods/${MOD}/corner-down-right.svg`;
+const ICON_REFRESH = `mods/${MOD}/refresh.svg`;
+const ICON_X = `mods/${MOD}/x.svg`;
+
 function cleanPath(p) {
   if (!p) return "";
   const userHome = home();
@@ -263,18 +269,29 @@ export default class EnhancedAgentContext extends View {
                 el.child(div().text_size(13.5).font_bold().text_color(t.foreground).child("Agent Inspector"))
               )
               .child(
-                div()
+                h_flex()
                   .px(6)
                   .h(18)
                   .flex_none()
                   .rounded(4)
                   .bg((isFocusedScope ? (t.working ?? "#10b981") : (t.accent ?? "#3b82f6")) + "22")
-                  .text_size(10.5)
-                  .font_semibold()
-                  .text_color(isFocusedScope ? (t.working ?? "#10b981") : (t.accent ?? t.foreground))
-                  .flex()
                   .items_center()
-                  .child(isFocusedScope ? `🎯 ${agentLabel}` : "All Agents")
+                  .gap(3)
+                  .when(isFocusedScope, (el) =>
+                    el.child(
+                      svg(ICON_TARGET)
+                        .size(10.5)
+                        .flex_none()
+                        .text_color(t.working ?? "#10b981")
+                    )
+                  )
+                  .child(
+                    div()
+                      .text_size(10.5)
+                      .font_semibold()
+                      .text_color(isFocusedScope ? (t.working ?? "#10b981") : (t.accent ?? t.foreground))
+                      .child(isFocusedScope ? agentLabel : "All Agents")
+                  )
               )
           )
           .child(
@@ -317,7 +334,7 @@ export default class EnhancedAgentContext extends View {
                   .hover((s) => s.bg(t.hover))
                   .tooltip("Refresh context")
                   .on_click((_e, cx) => this.refresh(cx, true))
-                  .child(svg("mods/workspace-chrome/clock.svg").size(13).text_color(this.loading ? (t.working ?? t.foreground) : t.dim))
+                  .child(svg(ICON_REFRESH).size(13).text_color(this.loading ? (t.working ?? t.foreground) : t.dim))
               )
               .when(Boolean(this.overlayId), (el) =>
                 el.child(
@@ -330,11 +347,10 @@ export default class EnhancedAgentContext extends View {
                     .justify_center()
                     .cursor_pointer()
                     .bg(t.raised)
-                    .text_size(11)
                     .text_color(t.muted)
                     .hover((s) => s.bg(t.hover).text_color(t.foreground))
                     .on_click(() => closeOverlay(this.overlayId))
-                    .child("✕")
+                    .child(svg(ICON_X).size(12).flex_none())
                 )
               )
           )
@@ -498,16 +514,17 @@ export default class EnhancedAgentContext extends View {
                   .child(div().text_size(12).font_semibold().text_color(t.foreground).child("Active Instructions"))
               )
               .child(
-                div()
-                  .text_size(11)
-                  .text_color(t.accent ?? t.foreground)
+                h_flex()
+                  .items_center()
+                  .gap(2)
                   .cursor_pointer()
                   .hover((s) => s.text_color(t.foreground))
                   .on_click((_e, cx) => {
                     this.activeTab = "rules";
                     cx.notify();
                   })
-                  .child("View all →")
+                  .child(div().text_size(11).text_color(t.accent ?? t.foreground).child("View all"))
+                  .child(svg("mods/workspace-chrome/chevron-right.svg").size(11).flex_none().text_color(t.accent ?? t.foreground))
               )
           )
           .children(
@@ -545,7 +562,16 @@ export default class EnhancedAgentContext extends View {
                         .child(r.scope)
                     )
                     .child(div().flex_1().min_w(0).truncate().text_size(12).font_medium().text_color(t.foreground).child(r.name))
-                    .when(Boolean(r.isSymlink && !isNarrow), (el) => el.child(div().flex_none().text_size(10).text_color(t.dim).child("↳ symlink")))
+                    .when(Boolean(r.isSymlink && !isNarrow), (el) =>
+                      el.child(
+                        h_flex()
+                          .items_center()
+                          .gap(2)
+                          .flex_none()
+                          .child(svg(ICON_CORNER).size(10).flex_none().text_color(t.dim))
+                          .child(div().text_size(10).text_color(t.dim).child("symlink"))
+                      )
+                    )
                 )
                 .child(
                   div()
@@ -580,16 +606,17 @@ export default class EnhancedAgentContext extends View {
                   .child(div().text_size(12).font_semibold().text_color(t.foreground).child("Connected MCP Tools"))
               )
               .child(
-                div()
-                  .text_size(11)
-                  .text_color(t.accent ?? t.foreground)
+                h_flex()
+                  .items_center()
+                  .gap(2)
                   .cursor_pointer()
                   .hover((s) => s.text_color(t.foreground))
                   .on_click((_e, cx) => {
                     this.activeTab = "connectors";
                     cx.notify();
                   })
-                  .child("Details →")
+                  .child(div().text_size(11).text_color(t.accent ?? t.foreground).child("Details"))
+                  .child(svg("mods/workspace-chrome/chevron-right.svg").size(11).flex_none().text_color(t.accent ?? t.foreground))
               )
           )
           .children(
@@ -732,10 +759,21 @@ export default class EnhancedAgentContext extends View {
                       .truncate()
                       .text_size(10.5)
                       .text_color(t.dim)
-                      .child(
-                        this.selectedRule?.isSymlink && this.selectedRule?.targetPath
-                          ? `${cleanPath(this.selectedRule?.displayPath)} ↳ ${cleanPath(this.selectedRule?.targetPath)}`
-                          : cleanPath(this.selectedRule?.displayPath || this.selectedRule?.path) || ""
+                      .when(
+                        Boolean(this.selectedRule?.isSymlink && this.selectedRule?.targetPath),
+                        (el) =>
+                          el.child(
+                            h_flex()
+                              .items_center()
+                              .gap(3)
+                              .child(div().truncate().child(cleanPath(this.selectedRule?.displayPath)))
+                              .child(svg(ICON_CORNER).size(10).flex_none().text_color(t.dim))
+                              .child(div().truncate().child(cleanPath(this.selectedRule?.targetPath)))
+                          ),
+                        (el) =>
+                          el.child(
+                            cleanPath(this.selectedRule?.displayPath || this.selectedRule?.path) || ""
+                          )
                       )
                   )
               )
