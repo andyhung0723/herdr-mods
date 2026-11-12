@@ -49,7 +49,15 @@ async function harness({ execResult, configText } = {}) {
           stderr: "",
         };
       }
-      return { code: 0, stdout: JSON.stringify({ results: [] }), stderr: "" };
+      const json = (data) => ({ code: 0, stdout: JSON.stringify(data), stderr: "" });
+      if (args[1] === "history") return json({ runs: [{ id: "r0", command: "apply", changes: 2 }] });
+      if (args[1] === "release") {
+        return json({ resource: args[2], targets: [args[3]], released: [{ key: "k" }], run: "r-release" });
+      }
+      if (args[1] === "restore") {
+        return json({ restored: args[2], results: [{ resource: "skill:review", target: "claude" }], run: "r-restore" });
+      }
+      return json({ results: [] });
     },
     notify: (n) => notifications.push(n),
     props: () => ({ overlay: "o1" }),
@@ -284,4 +292,62 @@ test("escape clears the query first, then leaves search; enter leaves at once", 
   view.onKey({ keystroke: "enter" }, cx);
   assert.equal(view.typing, false);
   assert.equal(view.query, "ds");
+});
+
+test("reads use a short timeout; writes wait long enough for a keychain prompt", async () => {
+  const { client, calls } = await harness();
+  const config = await client.loadConfig();
+  await client.fetchStatus(config);
+  await client.toggle(config, "skill:review", "claude", true);
+  same(calls.map((call) => [call.args[1], call.options.timeout]), [
+    ["status", 60000],
+    ["toggle", 300000],
+  ]);
+});
+
+test("releasable only for cells that are on; undo helpers", async () => {
+  const { client } = await harness();
+  same(["ok", "pending", "conflict", "off", "n/a", "inherited"].map(client.releasable), [true, true, true, false, false, false]);
+  same(client.undoable({ run: "r1" }, "apply"), { run: "r1", label: "apply" });
+  assert.equal(client.undoable({ run: null }, "apply"), null);
+  same(client.latestUndoable({ runs: [{ id: "a", command: "toggle x y on" }, { id: "b" }] }), { run: "a", label: "toggle x y on" });
+  assert.equal(client.latestUndoable({ runs: [] }), null);
+  same(client.restoreFailures({ results: [{ resource: "r", target: "t", error: "changed since that run" }, { resource: "s", target: "t" }] }), ["r → t: changed since that run"]);
+});
+
+test("opening the view offers to undo the latest journaled run", async () => {
+  const { View, cx, settle } = await harness();
+  const view = new View();
+  view.init({}, cx);
+  await settle();
+  same(view.lastRun, { run: "r0", label: "apply" });
+  view.render(cx);
+});
+
+test("x releases the focused cell; u undoes it, and u again redoes", async () => {
+  const { View, cx, settle, calls } = await harness();
+  const view = new View();
+  view.init({}, cx);
+  await settle();
+
+  view.cursor = { row: 1, col: 1 }; // skill:review × claude-work is off
+  view.onKey({ keystroke: "x" }, cx);
+  await settle();
+  assert.equal(calls.filter((call) => call.args[1] === "release").length, 0, "off cell is not released");
+
+  view.cursor = { row: 0, col: 0 };
+  view.onKey({ keystroke: "x" }, cx);
+  await settle();
+  const releaseCall = calls.find((call) => call.args[1] === "release");
+  same(releaseCall.args.slice(1, 4), ["release", "instructions:shared", "claude"]);
+  assert.match(view.message, /released on claude · 1 item\(s\) kept in place/);
+  same(view.lastRun, { run: "r-release", label: "release instructions:shared claude" });
+
+  view.onKey({ keystroke: "u" }, cx);
+  await settle();
+  const restoreCall = calls.find((call) => call.args[1] === "restore");
+  same(restoreCall.args.slice(1, 3), ["restore", "r-release"]);
+  assert.match(view.message, /Undid release instructions:shared claude · u to redo/);
+  same(view.lastRun, { run: "r-restore", label: "restore release instructions:shared claude" });
+  assert.ok(view.restartTargets.has("claude"));
 });

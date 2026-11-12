@@ -8,6 +8,8 @@
 - **切換**：點格子或游標移過去按 `Space`，等同 `loadout toggle <resource> <target> on|off`。只改 manifest 那一行 `to`，並只 apply 該資源。
 - **重開提示**：切換過的帳號欄位標示 `↻ restart sessions`（skills / MCP / hooks 在 session 啟動時載入）。
 - **Apply pending**：manifest 在外部被改過時，標題列出現 `Apply N pending`（`a`）。
+- **Release**（`x`）：`loadout release <resource> <target>`。這個帳號不再由 loadout 管理，但檔案留在原處，不會刪除。跟 `Space` 關閉不同，`Space` 會移除。
+- **Undo**（`u`，或標題列的 `↶ Undo …`）：`loadout restore <run>`，還原上一次的 toggle / apply / release，連 manifest 那一行也一起還原。開啟時會取 `loadout history` 最近一次的 run。之後被改過的項目會保持原樣並發 toast。undo 本身也能再 undo，等於 redo。
 - **篩選**：依種類篩選（`Tab` / `Shift-Tab` 或點 chip）。
 - 失敗（conflict、unresolved、寫檔錯誤）會發 toast，並在底部顯示。
 
@@ -19,6 +21,8 @@
 | `Tab` / `Shift-Tab` | 切換種類篩選 |
 | `r` | 重新整理 |
 | `a` | 套用所有 pending |
+| `x` | release 游標所在格（保留檔案） |
+| `u` | undo 上一次的 run |
 | `Esc` | 關閉 |
 
 ## 安裝
@@ -40,7 +44,8 @@ python3 herdr-loadout/install.py --manifest /path/to/preview/loadout.toml --stat
 
 ## 架構
 
-- `client.js`：呼叫 `loadout … --json`（接受 exit 0/2），以及純邏輯（`nextEnabled`、`visibleRows`、`summarize`、`failuresOf`）。
+- `client.js`：呼叫 `loadout … --json`（接受 exit 0/2），以及純邏輯（`nextEnabled`、`releasable`、`visibleRows`、`summarize`、`failuresOf`、`undoable`）。這個模組不依賴 UI，測試時以假的 `herdr` 模組載入。
+- 逾時：讀取（`status`、`history`）60 秒；寫入（toggle、apply、release、restore）300 秒，因為可能要等 keychain 授權視窗。herdr `exec` 上限是 600 秒，不需要背景工作。
 - `main.js`：只負責 UI 與鍵盤；資料一律來自 `loadout status --json`，不自行解析任何設定檔。
 - 每 30 秒重新整理一次；有操作進行中時會跳過。
 

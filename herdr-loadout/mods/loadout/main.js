@@ -6,12 +6,19 @@ import {
   applyPending,
   cellKey,
   failuresOf,
+  fetchHistory,
   fetchStatus,
   kindCounts,
+  latestUndoable,
   loadConfig,
   nextEnabled,
+  release,
+  releasable,
+  restoreFailures,
   summarize,
   toggle,
+  undo,
+  undoable,
   visibleRows,
 } from "./client.js";
 
@@ -49,6 +56,7 @@ export default class Loadout extends View {
     this.message = null;
     this.query = "";
     this.typing = false;
+    this.lastRun = null;
 
     this.handle = cx.focus_handle();
     this.handle.focus();
@@ -67,17 +75,18 @@ export default class Loadout extends View {
       cx.notify();
     });
     this.search.on("submit", (_event, cx) => this.leaveSearch(cx));
-    this.refresh(cx);
+    this.refresh(cx, { history: true });
     cx.timer.every(REFRESH_MS, (cx) => {
       if (this.busy.size === 0) this.refresh(cx);
     });
   }
 
-  refresh(cx) {
+  refresh(cx, { history = false } = {}) {
     cx.spawn(async (cx) => {
       try {
         this.config ??= await loadConfig();
         this.status = await fetchStatus(this.config);
+        if (history) this.lastRun = latestUndoable(await fetchHistory(this.config));
         this.error = null;
       } catch (error) {
         this.error = String(error?.message ?? error);
@@ -139,6 +148,9 @@ export default class Loadout extends View {
       try {
         const response = await toggle(this.config, row.resource, target, enabled);
         const failures = failuresOf(response);
+        this.lastRun =
+          undoable(response, `toggle ${row.resource} ${target} ${enabled ? "on" : "off"}`) ??
+          this.lastRun;
         if (response.toggle?.changed) this.restartTargets.add(target);
         this.message = failures.length
           ? `⚠ ${failures[0]}`
@@ -164,6 +176,7 @@ export default class Loadout extends View {
       try {
         const response = await applyPending(this.config);
         const failures = failuresOf(response);
+        this.lastRun = undoable(response, "apply") ?? this.lastRun;
         const changed = (response.results ?? []).filter(({ entry }) =>
           ["create", "replace", "remove"].includes(entry.action),
         );
@@ -176,6 +189,54 @@ export default class Loadout extends View {
         this.message = `✗ ${String(error?.message ?? error)}`;
       }
       this.busy.delete("apply");
+      cx.notify();
+    });
+  }
+
+  releaseCell(row, target, cx) {
+    const key = cellKey(row.resource, target);
+    if (!releasable(row.cells[target]) || this.busy.has(key)) return;
+    this.busy.add(key);
+    cx.notify();
+    cx.spawn(async (cx) => {
+      try {
+        const response = await release(this.config, row.resource, target);
+        this.lastRun = undoable(response, `release ${row.resource} ${target}`) ?? this.lastRun;
+        const kept = response.released?.length ?? 0;
+        this.message = `${row.resource} released on ${target} · ${kept ? `${kept} item(s) kept in place, now unmanaged` : "manifest only"} · u to undo`;
+        this.status = await fetchStatus(this.config);
+      } catch (error) {
+        this.message = `✗ ${String(error?.message ?? error)}`;
+        notify({ title: "Loadout release failed", body: this.message, level: "error" });
+      }
+      this.busy.delete(key);
+      cx.notify();
+    });
+  }
+
+  undoLast(cx) {
+    const last = this.lastRun;
+    if (!last || this.busy.has("undo")) return;
+    this.busy.add("undo");
+    cx.notify();
+    cx.spawn(async (cx) => {
+      try {
+        const response = await undo(this.config, last.run);
+        const failures = restoreFailures(response);
+        for (const result of response.results ?? []) this.restartTargets.add(result.target);
+        this.lastRun = undoable(response, `restore ${last.label}`);
+        this.message = failures.length
+          ? `⚠ undo left ${failures.length} item(s) alone: ${failures[0]}`
+          : `Undid ${last.label} · u to redo`;
+        if (failures.length) {
+          notify({ title: "Loadout undo", body: failures.join("\n"), level: "warning" });
+        }
+        this.status = await fetchStatus(this.config);
+      } catch (error) {
+        this.message = `✗ ${String(error?.message ?? error)}`;
+        notify({ title: "Loadout undo failed", body: this.message, level: "error" });
+      }
+      this.busy.delete("undo");
       cx.notify();
     });
   }
@@ -234,6 +295,14 @@ export default class Loadout extends View {
       case "a":
         this.applyAll(cx);
         break;
+      case "x": {
+        const row = rows[this.cursor.row];
+        if (row) this.releaseCell(row, this.status.targets[this.cursor.col], cx);
+        break;
+      }
+      case "u":
+        this.undoLast(cx);
+        break;
       default:
         return;
     }
@@ -276,6 +345,13 @@ export default class Loadout extends View {
           button(t, "apply-all", applying ? null : `Apply ${summary.pending} pending  (a)`)
             .when(applying, (b) => b.frames(SPIN, 90))
             .on_click((_event, cx) => this.applyAll(cx)),
+        ),
+      )
+      .when(this.lastRun !== null, (el) =>
+        el.child(
+          button(t, "undo", this.busy.has("undo") ? null : `↶ Undo ${shorten(this.lastRun.label)}  (u)`)
+            .when(this.busy.has("undo"), (b) => b.frames(SPIN, 90))
+            .on_click((_event, cx) => this.undoLast(cx)),
         ),
       )
       .child(button(t, "refresh", "↻ Refresh  (r)").on_click((_event, cx) => this.refresh(cx)));
@@ -466,7 +542,7 @@ export default class Loadout extends View {
       .bg(t.surface)
       .text_size(11)
       .children(notes.map((note) => div().truncate().text_color(t.muted).child(note)))
-      .child(div().text_color(t.dim).child(`${LEGEND}    ↑↓←→ move · space toggle · / search · tab filter`));
+      .child(div().text_color(t.dim).child(`${LEGEND}    ↑↓←→ move · space toggle · x release (keep files) · u undo · / search · tab filter`));
   }
 }
 
@@ -481,6 +557,10 @@ function button(t, id, label) {
     .text_size(12)
     .hover((s) => s.bg(t.hover));
   return label ? el.child(label) : el;
+}
+
+function shorten(label, max = 36) {
+  return label.length > max ? `${label.slice(0, max - 1)}…` : label;
 }
 
 function centered(t) {
