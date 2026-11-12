@@ -740,14 +740,7 @@ export default class WorkspaceStatus extends View {
         .bg(t.surface ?? "#1e1e2e")
         .border(1)
         .border_color(t.border)
-        .cursor_pointer()
-        .tooltip(`目前 Session 無執行中 Agent\n全域共有 ${totalGlobalAgents} 個 Agent 在其他 Session\n點擊開啟 Agent 清單`)
-        .hover((s) => s.bg(t.selected ?? "#334155"))
-        .on_click(() => {
-          try {
-            run("mod.open", { name: "agents" });
-          } catch {}
-        })
+        .tooltip(`目前 Session 無執行中 Agent${totalGlobalAgents > 0 ? `\n全域共有 ${totalGlobalAgents} 個 Agent 在其他 Session` : ""}`)
         .child(div().size(6).rounded(3).bg(t.dim))
         .child(div().text_size(11).text_color(t.muted).child("0 agents"));
     }
@@ -804,7 +797,6 @@ export default class WorkspaceStatus extends View {
       tooltipLines.push("──────────────────────────────");
       tooltipLines.push(`其他 Session: 共有 ${totalGlobalAgents - 1} 個背景 Agent 在其他視窗`);
     }
-    tooltipLines.push("點擊開啟全部 Agent 清單");
     const fullTooltip = tooltipLines.join("\n");
 
     return h_flex()
@@ -817,14 +809,7 @@ export default class WorkspaceStatus extends View {
       .bg(t.surface ?? "#1e1e2e")
       .border(1)
       .border_color(t.border)
-      .cursor_pointer()
       .tooltip(fullTooltip)
-      .hover((s) => s.bg(t.selected ?? "#334155"))
-      .on_click(() => {
-        try {
-          run("mod.open", { name: "agents" });
-        } catch {}
-      })
       .child(
         isAnyRunning
           ? svg("mods/workspace-chrome/spinner.svg")

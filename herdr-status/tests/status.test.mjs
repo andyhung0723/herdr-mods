@@ -547,13 +547,7 @@ test("statusbar-agents displays breakdown of running and idle agents with rich m
 
   assert.ok(agentsWidget._tooltip.includes("目前 Session"), "Tooltip should have current session header");
   assert.ok(agentsWidget._tooltip.includes("running"), "Tooltip should list running status");
-  assert.ok(agentsWidget._tooltip.includes("點擊開啟全部 Agent 清單"), "Tooltip should indicate click action");
-
-  agentsWidget._onClick(null, cx);
-  assert.ok(
-    events.some((e) => e[0] === "run" && e[1] === "mod.open" && e[2]?.name === "agents"),
-    "Clicking agents widget should trigger mod.open for agents"
-  );
+  assert.equal(agentsWidget._onClick, null, "Agents widget should not have onClick action");
 });
 
 test("statusbar-agents detects Herdr terminal subagents and displays subagents (running / idle) count and tree", async () => {
