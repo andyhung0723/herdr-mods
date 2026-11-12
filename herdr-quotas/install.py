@@ -40,6 +40,16 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         help="Personal layout to enable sidebar widget (default: main-popup)",
     )
     parser.add_argument(
+        "--remove-widget",
+        action="store_true",
+        help="Remove Agent Quotas sidebar widget from layout",
+    )
+    parser.add_argument(
+        "--without-widget",
+        action="store_true",
+        help="Install mod and keybinding without adding sidebar widget",
+    )
+    parser.add_argument(
         "--dry-run",
         action="store_true",
         help="Validate and print plan without writing",
@@ -209,17 +219,83 @@ def update_layout_sidebar(layout_path: Path, backups_dir: Path, dry_run: bool) -
         print(f"Could not locate 'sidebar-lists' in {layout_path.name}")
 
 
+def remove_widget_from_layout(layout_path: Path, backups_dir: Path, dry_run: bool) -> bool:
+    if not layout_path.exists():
+        print(f"Layout file {layout_path} does not exist, skipping")
+        return False
+
+    try:
+        data = json.loads(layout_path.read_text("utf-8"))
+    except Exception as e:
+        raise InstallError(f"Failed to parse layout {layout_path}: {e}")
+
+    removed = False
+
+    def prune_widget(node: Any) -> None:
+        nonlocal removed
+        if isinstance(node, dict):
+            if "children" in node and isinstance(node["children"], list):
+                original_len = len(node["children"])
+                node["children"] = [
+                    child
+                    for child in node["children"]
+                    if not (isinstance(child, dict) and child.get("id") == WIDGET_ID)
+                ]
+                if len(node["children"]) < original_len:
+                    removed = True
+            for v in node.values():
+                prune_widget(v)
+        elif isinstance(node, list):
+            for item in node:
+                prune_widget(item)
+
+    prune_widget(data)
+
+    if removed:
+        if dry_run:
+            print(f"[dry-run] Remove widget {WIDGET_ID} from {layout_path.name}")
+        else:
+            bk = backup_file(layout_path, backups_dir)
+            print(f"Backed up {layout_path.name} to {bk}")
+            layout_path.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n", "utf-8")
+            try:
+                subprocess.run(
+                    ["herdr-app", "do", "layout.set", json.dumps({"layout": data})],
+                    capture_output=True,
+                    text=True,
+                    timeout=5,
+                    check=False,
+                )
+            except Exception:
+                pass
+            print(f"Removed {WIDGET_ID} from {layout_path.name}")
+        return True
+    else:
+        print(f"Widget {WIDGET_ID} not found in {layout_path.name}")
+        return False
+
+
 def main() -> int:
     args = parse_args(sys.argv[1:])
     source_root = Path(__file__).resolve().parent
     mod_src = source_root / "mods" / MOD_NAME
 
+    home = resolve_home(args.home)
+    print(f"Herdr app home: {home}")
+
+    backups_dir = home / "backups"
+    if not args.dry_run:
+        backups_dir.mkdir(parents=True, exist_ok=True)
+
+    if args.remove_widget:
+        layout_path = home / "layouts" / f"{args.layout}.json"
+        remove_widget_from_layout(layout_path, backups_dir, args.dry_run)
+        print(f"\n✅ Agent Quotas sidebar widget removed from {layout_path.name}!")
+        return 0
+
     if not mod_src.exists():
         print(f"Error: Missing mod source folder {mod_src}", file=sys.stderr)
         return 1
-
-    home = resolve_home(args.home)
-    print(f"Herdr app home: {home}")
 
     print("Running herdr-app check...")
     try:
@@ -230,10 +306,8 @@ def main() -> int:
         return 1
 
     mods_dir = home / "mods"
-    backups_dir = home / "backups"
     if not args.dry_run:
         mods_dir.mkdir(parents=True, exist_ok=True)
-        backups_dir.mkdir(parents=True, exist_ok=True)
 
     try:
         copy_mod(mod_src, mods_dir / MOD_NAME, args.dry_run)
@@ -241,15 +315,17 @@ def main() -> int:
         keys_path = home / "keys.json"
         update_keys_json(keys_path, backups_dir, args.dry_run)
 
-        layout_path = home / "layouts" / f"{args.layout}.json"
-        update_layout_sidebar(layout_path, backups_dir, args.dry_run)
+        if not args.without_widget:
+            layout_path = home / "layouts" / f"{args.layout}.json"
+            update_layout_sidebar(layout_path, backups_dir, args.dry_run)
     except InstallError as e:
         print(f"Install failed: {e}", file=sys.stderr)
         return 1
 
     print("\n✅ Agent Quotas installed successfully!")
     print("\nUsage:")
-    print("  1. Sidebar Widget: Appears in the left sidebar under Agents (click to expand)")
+    if not args.without_widget:
+        print("  1. Sidebar Widget: Appears in the left sidebar under Agents (click to expand)")
     print("  2. Popup Dashboard: Press Ctrl+B Q (or run: herdr-app do mod.open '{\"name\":\"agent-quotas\"}')")
     return 0
 
