@@ -5,8 +5,8 @@ import { fetchAgentContext, readRuleContent } from "./collector.js";
 
 function cleanPath(p) {
   if (!p) return "";
-  const userHome = home() || "/Users/dev";
-  return p.startsWith(userHome) ? "~" + p.slice(userHome.length) : p;
+  const userHome = home();
+  return userHome && p.startsWith(userHome) ? "~" + p.slice(userHome.length) : p;
 }
 
 function findLayoutNode(node, id) {

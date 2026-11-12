@@ -256,7 +256,7 @@ def main() -> int:
         update_layout_panel(home / "layouts" / f"{args.layout}.json", backups_dir, args.dry_run)
 
         # Update tabs in workspace and ~/.config/herdr-app
-        workspace_tabs = Path("herdr-tabs/mods/enhanced-tabs/main.js")
+        workspace_tabs = Path(__file__).resolve().parent.parent / "herdr-tabs" / "mods" / "enhanced-tabs" / "main.js"
         installed_tabs = home / "mods" / "enhanced-tabs" / "main.js"
         update_enhanced_tabs([workspace_tabs, installed_tabs], args.dry_run)
 

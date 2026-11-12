@@ -4,7 +4,6 @@ import json
 import os
 import shutil
 import subprocess
-import urllib.request
 
 
 def get_antigravity_limits_from_cli(model_name):
@@ -120,7 +119,7 @@ def get_antigravity_limits():
     short_label = cli_data.get("shortLabel") if cli_data else ""
     groups = cli_data.get("groups", []) if cli_data else []
 
-    # Retrieve account info / fallback from Keychain
+    # Retrieve account info from Keychain
     try:
         proc = subprocess.run(
             ["security", "find-generic-password", "-s", "gemini", "-a", "antigravity", "-w"],
@@ -134,33 +133,6 @@ def get_antigravity_limits():
                 raw = raw[len("go-keyring-base64:"):]
             data = json.loads(base64.b64decode(raw).decode("utf-8"))
             email = data.get("id_token_email", email)
-            token_info = data.get("token") or {}
-            access_token = token_info.get("access_token")
-
-            # Fallback only if CLI did not return any bucket data
-            if (not five_hour and not weekly) and access_token:
-                headers = {
-                    "Authorization": f"Bearer {access_token}",
-                    "Content-Type": "application/json",
-                    "User-Agent": "antigravity/1.0",
-                }
-                quota_req = urllib.request.Request(
-                    "https://cloudcode-pa.googleapis.com/v1internal:retrieveUserQuota",
-                    headers=headers,
-                    data=b"{}",
-                )
-                with urllib.request.urlopen(quota_req, timeout=5) as resp:
-                    quota_resp = json.loads(resp.read().decode("utf-8"))
-                    for b in quota_resp.get("buckets", []):
-                        if "gemini" in b.get("modelId", ""):
-                            rem_frac = b.get("remainingFraction", 1.0)
-                            five_hour = {
-                                "percent": max(0, min(100, round((1.0 - rem_frac) * 100))),
-                                "remainingPercent": max(0, min(100, round(rem_frac * 100))),
-                                "remainingFraction": rem_frac,
-                                "resetTime": b.get("resetTime"),
-                            }
-                            break
     except Exception:
         pass
 

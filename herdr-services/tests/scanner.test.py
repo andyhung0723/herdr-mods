@@ -46,13 +46,13 @@ class TestScanner(unittest.TestCase):
 
     def test_protected_process_detection(self):
         self.assertTrue(scanner.is_protected_process(1, "launchd", "root"))
-        self.assertTrue(scanner.is_protected_process(709, "ControlCenter", "andy"))
-        self.assertTrue(scanner.is_protected_process(709, "ControlCe", "andy"))
-        self.assertTrue(scanner.is_protected_process(778, "rapportd", "andy"))
+        self.assertTrue(scanner.is_protected_process(709, "ControlCenter", "dev"))
+        self.assertTrue(scanner.is_protected_process(709, "ControlCe", "dev"))
+        self.assertTrue(scanner.is_protected_process(778, "rapportd", "dev"))
         self.assertTrue(scanner.is_protected_process(50, "any", "root"))
         # Dev process should NOT be protected
-        self.assertFalse(scanner.is_protected_process(65604, "node", "andy"))
-        self.assertFalse(scanner.is_protected_process(12345, "vite", "andy"))
+        self.assertFalse(scanner.is_protected_process(65604, "node", "dev"))
+        self.assertFalse(scanner.is_protected_process(12345, "vite", "dev"))
 
     def test_kill_pid_safety(self):
         # PID <= 100 should be rejected

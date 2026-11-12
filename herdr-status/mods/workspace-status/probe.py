@@ -11,7 +11,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-YTM_APP_PATH = "~/Applications/Edge Apps.localized/YouTube Music.app"
+YTM_APP_PATH = str(Path.home() / "Applications" / "Edge Apps.localized" / "YouTube Music.app")
 SWIFT_HELPER = Path(__file__).resolve().parent / "media_remote.swift"
 
 

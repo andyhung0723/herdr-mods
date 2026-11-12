@@ -11,10 +11,10 @@ test("enhanced-tabs - main.js renders Git and Agent buttons without Music", () =
   assert.equal(fs.existsSync(mainPath), true, "main.js must exist");
   const content = fs.readFileSync(mainPath, "utf-8");
 
-  // Verify 'Changes' is replaced with 'Git' and uses 'icons/git.svg'
+  // Verify 'Changes' is replaced with 'Git' and uses git SVG icon
   assert.match(
     content,
-    /panelButton\("changes",\s*"Git",\s*"icons\/git\.svg"\)/
+    /panelButton\("changes",\s*"Git",\s*"(icons\/git\.svg|mods\/workspace-chrome\/git-branch\.svg)"\)/
   );
   assert.doesNotMatch(
     content,

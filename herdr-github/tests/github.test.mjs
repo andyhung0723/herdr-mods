@@ -5,9 +5,9 @@ import vm from "node:vm";
 
 const MOCK_STATUS_ACTIVE = {
   hasRepo: true,
-  repo: "octocat/storage-copier",
+  repo: "acme/sample-repo",
   branch: "main",
-  url: "https://github.com/octocat/storage-copier",
+  url: "https://github.com/acme/sample-repo",
   ci: {
     databaseId: 101,
     name: "CI / Test",
@@ -31,7 +31,7 @@ const MOCK_PRS = {
       state: "OPEN",
       isDraft: false,
       reviewDecision: "APPROVED",
-      url: "https://github.com/octocat/storage-copier/pull/12",
+      url: "https://github.com/acme/sample-repo/pull/12",
       additions: 45,
       deletions: 12,
       updatedAt: "2026-11-10T02:00:00Z",
@@ -49,7 +49,7 @@ const MOCK_RUNS = {
       status: "completed",
       conclusion: "failure",
       headBranch: "main",
-      url: "https://github.com/octocat/storage-copier/actions/runs/101",
+      url: "https://github.com/acme/sample-repo/actions/runs/101",
       event: "push",
       createdAt: "2026-11-10T01:30:00Z",
     },
@@ -64,7 +64,7 @@ const MOCK_ISSUES = {
       title: "Memory leak in socket connection pool",
       author: { login: "colleague" },
       state: "OPEN",
-      url: "https://github.com/octocat/storage-copier/issues/42",
+      url: "https://github.com/acme/sample-repo/issues/42",
       labels: [],
       updatedAt: "2026-11-10T00:00:00Z",
     },
@@ -155,7 +155,7 @@ test("GitHubHub initializes and loads status and PR list", async () => {
   await hub.refreshAll(cx);
 
   assert.ok(hub.repoInfo);
-  assert.equal(hub.repoInfo.repo, "octocat/storage-copier");
+  assert.equal(hub.repoInfo.repo, "acme/sample-repo");
   assert.equal(hub.prs.length, 1);
   assert.equal(hub.prs[0].number, 12);
 

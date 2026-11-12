@@ -17,11 +17,11 @@ async function harness(overrides = {}) {
   const fakeNumstat = ["10\t5\tstaged-file.js", "2\t1\tunstaged-file.js", ""].join("\0");
 
   const fakeLogGraph = [
-    "* 283ef88\t2a5a99e\t (HEAD -> main, origin/main)\tfeat(ui): replace logo\t10 minutes ago\tAndy",
-    "* 2a5a99e\t6feceb0\t\tfeat(codex): add week limit\t1 hour ago\tAndy",
+    "* 283ef88\t2a5a99e\t (HEAD -> main, origin/main)\tfeat(ui): replace logo\t10 minutes ago\tDev",
+    "* 2a5a99e\t6feceb0\t\tfeat(codex): add week limit\t1 hour ago\tDev",
     "| \\\t\t\t\t\t",
-    "|  * 6feceb0\t\t (feature/test)\tfeat(quotas): refine display\t2 hours ago\tAndy",
-    "* | 67a6bb9\t\t\tfeat(keys): update\t3 hours ago\tAndy",
+    "|  * 6feceb0\t\t (feature/test)\tfeat(quotas): refine display\t2 hours ago\tDev",
+    "* | 67a6bb9\t\t\tfeat(keys): update\t3 hours ago\tDev",
   ].join("\n");
 
   const api = {
@@ -42,14 +42,14 @@ async function harness(overrides = {}) {
               repo: "acme-org/sample-app",
               prs_count: 2,
               issues_count: 1,
-              prs: [{ number: 7, title: "Refactor video pipeline", author: { login: "andy" }, headRefName: "feat/video" }],
+              prs: [{ number: 7, title: "Refactor video pipeline", author: { login: "octocat" }, headRefName: "feat/video" }],
               runs: [],
               ci: { conclusion: "success" },
             }),
           };
         }
         if (args.includes("prs")) {
-          return { code: 0, stdout: JSON.stringify({ ok: true, prs: [{ number: 7, title: "Refactor video pipeline", author: { login: "andy" }, headRefName: "feat/video" }] }) };
+          return { code: 0, stdout: JSON.stringify({ ok: true, prs: [{ number: 7, title: "Refactor video pipeline", author: { login: "octocat" }, headRefName: "feat/video" }] }) };
         }
         if (args.includes("pr-diff")) {
           return { code: 0, stdout: JSON.stringify({ ok: true, diff: "+ export function processVideo() {}" }) };
@@ -188,12 +188,12 @@ test("getGitStatus separates staged and unstaged files with diff counts", async 
 test("parseGraphRow parses commit node and branch routing lines", async () => {
   const { git } = await harness();
 
-  const row1 = git.parseGraphRow("* 283ef88\t2a5a99e\t (HEAD -> main, v1.0)\tfeat: init\t5m ago\tAndy");
+  const row1 = git.parseGraphRow("* 283ef88\t2a5a99e\t (HEAD -> main, v1.0)\tfeat: init\t5m ago\tDev");
   assert.equal(row1.isCommit, true);
   assert.equal(row1.hash, "283ef88");
   assert.deepEqual([...row1.refs], ["HEAD -> main", "v1.0"]);
   assert.equal(row1.subject, "feat: init");
-  assert.equal(row1.author, "Andy");
+  assert.equal(row1.author, "Dev");
 
   const row2 = git.parseGraphRow("| \\");
   assert.equal(row2.isCommit, false);
@@ -249,7 +249,7 @@ test("getGitGraph falls back to HEAD and branches if --all fails", async () => {
       }
       return {
         code: 0,
-        stdout: "* abc1234\t\t (HEAD -> main)\tfallback commit\t1m ago\tAndy",
+        stdout: "* abc1234\t\t (HEAD -> main)\tfallback commit\t1m ago\tDev",
         stderr: "",
       };
     },
