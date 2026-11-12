@@ -632,145 +632,180 @@ export default class WorkspaceStatus extends View {
     return a.program?.name || a.app || null;
   }
 
-  // Collect all subagents from Herdr terminals tree (k.parent) and Claude transcript tasks
-  collectAllSubagents() {
-    const allTerminals = typeof terminals === "function" ? terminals() : [];
-    const mainList = typeof agents === "function" ? agents() : [];
+  // Resolve current focused session agent (scoped strictly to active tab/pane)
+  resolveCurrentSessionAgent() {
+    const f = typeof focused === "function" ? focused() : null;
+    const allPanes = typeof panes === "function" ? panes() : [];
+    const allAgents = typeof agents === "function" ? agents() : [];
+    const activeKind = detectActiveAgent({ focused, panes, agents });
+
+    const currentPane = allPanes.find(
+      (p) => p.focused || (f?.pane && p.pane === f.pane)
+    );
+
+    // If focused pane is a shell, no agent is in this session
+    if (currentPane?.program?.shell) {
+      return { currentAgent: null, activeKind: null, totalGlobalAgents: allAgents.length };
+    }
+
+    let currentAgent = allAgents.find(
+      (a) =>
+        a.focused ||
+        (f?.agent && a.address === f.agent) ||
+        (f?.terminal && a.address === f.terminal) ||
+        (f?.pane && a.pane === f.pane) ||
+        (currentPane?.pane && a.pane === currentPane.pane) ||
+        (currentPane?.terminal && a.address === currentPane.terminal)
+    );
+
+    if (!currentAgent && activeKind) {
+      currentAgent = allAgents.find((a) => {
+        const raw = `${a.app || ""} ${a.program?.key || ""} ${a.program?.name || ""} ${a.title || ""}`.toLowerCase();
+        return raw.includes(activeKind);
+      });
+    }
+
+    return { currentAgent, activeKind, totalGlobalAgents: allAgents.length };
+  }
+
+  // Collect subagents belonging STRICTLY to the current session's agent
+  collectCurrentSessionSubagents(currentAgent, activeKind) {
+    const allTerms = typeof terminals === "function" ? terminals() : [];
     const result = {
       total: 0,
       running: 0,
       idle: 0,
       blocked: 0,
-      byParent: new Map(),
       items: [],
     };
 
-    // 1. Check Herdr terminals tree (k.parent)
-    for (const a of mainList) {
-      const kids = allTerminals.filter((k) => k.parent === a.address && k.state === "live");
-      if (kids.length > 0) {
-        const parentSubs = [];
-        for (const k of kids) {
-          const s = k.status;
-          const isRunning = s === "working" || s === "running";
-          const isBlocked = s === "blocked";
-          result.total++;
-          if (isRunning) result.running++;
-          else if (isBlocked) result.blocked++;
-          else result.idle++;
+    if (!currentAgent && !activeKind) return result;
 
-          const subItem = {
-            id: k.address,
-            parent: a.address,
-            name: k.title || k.name || k.program?.name || "Subagent",
-            status: isRunning ? "running" : isBlocked ? "blocked" : "done",
-          };
-          result.items.push(subItem);
-          parentSubs.push(subItem);
-        }
-        result.byParent.set(a.address, parentSubs);
+    // 1. Check Herdr terminals tree where parent === currentAgent.address
+    if (currentAgent?.address) {
+      const kids = allTerms.filter((k) => k.parent === currentAgent.address && k.state === "live");
+      for (const k of kids) {
+        const s = k.status;
+        const isRunning = s === "working" || s === "running";
+        const isBlocked = s === "blocked";
+        result.total++;
+        if (isRunning) result.running++;
+        else if (isBlocked) result.blocked++;
+        else result.idle++;
+
+        result.items.push({
+          id: k.address,
+          name: k.title || k.name || k.program?.name || "Subagent",
+          status: isRunning ? "running" : isBlocked ? "blocked" : "done",
+        });
       }
     }
 
-    // 2. Check Claude Code transcript subagents if not already tracked via Herdr terminals
-    const claudeSubs = this.agentStatus?.claude?.subagents;
-    if (claudeSubs && claudeSubs.total > 0 && result.total === 0) {
-      result.total += claudeSubs.total;
-      result.running += claudeSubs.running;
-      result.idle += claudeSubs.done;
-      const claudeItems = [];
-      for (const item of claudeSubs.items) {
-        const subItem = {
+    // 2. If current agent is Claude Code, check Claude transcript subagent tasks
+    const isClaude =
+      activeKind === "claude" ||
+      (currentAgent &&
+        `${currentAgent.app || ""} ${currentAgent.program?.key || ""}`.toLowerCase().includes("claude"));
+    if (isClaude && result.total === 0) {
+      const claudeSubs = this.agentStatus?.claude?.subagents;
+      if (claudeSubs && claudeSubs.total > 0) {
+        result.total = claudeSubs.total;
+        result.running = claudeSubs.running;
+        result.idle = claudeSubs.done;
+        result.items = claudeSubs.items.map((item) => ({
           id: item.id,
-          parent: "claude",
           name: item.name,
           status: item.status,
-        };
-        result.items.push(subItem);
-        claudeItems.push(subItem);
+        }));
       }
-      result.byParent.set("claude", claudeItems);
     }
 
     return result;
   }
 
-  // Render Agents count & breakdown pill with rich tooltip (run / idle / blocked, subagents, and models)
+  // Render Agents count & breakdown pill scoped to CURRENT session's agent and its subagents
   renderAgentsWidget(t, cx) {
-    const list = typeof agents === "function" ? agents() : [];
-    const subStats = this.collectAllSubagents();
-    const hasSubs = subStats.total > 0;
+    const { currentAgent, activeKind, totalGlobalAgents } = this.resolveCurrentSessionAgent();
+    const hasAgent = Boolean(currentAgent || activeKind);
 
-    let running = 0;
-    let idle = 0;
-    let blocked = 0;
-    let done = 0;
-
-    for (const a of list) {
-      const s = a.status;
-      if (s === "working" || s === "running") running++;
-      else if (s === "blocked" || s === "error") blocked++;
-      else if (s === "done") done++;
-      else idle++;
-    }
-
-    const total = list.length;
-    if (total === 0 && !hasSubs) {
+    // If current session does not have an active AI agent
+    if (!hasAgent) {
       return h_flex()
         .id("statusbar-agents")
         .items_center()
         .gap(6)
+        .px(8)
+        .h(22)
+        .rounded(5)
+        .bg(t.surface ?? "#1e1e2e")
+        .border(1)
+        .border_color(t.border)
+        .cursor_pointer()
+        .tooltip(`目前 Session 無執行中 Agent\n全域共有 ${totalGlobalAgents} 個 Agent 在其他 Session\n點擊開啟 Agent 清單`)
+        .hover((s) => s.bg(t.selected ?? "#334155"))
+        .on_click(() => {
+          try {
+            run("mod.open", { name: "agents" });
+          } catch {}
+        })
         .child(div().size(6).rounded(3).bg(t.dim))
-        .child("0 agents");
+        .child(div().text_size(11).text_color(t.muted).child("0 agents"));
     }
 
-    const headerTitle = hasSubs
-      ? `Agents (${total} main · ${subStats.total} subagents${running > 0 || subStats.running > 0 ? ` · ${running + subStats.running} running` : ""})`
-      : `Agents (${total} total${running > 0 ? ` · ${running} running` : ""}${blocked > 0 ? ` · ${blocked} needs you` : ""})`;
+    const subStats = this.collectCurrentSessionSubagents(currentAgent, activeKind);
+    const hasSubs = subStats.total > 0;
 
-    const tooltipLines = [headerTitle, "──────────────────────────────"];
-    for (const a of list) {
-      const model = this.resolveAgentModel(a);
-      const loc = a.space_name ? `[${a.space_name}${a.tab_name ? ` · ${a.tab_name}` : ""}]` : "";
-      const appName = a.app || a.program?.name || "Agent";
-      const s = a.status;
-      const statusText = s === "working" || s === "running" ? "🟢 running"
-        : s === "blocked" ? "🟠 needs you"
-        : s === "done" ? "🔵 done"
-        : "⚪ idle";
+    // Check status of main agent in this session
+    const mainStatus =
+      currentAgent?.status ||
+      (activeKind === "antigravity" && this.agentStatus?.antigravity?.available ? "working" : "idle");
+    const isMainRunning = mainStatus === "working" || mainStatus === "running";
+    const isMainBlocked = mainStatus === "blocked";
 
-      let line = `• ${appName} ${loc}\n   狀態: ${statusText}`;
-      if (model) line += `\n   模型: ${model}`;
-      if (a.title && a.title !== appName) line += `\n   標題: ${a.title}`;
+    const isAnyRunning = isMainRunning || subStats.running > 0;
+    const isAnyBlocked = isMainBlocked || subStats.blocked > 0;
 
-      // Check subagents for this agent
-      const raw = `${a.app || ""} ${a.program?.key || ""}`.toLowerCase();
-      const parentKey = raw.includes("claude") ? "claude" : a.address;
-      const subs = subStats.byParent.get(a.address) || subStats.byParent.get(parentKey) || [];
-      if (subs.length > 0) {
-        const subRunning = subs.filter((x) => x.status === "running").length;
-        const subDone = subs.filter((x) => x.status !== "running").length;
-        line += `\n   └─ Subagents (${subs.length} 個: ${subRunning} 執行中 / ${subDone} 已完成)`;
-        for (const sub of subs) {
-          const subIcon = sub.status === "running" ? "🟢" : "⚪";
-          line += `\n      ├── ${subIcon} ${sub.name} (${sub.status})`;
-        }
-      }
-
-      tooltipLines.push(line);
-    }
-    tooltipLines.push("──────────────────────────────\n點擊開啟 Agent 清單");
-    const fullTooltip = tooltipLines.join("\n");
-
-    const activeRunning = hasSubs ? subStats.running : running;
-    const activeIdle = hasSubs ? subStats.idle : (idle + done);
-    const isAnyRunning = running > 0 || subStats.running > 0;
-    const isAnyBlocked = blocked > 0 || subStats.blocked > 0;
     const statusDotColor = isAnyBlocked
       ? (t.blocked ?? "#fab387")
       : isAnyRunning
       ? (t.ansi2 ?? "#a6e3a1")
       : t.dim;
+
+    const runningCount = hasSubs ? subStats.running : isMainRunning ? 1 : 0;
+    const idleCount = hasSubs ? subStats.idle : isMainRunning ? 0 : 1;
+
+    // Build rich tooltip for current session
+    const model = currentAgent
+      ? this.resolveAgentModel(currentAgent)
+      : activeKind
+      ? this.agentStatus?.[activeKind]?.model
+      : "AI Agent";
+    const agentLabel =
+      currentAgent?.app ||
+      currentAgent?.program?.name ||
+      (activeKind === "claude" ? "Claude Code" : activeKind === "codex" ? "Codex" : "Antigravity");
+
+    const tooltipLines = [
+      `目前 Session: ${agentLabel}${model ? ` · ${model}` : ""}`,
+      `狀態: ${isMainRunning ? "🟢 running" : isMainBlocked ? "🟠 needs you" : "⚪ idle"}`,
+    ];
+
+    if (hasSubs) {
+      tooltipLines.push(`└─ Subagents (${subStats.total} subagents: ${subStats.running} 執行中 · ${subStats.idle} 已完成)`);
+      for (const s of subStats.items) {
+        const subIcon = s.status === "running" ? "🟢" : "⚪";
+        tooltipLines.push(`   ├── ${subIcon} ${s.name} (${s.status})`);
+      }
+    } else {
+      tooltipLines.push("目前無派生 Subagent");
+    }
+
+    if (totalGlobalAgents > 1) {
+      tooltipLines.push("──────────────────────────────");
+      tooltipLines.push(`其他 Session: 共有 ${totalGlobalAgents - 1} 個背景 Agent 在其他視窗`);
+    }
+    tooltipLines.push("點擊開啟全部 Agent 清單");
+    const fullTooltip = tooltipLines.join("\n");
 
     return h_flex()
       .id("statusbar-agents")
@@ -806,8 +841,8 @@ export default class WorkspaceStatus extends View {
           .text_color(isAnyRunning ? t.foreground : t.muted)
           .child(
             hasSubs
-              ? `${total} agent${total > 1 ? "s" : ""} · ${subStats.total} subagents`
-              : `${total} agents`
+              ? `1 agent · ${subStats.total} subagents`
+              : `1 agent`
           )
       )
       .child(
@@ -821,12 +856,12 @@ export default class WorkspaceStatus extends View {
               .size(9)
               .flex_none()
               .text_color(t.ansi2 ?? "#a6e3a1")
-              .when(activeRunning > 0, (s) => s.spin(900))
+              .when(runningCount > 0, (s) => s.spin(900))
           )
           .child(
             div()
-              .text_color(activeRunning > 0 ? (t.ansi2 ?? "#a6e3a1") : t.dim)
-              .child(String(activeRunning))
+              .text_color(runningCount > 0 ? (t.ansi2 ?? "#a6e3a1") : t.dim)
+              .child(String(runningCount))
           )
           .child(div().text_color(t.dim).child("/"))
           .child(
@@ -840,7 +875,7 @@ export default class WorkspaceStatus extends View {
           .child(
             div()
               .text_color(t.muted)
-              .child(String(activeIdle))
+              .child(String(idleCount))
           )
           .child(div().text_color(t.dim).child(")"))
       )
@@ -849,7 +884,7 @@ export default class WorkspaceStatus extends View {
           div()
             .text_size(10.5)
             .text_color(t.blocked ?? "#fab387")
-            .child(`· ${blocked + subStats.blocked} needs you`)
+            .child(`· 1 needs you`)
         )
       );
   }

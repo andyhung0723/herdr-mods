@@ -542,13 +542,12 @@ test("statusbar-agents displays breakdown of running and idle agents with rich m
   assert.ok(agentsWidget, "Should render statusbar-agents widget");
 
   const texts = collectAllText(agentsWidget);
-  assert.ok(texts.some((t) => t.includes("2 agents")), "Should display total agents count");
+  assert.ok(texts.some((t) => t.includes("1 agent")), "Should display current session agent count");
   assert.ok(texts.some((t) => t.includes("1")), "Should display running agents count");
 
-  assert.ok(agentsWidget._tooltip.includes("Agents (2 total · 1 running)"), "Tooltip should have summary header");
+  assert.ok(agentsWidget._tooltip.includes("目前 Session"), "Tooltip should have current session header");
   assert.ok(agentsWidget._tooltip.includes("running"), "Tooltip should list running status");
-  assert.ok(agentsWidget._tooltip.includes("idle"), "Tooltip should list idle status");
-  assert.ok(agentsWidget._tooltip.includes("點擊開啟 Agent 清單"), "Tooltip should indicate click action");
+  assert.ok(agentsWidget._tooltip.includes("點擊開啟全部 Agent 清單"), "Tooltip should indicate click action");
 
   agentsWidget._onClick(null, cx);
   assert.ok(
