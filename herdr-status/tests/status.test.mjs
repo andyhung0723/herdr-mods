@@ -315,6 +315,7 @@ test("agent collector detects active Claude pane and renders expanded Claude pil
   assert.ok(claudeTexts.some((t) => t.includes("Opus 5.5")), "Should display model Opus 5.5");
   assert.ok(claudeTexts.some((t) => t.includes("5h 55%")), "Should display 5h quota");
   assert.ok(claudeTexts.some((t) => t.includes("7d 18%")), "Should display 7d quota for Claude");
+  assert.equal(claudeTexts.some((t) => t.includes("$")), false, "Claude should NOT display cost/dollar amount in pill");
 
   const codexBadge = findElementById(rendered, "agent-badge-codex");
   assert.ok(codexBadge, "Should render compact Codex badge flanking");

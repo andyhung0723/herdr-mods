@@ -271,11 +271,6 @@ export default class WorkspaceStatus extends View {
               .text_color(sevenD >= 85 ? (t.blocked ?? "#f38ba8") : t.muted)
               .child(`7d ${sevenD}%`)
           )
-      )
-      .when(Boolean(cost), (el) =>
-        el
-          .child(div().text_color(t.dim).child("·"))
-          .child(div().text_size(11).text_color(t.dim).child(cost))
       );
   }
 
