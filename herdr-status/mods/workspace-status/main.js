@@ -762,6 +762,8 @@ export default class WorkspaceStatus extends View {
     tooltipLines.push("──────────────────────────────\n點擊開啟 Agent 清單");
     const fullTooltip = tooltipLines.join("\n");
 
+    const activeRunning = hasSubs ? subStats.running : running;
+    const activeIdle = hasSubs ? subStats.idle : (idle + done);
     const isAnyRunning = running > 0 || subStats.running > 0;
     const isAnyBlocked = blocked > 0 || subStats.blocked > 0;
     const statusDotColor = isAnyBlocked
@@ -774,12 +776,15 @@ export default class WorkspaceStatus extends View {
       .id("statusbar-agents")
       .items_center()
       .gap(6)
-      .px(6)
+      .px(8)
       .h(22)
-      .rounded(4)
+      .rounded(5)
+      .bg(t.surface ?? "#1e1e2e")
+      .border(1)
+      .border_color(t.border)
       .cursor_pointer()
       .tooltip(fullTooltip)
-      .hover((s) => s.bg(t.surface ?? "#1e1e2e"))
+      .hover((s) => s.bg(t.selected ?? "#334155"))
       .on_click(() => {
         try {
           run("mod.open", { name: "agents" });
@@ -796,62 +801,50 @@ export default class WorkspaceStatus extends View {
       )
       .child(
         div()
+          .text_size(11)
+          .font_medium()
           .text_color(isAnyRunning ? t.foreground : t.muted)
-          .child(`${total} agent${total > 1 ? "s" : ""}`)
-      )
-      .when(hasSubs, (el) =>
-        el
-          .child(div().text_color(t.dim).child("·"))
           .child(
-            h_flex()
-              .items_center()
-              .gap(3)
-              .child(
-                div()
-                  .text_color(subStats.running > 0 ? t.foreground : t.muted)
-                  .child(`${subStats.total} subagents`)
-              )
-              .child(div().text_color(t.dim).child("("))
-              .child(
-                svg("mods/workspace-chrome/spinner.svg")
-                  .size(9)
-                  .flex_none()
-                  .text_color(t.ansi2 ?? "#a6e3a1")
-                  .when(subStats.running > 0, (s) => s.spin(900))
-              )
-              .child(
-                div()
-                  .text_size(10.5)
-                  .text_color(t.ansi2 ?? "#a6e3a1")
-                  .child(String(subStats.running))
-              )
-              .child(div().text_color(t.dim).child("/"))
-              .child(
-                div()
-                  .size(6)
-                  .rounded(3)
-                  .border(1)
-                  .border_color(t.dim)
-                  .flex_none()
-              )
-              .child(
-                div()
-                  .text_size(10.5)
-                  .text_color(t.muted)
-                  .child(String(subStats.idle))
-              )
-              .child(div().text_color(t.dim).child(")"))
+            hasSubs
+              ? `${total} agent${total > 1 ? "s" : ""} · ${subStats.total} subagents`
+              : `${total} agents`
           )
       )
-      .when(!hasSubs && running > 0, (el) =>
-        el.child(
-          div()
-            .text_size(10.5)
-            .text_color(t.ansi2 ?? "#a6e3a1")
-            .child(`(${running} running)`)
-        )
+      .child(
+        h_flex()
+          .items_center()
+          .gap(3)
+          .text_size(10.5)
+          .child(div().text_color(t.dim).child("("))
+          .child(
+            svg("mods/workspace-chrome/spinner.svg")
+              .size(9)
+              .flex_none()
+              .text_color(t.ansi2 ?? "#a6e3a1")
+              .when(activeRunning > 0, (s) => s.spin(900))
+          )
+          .child(
+            div()
+              .text_color(activeRunning > 0 ? (t.ansi2 ?? "#a6e3a1") : t.dim)
+              .child(String(activeRunning))
+          )
+          .child(div().text_color(t.dim).child("/"))
+          .child(
+            div()
+              .size(5)
+              .rounded(3)
+              .border(1)
+              .border_color(t.dim)
+              .flex_none()
+          )
+          .child(
+            div()
+              .text_color(t.muted)
+              .child(String(activeIdle))
+          )
+          .child(div().text_color(t.dim).child(")"))
       )
-      .when(blocked > 0 || subStats.blocked > 0, (el) =>
+      .when(isAnyBlocked, (el) =>
         el.child(
           div()
             .text_size(10.5)

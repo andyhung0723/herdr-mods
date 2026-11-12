@@ -543,7 +543,7 @@ test("statusbar-agents displays breakdown of running and idle agents with rich m
 
   const texts = collectAllText(agentsWidget);
   assert.ok(texts.some((t) => t.includes("2 agents")), "Should display total agents count");
-  assert.ok(texts.some((t) => t.includes("(1 running)")), "Should display running agents count");
+  assert.ok(texts.some((t) => t.includes("1")), "Should display running agents count");
 
   assert.ok(agentsWidget._tooltip.includes("Agents (2 total · 1 running)"), "Tooltip should have summary header");
   assert.ok(agentsWidget._tooltip.includes("running"), "Tooltip should list running status");
