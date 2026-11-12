@@ -374,8 +374,8 @@ test("agent collector detects active Antigravity pane and renders expanded Antig
   assert.ok(agyTexts.some((t) => t.includes("Gemini 3.8 Flash")), "Should display Gemini model");
   assert.ok(agyTexts.some((t) => t.includes("medium")), "Should display full effort medium");
   assert.equal(agyTexts.some((t) => t.includes("(Medium)")), false, "AGY should NOT include (Medium) in model name");
-  assert.ok(agyTexts.some((t) => t.includes("5h 85%")), "Should display 5h quota");
-  assert.ok(agyTexts.some((t) => t.includes("7d 80%")), "Should display 7d quota (not wk)");
+  assert.ok(agyTexts.some((t) => t.includes("5h 15%")), "Should display 5h used quota");
+  assert.ok(agyTexts.some((t) => t.includes("7d 20%")), "Should display 7d used quota (not wk)");
   assert.equal(agyTexts.some((t) => t.includes("rem")), false, "AGY should NOT display rem text");
   assert.equal(agyTexts.some((t) => t.includes("steps")), false, "AGY should NOT display steps text");
 

@@ -345,14 +345,14 @@ export default class WorkspaceStatus extends View {
         model = model.replace(/\s*\([^)]+\)/g, "").trim();
       }
     }
-    const fiveHRem = agy?.fiveHour?.remainingPercent;
-    const weekRem = agy?.weekly?.remainingPercent;
+    const fiveH = agy?.fiveHour?.percent;
+    const week = agy?.weekly?.percent;
 
     let tip = `Antigravity · ${model}`;
     if (effort) tip += ` (${effort})`;
-    if (fiveHRem !== null && fiveHRem !== undefined) tip += `\n5-Hour Limit: ${fiveHRem}% remaining`;
+    if (fiveH !== null && fiveH !== undefined) tip += `\n5-Hour Limit: ${fiveH}% used`;
     if (agy?.fiveHour?.timeRemaining) tip += ` (${agy.fiveHour.timeRemaining})`;
-    if (weekRem !== null && weekRem !== undefined) tip += `\n7-Day Limit: ${weekRem}% remaining`;
+    if (week !== null && week !== undefined) tip += `\n7-Day Limit: ${week}% used`;
     if (agy?.weekly?.timeRemaining) tip += ` (${agy.weekly.timeRemaining})`;
     tip += "\nClick to open AI Quotas Dashboard";
 
@@ -390,24 +390,24 @@ export default class WorkspaceStatus extends View {
             .child(effort)
         )
       )
-      .when(fiveHRem !== null && fiveHRem !== undefined, (el) =>
+      .when(fiveH !== null && fiveH !== undefined, (el) =>
         el
           .child(div().text_color(t.dim).child("·"))
           .child(
             div()
               .text_size(11)
-              .text_color(fiveHRem <= 15 ? (t.blocked ?? "#f38ba8") : t.muted)
-              .child(`5h ${fiveHRem}%`)
+              .text_color(fiveH >= 85 ? (t.blocked ?? "#f38ba8") : t.muted)
+              .child(`5h ${fiveH}%`)
           )
       )
-      .when(weekRem !== null && weekRem !== undefined, (el) =>
+      .when(week !== null && week !== undefined, (el) =>
         el
           .child(div().text_color(t.dim).child("·"))
           .child(
             div()
               .text_size(11)
-              .text_color(weekRem <= 15 ? (t.blocked ?? "#f38ba8") : t.muted)
-              .child(`7d ${weekRem}%`)
+              .text_color(week >= 85 ? (t.blocked ?? "#f38ba8") : t.muted)
+              .child(`7d ${week}%`)
           )
       );
   }
@@ -472,9 +472,9 @@ export default class WorkspaceStatus extends View {
 
   // Render compact badge for Antigravity
   renderCompactAntigravity(t, agy) {
-    const rem = agy?.fiveHour?.remainingPercent ?? agy?.weekly?.remainingPercent;
-    const label = rem !== null && rem !== undefined ? `${rem}%` : "AGY";
-    const tip = `Antigravity${rem !== null && rem !== undefined ? ` · ${rem}% remaining` : ""}\nClick to open AI Quotas Dashboard`;
+    const used = agy?.fiveHour?.percent ?? agy?.weekly?.percent;
+    const label = used !== null && used !== undefined ? `${used}%` : "AGY";
+    const tip = `Antigravity${used !== null && used !== undefined ? ` · 5h: ${used}% used` : ""}\nClick to open AI Quotas Dashboard`;
 
     return h_flex()
       .id("agent-badge-antigravity")
