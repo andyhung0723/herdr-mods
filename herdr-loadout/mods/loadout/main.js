@@ -20,27 +20,49 @@ import {
   undo,
   undoable,
   visibleRows,
+  visibleTargets,
 } from "./client.js";
 
 const SPIN = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 const REFRESH_MS = 30_000;
-const COLUMN_WIDTH = 116;
+const COLUMN_WIDTH = 112;
 const ROW_HEIGHT = 28;
+const KIND_WIDTH = 84;
 
 const CELL_LOOK = {
-  ok: { glyph: "✓", color: (t) => t.ansi2 },
-  pending: { glyph: "+", color: (t) => t.ansi3 },
-  conflict: { glyph: "!", color: (t) => t.ansi1 },
-  unresolved: { glyph: "✗", color: (t) => t.ansi1 },
-  observed: { glyph: "○", color: (t) => t.accent },
-  absent: { glyph: "◌", color: (t) => t.dim },
-  inherited: { glyph: "↥", color: (t) => t.accent },
-  off: { glyph: "·", color: (t) => t.dim },
-  "n/a": { glyph: "–", color: (t) => t.border },
+  ok: { glyph: "✓", label: "on", color: (t) => t.ansi2 },
+  pending: { glyph: "+", label: "pending apply", color: (t) => t.ansi3 },
+  conflict: { glyph: "!", label: "conflict", color: (t) => t.ansi1 },
+  unresolved: { glyph: "✗", label: "unresolved", color: (t) => t.ansi1 },
+  observed: { glyph: "○", label: "observed (app-managed)", color: (t) => t.accent },
+  absent: { glyph: "◌", label: "observed, absent", color: (t) => t.dim },
+  inherited: { glyph: "↥", label: "shared by all Codex profiles", color: (t) => t.accent },
+  off: { glyph: "·", label: "off", color: (t) => t.dim },
+  "n/a": { glyph: "–", label: "unsupported", color: (t) => t.border },
 };
 
-const LEGEND =
-  "✓ on  + pending  ! conflict  ✗ unresolved  ○ observed  ◌ absent  ↥ shared (all Codex profiles)  · off  – unsupported";
+const KEYS = [
+  ["↑↓←→ hjkl", "move"],
+  ["space", "toggle"],
+  ["x", "release (keep files)"],
+  ["a", "apply pending"],
+  ["u", "undo / redo"],
+  ["/", "search"],
+  ["tab", "kind filter"],
+  ["1–9", "show / hide account"],
+  ["0", "all accounts"],
+  ["r", "refresh"],
+  ["?", "this help"],
+  ["esc", "close"],
+];
+
+const FOOTER_KEYS = [
+  ["space", "toggle"],
+  ["x", "release"],
+  ["u", "undo"],
+  ["1–9", "accounts"],
+  ["?", "help"],
+];
 
 export default class Loadout extends View {
   init(initialProps, cx) {
@@ -52,6 +74,8 @@ export default class Loadout extends View {
     this.busy = new Set();
     this.restartTargets = new Set();
     this.kindFilter = "all";
+    this.accounts = new Set();
+    this.showHelp = false;
     this.cursor = { row: 0, col: 0 };
     this.message = null;
     this.query = "";
@@ -60,7 +84,7 @@ export default class Loadout extends View {
 
     this.handle = cx.focus_handle();
     this.handle.focus();
-    this.search = InputState.new({ placeholder: "Search  ( / )" });
+    this.search = InputState.new({ placeholder: "Search resources" });
     this.search.on("change", (_event, cx) => {
       this.query = this.search.value();
       this.cursor = { ...this.cursor, row: 0 };
@@ -97,8 +121,28 @@ export default class Loadout extends View {
     });
   }
 
+  targets() {
+    return this.status ? visibleTargets(this.status, this.accounts) : [];
+  }
+
+  targetDetails() {
+    const shown = new Set(this.targets());
+    return this.status.targetDetails.filter((target) => shown.has(target.name));
+  }
+
   rows() {
-    return this.status ? visibleRows(this.status, this.kindFilter, this.query) : [];
+    return this.status
+      ? visibleRows(this.status, this.kindFilter, this.query, this.targets())
+      : [];
+  }
+
+  toggleAccount(name) {
+    if (name === null) this.accounts = new Set();
+    else if (this.accounts.has(name)) this.accounts.delete(name);
+    else this.accounts.add(name);
+    if (this.accounts.size === this.status.targets.length) this.accounts = new Set();
+    this.cursor = { row: 0, col: 0 };
+    this.clampCursor();
   }
 
   leaveSearch(cx) {
@@ -130,7 +174,7 @@ export default class Loadout extends View {
 
   clampCursor() {
     const rowCount = this.rows().length;
-    const colCount = this.status?.targets.length ?? 0;
+    const colCount = this.targets().length;
     this.cursor = {
       row: Math.max(0, Math.min(this.cursor.row, rowCount - 1)),
       col: Math.max(0, Math.min(this.cursor.col, colCount - 1)),
@@ -276,7 +320,7 @@ export default class Loadout extends View {
       case "space":
       case "enter": {
         const row = rows[this.cursor.row];
-        if (row) this.toggleCell(row, this.status.targets[this.cursor.col], cx);
+        if (row) this.toggleCell(row, this.targets()[this.cursor.col], cx);
         break;
       }
       case "tab":
@@ -297,14 +341,28 @@ export default class Loadout extends View {
         break;
       case "x": {
         const row = rows[this.cursor.row];
-        if (row) this.releaseCell(row, this.status.targets[this.cursor.col], cx);
+        if (row) this.releaseCell(row, this.targets()[this.cursor.col], cx);
         break;
       }
       case "u":
         this.undoLast(cx);
         break;
-      default:
-        return;
+      case "?":
+      case "shift-?":
+      case "shift-/":
+        this.showHelp = !this.showHelp;
+        break;
+      case "escape":
+        if (!this.showHelp) return;
+        this.showHelp = false;
+        break;
+      default: {
+        const digit = /^[0-9]$/.test(event.keystroke) ? Number(event.keystroke) : null;
+        if (digit === null) return;
+        if (digit === 0) this.toggleAccount(null);
+        else if (digit <= this.status.targets.length) this.toggleAccount(this.status.targets[digit - 1]);
+        else return;
+      }
     }
     cx.stop_propagation();
     cx.notify();
@@ -332,29 +390,30 @@ export default class Loadout extends View {
       .h(46)
       .flex_none()
       .px(16)
-      .gap(10)
+      .gap(8)
       .items_center()
       .bg(t.surface)
       .border_b(1)
       .border_color(t.border)
       .child(div().font_semibold().text_size(14).child("Loadout"))
-      .child(div().text_color(t.dim).child("skills · hooks · MCP · plugins per account"))
+      .child(div().text_color(t.dim).text_size(12).truncate().child("resources per account"))
       .child(div().flex_1())
       .when(summary?.pending > 0 || applying, (el) =>
         el.child(
-          button(t, "apply-all", applying ? null : `Apply ${summary.pending} pending  (a)`)
+          button(t, "apply-all", applying ? null : `Apply ${summary.pending} pending`, "a", { primary: true })
             .when(applying, (b) => b.frames(SPIN, 90))
             .on_click((_event, cx) => this.applyAll(cx)),
         ),
       )
       .when(this.lastRun !== null, (el) =>
         el.child(
-          button(t, "undo", this.busy.has("undo") ? null : `↶ Undo ${shorten(this.lastRun.label)}  (u)`)
+          button(t, "undo", this.busy.has("undo") ? null : `↶ ${shorten(this.lastRun.label, 28)}`, "u")
+            .tooltip(`Undo: ${this.lastRun.label}`)
             .when(this.busy.has("undo"), (b) => b.frames(SPIN, 90))
             .on_click((_event, cx) => this.undoLast(cx)),
         ),
       )
-      .child(button(t, "refresh", "↻ Refresh  (r)").on_click((_event, cx) => this.refresh(cx)));
+      .child(button(t, "refresh", "↻ Refresh", "r").on_click((_event, cx) => this.refresh(cx)));
   }
 
   renderBody(t) {
@@ -367,64 +426,90 @@ export default class Loadout extends View {
         .child(div().text_color(t.ansi1).font_semibold().child("Couldn't read the loadout"))
         .child(div().text_color(t.muted).max_w(640).child(this.error));
     }
+    const rows = this.rows();
     return v_flex()
       .flex_1()
       .min_h(0)
-      .child(this.renderFilters(t))
+      .child(this.renderToolbar(t))
       .child(this.renderColumns(t))
       .child(
-        v_flex()
-          .id("loadout-rows")
-          .flex_1()
-          .min_h(0)
-          .overflow_y_scrollbar()
-          .children(this.rows().map((row, index) => this.renderRow(t, row, index))),
+        rows.length === 0
+          ? centered(t)
+              .gap(6)
+              .child(div().text_color(t.muted).child("Nothing matches"))
+              .child(div().text_size(11).text_color(t.dim).child("esc clears the search · 0 shows every account · tab changes the kind"))
+          : v_flex()
+              .id("loadout-rows")
+              .flex_1()
+              .min_h(0)
+              .overflow_y_scrollbar()
+              .children(rows.map((row, index) => this.renderRow(t, row, index))),
       );
   }
 
-  renderFilters(t) {
-    const chips = [{ kind: "all", count: this.status.rows.length }, ...kindCounts(this.status)];
-    return h_flex()
+  renderToolbar(t) {
+    const kinds = [{ kind: "all", count: this.status.rows.length }, ...kindCounts(this.status)];
+    return v_flex()
       .flex_none()
       .px(16)
-      .py(8)
-      .gap(6)
-      .items_center()
+      .py(10)
+      .gap(8)
       .border_b(1)
       .border_color(t.border)
-      .child(this.renderSearch(t))
-      .children(
-        chips.map(({ kind, count }) => {
-          const active = this.kindFilter === kind;
-          return div()
-            .id(`filter-${kind}`)
-            .px(8)
-            .py(2)
-            .rounded(10)
-            .cursor_pointer()
-            .text_size(12)
-            .bg(active ? t.selected : t.surface)
-            .text_color(active ? t.foreground : t.muted)
-            .hover((s) => s.bg(t.hover))
-            .on_click((_event, cx) => {
-              this.kindFilter = kind;
-              this.cursor = { ...this.cursor, row: 0 };
-              cx.notify();
-            })
-            .child(`${kind} ${count}`);
-        }),
+      .child(
+        h_flex()
+          .gap(12)
+          .items_center()
+          .child(this.renderSearch(t))
+          .child(div().flex_1())
+          .child(div().text_size(11).text_color(t.dim).flex_none().child("Accounts"))
+          .child(
+            h_flex()
+              .flex_none()
+              .gap(4)
+              .child(chip(t, "account-all", "All", null, this.accounts.size === 0, (cx) => this.pick(cx, () => this.toggleAccount(null))))
+              .children(
+                this.status.targets.map((name, index) =>
+                  chip(t, `account-${name}`, name, null, this.accounts.has(name), (cx) =>
+                    this.pick(cx, () => this.toggleAccount(name)),
+                  ).tooltip(`${index + 1} to show / hide`),
+                ),
+              ),
+          ),
+      )
+      .child(
+        h_flex()
+          .flex_wrap()
+          .gap_x(4)
+          .gap_y(4)
+          .items_center()
+          .children(
+            kinds.map(({ kind, count }) =>
+              chip(t, `kind-${kind}`, kind === "all" ? "All kinds" : kind, count, this.kindFilter === kind, (cx) =>
+                this.pick(cx, () => {
+                  this.kindFilter = kind;
+                  this.cursor = { ...this.cursor, row: 0 };
+                }),
+              ),
+            ),
+          ),
       );
+  }
+
+  pick(cx, change) {
+    change();
+    this.clampCursor();
+    cx.notify();
   }
 
   renderSearch(t) {
     const matches = this.query ? `${this.rows().length}` : null;
     return h_flex()
       .id("loadout-search")
-      .w(240)
+      .w(260)
       .h(28)
       .flex_none()
       .px(10)
-      .mr(6)
       .gap(6)
       .items_center()
       .rounded(8)
@@ -435,29 +520,42 @@ export default class Loadout extends View {
       .on_mouse_down("left", (_event, cx) => cx.stop_propagation())
       .child(div().text_color(t.dim).child("⌕"))
       .child(Input.new(this.search).flex_1().min_w(0).text_size(12).text_color(t.foreground))
-      .when(matches !== null, (el) => el.child(div().text_size(11).text_color(t.dim).child(matches)));
+      .child(
+        matches !== null
+          ? div().text_size(11).text_color(t.dim).child(matches)
+          : kbd(t, "/"),
+      );
   }
 
   renderColumns(t) {
     return h_flex()
       .flex_none()
-      .h(40)
+      .h(42)
       .px(16)
       .items_center()
       .border_b(1)
       .border_color(t.border)
-      .child(div().flex_1().text_color(t.dim).text_size(12).child("resource"))
+      .child(
+        h_flex()
+          .flex_1()
+          .gap(8)
+          .text_size(11)
+          .text_color(t.dim)
+          .child(div().w(KIND_WIDTH).flex_none().child("kind"))
+          .child(div().child("resource")),
+      )
       .children(
-        this.status.targetDetails.map((target) =>
+        this.targetDetails().map((target) =>
           v_flex()
             .w(COLUMN_WIDTH)
             .flex_none()
             .items_center()
-            .child(div().font_semibold().text_size(12).child(target.name))
+            .gap(1)
+            .child(div().font_semibold().text_size(12).truncate().child(target.name))
             .child(
               this.restartTargets.has(target.name)
                 ? div().text_size(10).text_color(t.ansi3).child("↻ restart sessions")
-                : div().text_size(10).text_color(t.dim).child(target.tool),
+                : div().text_size(10).text_color(t.dim).child(columnNote(target)),
             ),
         ),
       );
@@ -479,14 +577,14 @@ export default class Loadout extends View {
           .min_w(0)
           .gap(8)
           .items_center()
-          .child(div().w(84).flex_none().text_size(11).text_color(t.dim).child(row.kind))
+          .child(div().w(KIND_WIDTH).flex_none().text_size(11).text_color(t.dim).child(row.kind))
           .child(div().truncate().child(row.name))
           .when(row.observe, (el) =>
             el.child(div().text_size(10).text_color(t.accent).child("observe")),
           ),
       )
       .children(
-        this.status.targets.map((target, col) =>
+        this.targets().map((target, col) =>
           this.renderCell(t, row, target, {
             focused: focusedRow && col === this.cursor.col,
           }),
@@ -510,12 +608,13 @@ export default class Loadout extends View {
       .rounded(6)
       .when(focused, (el) => el.border_1().border_color(t.accent))
       .text_color(look.color(t))
+      .tooltip(`${target}: ${look.label}`)
       .when(toggleable, (el) =>
         el
           .cursor_pointer()
           .hover((s) => s.bg(t.raised))
           .on_click((_event, cx) => {
-            this.cursor = { row: this.rows().indexOf(row), col: this.status.targets.indexOf(target) };
+            this.cursor = { row: this.rows().indexOf(row), col: this.targets().indexOf(target) };
             this.toggleCell(row, target, cx);
           }),
       )
@@ -524,39 +623,151 @@ export default class Loadout extends View {
   }
 
   renderFooter(t) {
-    const summary = this.status ? summarize(this.status) : null;
-    const notes = [
-      this.message,
-      summary?.conflict ? `${summary.conflict} conflict` : null,
-      summary?.unresolved ? `${summary.unresolved} unresolved` : null,
-      summary?.orphans ? `${summary.orphans} orphan` : null,
-      ...(summary?.warnings ?? []).map((warning) => `⚠ ${warning}`),
-    ].filter(Boolean);
     return v_flex()
       .flex_none()
-      .px(16)
-      .py(8)
-      .gap(4)
       .border_t(1)
       .border_color(t.border)
       .bg(t.surface)
       .text_size(11)
-      .children(notes.map((note) => div().truncate().text_color(t.muted).child(note)))
-      .child(div().text_color(t.dim).child(`${LEGEND}    ↑↓←→ move · space toggle · x release (keep files) · u undo · / search · tab filter`));
+      .when(this.showHelp, (el) => el.child(this.renderHelp(t)))
+      .child(
+        h_flex()
+          .h(34)
+          .px(16)
+          .gap(16)
+          .items_center()
+          .child(h_flex().flex_1().min_w(0).gap(10).items_center().children(this.statusNotes(t)))
+          .child(
+            h_flex()
+              .flex_none()
+              .gap(12)
+              .items_center()
+              .children(FOOTER_KEYS.map(([key, label]) => keyHint(t, key, label))),
+          ),
+      );
+  }
+
+  /** The left side of the footer: the last action's result, else what needs attention. */
+  statusNotes(t) {
+    const summary = this.status ? summarize(this.status) : null;
+    if (this.message) return [div().truncate().text_color(t.muted).child(this.message)];
+    if (!summary) return [];
+    const notes = [
+      summary.pending ? [t.ansi3, `+ ${summary.pending} pending`] : null,
+      summary.conflict ? [t.ansi1, `! ${summary.conflict} conflict`] : null,
+      summary.unresolved ? [t.ansi1, `✗ ${summary.unresolved} unresolved`] : null,
+      summary.orphans ? [t.ansi3, `${summary.orphans} orphan`] : null,
+      summary.warnings.length ? [t.ansi3, `⚠ ${summary.warnings.length} warning${summary.warnings.length > 1 ? "s" : ""} · ? to read`] : null,
+    ].filter(Boolean);
+    if (notes.length === 0) return [div().text_color(t.ansi2).child("✓ every account matches the manifest")];
+    return notes.map(([color, text]) => div().flex_none().text_color(color).child(text));
+  }
+
+  renderHelp(t) {
+    const warnings = this.status ? summarize(this.status).warnings : [];
+    const section = (title) => div().text_size(10).font_semibold().text_color(t.dim).child(title.toUpperCase());
+    return v_flex()
+      .px(16)
+      .py(12)
+      .gap(10)
+      .border_b(1)
+      .border_color(t.border)
+      .child(section("Cells"))
+      .child(
+        h_flex()
+          .flex_wrap()
+          .gap_x(18)
+          .gap_y(6)
+          .children(
+            Object.values(CELL_LOOK).map((look) =>
+              h_flex()
+                .gap(6)
+                .items_center()
+                .child(div().w(12).text_color(look.color(t)).child(look.glyph))
+                .child(div().text_color(t.muted).child(look.label)),
+            ),
+          ),
+      )
+      .child(section("Keys"))
+      .child(
+        h_flex()
+          .flex_wrap()
+          .gap_x(18)
+          .gap_y(6)
+          .children(KEYS.map(([key, label]) => keyHint(t, key, label))),
+      )
+      .when(warnings.length > 0, (el) =>
+        el
+          .child(section("Warnings"))
+          .children(warnings.map((warning) => div().text_color(t.ansi3).child(`⚠ ${warning}`))),
+      );
   }
 }
 
-function button(t, id, label) {
-  const el = div()
+/** Under an account name: its tool unless the name already says so, and its tags. */
+function columnNote(target) {
+  const parts = target.name.startsWith(target.tool) ? [] : [target.tool];
+  return [...parts, ...target.tags].join(" · ") || "personal";
+}
+
+function chip(t, id, label, count, active, onClick) {
+  return h_flex()
+    .id(id)
+    .flex_none()
+    .gap(5)
+    .items_center()
+    .px(9)
+    .h(24)
+    .rounded(12)
+    .cursor_pointer()
+    .text_size(12)
+    .border_1()
+    .border_color(active ? t.accent : t.border)
+    .bg(active ? t.selected : t.surface)
+    .text_color(active ? t.foreground : t.muted)
+    .hover((s) => s.bg(t.hover))
+    .on_click((_event, cx) => onClick(cx))
+    .child(label)
+    .when(count !== null, (el) => el.child(div().text_size(11).text_color(t.dim).child(String(count))));
+}
+
+function kbd(t, key) {
+  return div()
+    .flex_none()
+    .px(5)
+    .rounded(4)
+    .border_1()
+    .border_color(t.border)
+    .bg(t.raised)
+    .text_size(10)
+    .text_color(t.muted)
+    .child(key);
+}
+
+function keyHint(t, key, label) {
+  return h_flex()
+    .flex_none()
+    .gap(5)
+    .items_center()
+    .child(kbd(t, key))
+    .child(div().text_color(t.dim).child(label));
+}
+
+function button(t, id, label, key, { primary = false } = {}) {
+  const el = h_flex()
     .id(`btn-${id}`)
+    .flex_none()
+    .gap(6)
+    .items_center()
     .px(10)
-    .py(4)
+    .h(28)
     .rounded(6)
     .cursor_pointer()
-    .bg(t.raised)
+    .bg(primary ? t.selected : t.raised)
+    .when(primary, (b) => b.border_1().border_color(t.accent))
     .text_size(12)
     .hover((s) => s.bg(t.hover));
-  return label ? el.child(label) : el;
+  return label ? el.child(label).when(Boolean(key), (b) => b.child(kbd(t, key))) : el;
 }
 
 function shorten(label, max = 36) {

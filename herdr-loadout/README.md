@@ -10,7 +10,8 @@
 - **Apply pending**：manifest 在外部被改過時，標題列出現 `Apply N pending`（`a`）。
 - **Release**（`x`）：`loadout release <resource> <target>`。這個帳號不再由 loadout 管理，但檔案留在原處，不會刪除。跟 `Space` 關閉不同，`Space` 會移除。
 - **Undo**（`u`，或標題列的 `↶ Undo …`）：`loadout restore <run>`，還原上一次的 toggle / apply / release，連 manifest 那一行也一起還原。開啟時會取 `loadout history` 最近一次的 run。之後被改過的項目會保持原樣並發 toast。undo 本身也能再 undo，等於 redo。
-- **篩選**：依種類篩選（`Tab` / `Shift-Tab` 或點 chip）。
+- **篩選**：依種類篩選（`Tab` / `Shift-Tab` 或點 chip）；依帳號篩選（`1`–`9` 顯示／隱藏第 N 個帳號，`0` 回到全部，或點右上的 Accounts chip），只留選到的帳號欄，選到的帳號都不支援的資源整列隱藏。
+- **說明**：`?` 展開格子圖例、全部快捷鍵與 warnings；footer 平時只顯示狀態與常用鍵。
 - 失敗（conflict、unresolved、寫檔錯誤）會發 toast，並在底部顯示。
 
 | 鍵 | 動作 |
@@ -19,6 +20,9 @@
 | `←→` / `hl` | 切換帳號欄 |
 | `Space` / `Enter` | 切換開關 |
 | `Tab` / `Shift-Tab` | 切換種類篩選 |
+| `1`–`9` / `0` | 顯示／隱藏第 N 個帳號 / 全部帳號 |
+| `/` | 搜尋 |
+| `?` | 圖例、快捷鍵、warnings |
 | `r` | 重新整理 |
 | `a` | 套用所有 pending |
 | `x` | release 游標所在格（保留檔案） |

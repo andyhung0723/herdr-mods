@@ -84,11 +84,19 @@ export function latestUndoable(history) {
   return latest ? { run: latest.id, label: latest.command } : null;
 }
 
-export function visibleRows(status, kindFilter, query = "") {
+/** Accounts shown as columns: every one when none is picked, else the picked ones in manifest order. */
+export function visibleTargets(status, picked) {
+  return picked.size === 0 ? status.targets : status.targets.filter((target) => picked.has(target));
+}
+
+/** With only some accounts shown, a resource none of them can hold ("n/a" everywhere) is noise. */
+export function visibleRows(status, kindFilter, query = "", targets = status.targets) {
   const needle = query.trim().toLowerCase();
+  const narrowed = targets.length < status.targets.length;
   return status.rows
     .filter((row) => kindFilter === "all" || row.kind === kindFilter)
     .filter((row) => !needle || row.name.toLowerCase().includes(needle))
+    .filter((row) => !narrowed || targets.some((target) => (row.cells[target] ?? "off") !== "n/a"))
     .sort(
       (a, b) =>
         KIND_ORDER.indexOf(a.kind) - KIND_ORDER.indexOf(b.kind) || a.name.localeCompare(b.name),

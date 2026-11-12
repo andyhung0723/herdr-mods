@@ -161,6 +161,15 @@ test("visibleRows sorts by kind order then name and filters by kind/query", asyn
   same(client.visibleRows(STATUS, "all", "LIST").map((row) => row.name), ["list-pr"]);
 });
 
+test("account filter: picked accounts in manifest order; rows nobody shown can hold are dropped", async () => {
+  const { client } = await harness();
+  same(client.visibleTargets(STATUS, new Set()), ["claude", "claude-work", "codex"]);
+  same(client.visibleTargets(STATUS, new Set(["codex", "claude"])), ["claude", "codex"]);
+  const onlyCodex = client.visibleTargets(STATUS, new Set(["codex"]));
+  same(client.visibleRows(STATUS, "all", "", onlyCodex).map((row) => row.name), ["shared", "review", "node_repl"]);
+  same(client.visibleRows(STATUS, "all", "", STATUS.targets).length, 4);
+});
+
 test("summarize counts problem cells; kindCounts follows kind order", async () => {
   const { client } = await harness();
   const summary = client.summarize(STATUS);
