@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Install Enhanced Workspace Status (with YouTube Music Now Playing in bottom-right corner)."""
+"""Install Enhanced Workspace Status (Unified AI Agent Status Bar & YouTube Music Now Playing)."""
 
 from __future__ import annotations
 
@@ -101,11 +101,16 @@ def main() -> int:
         print(f"Install failed: {e}", file=sys.stderr)
         return 1
 
-    print("\n✅ Enhanced Workspace Status (YouTube Music bottom-right widget) installed successfully!")
+    print("\n✅ Enhanced Workspace Status installed successfully!")
     print("\nFeatures:")
-    print("  - When YouTube Music plays, displays '▶ ♫ Song • Artist' in bottom-right status bar")
-    print("  - Click on title to bring YouTube Music app to front")
-    print("  - Click ⏸/▶ to toggle play/pause")
+    print("  - Unified AI Agent Status Bar (Center):")
+    print("    • Prioritizes current active agent (Claude Code, OpenAI Codex, Google Antigravity)")
+    print("    • Expanded status for focused agent with live Model, Context %, Quota Limits, Cost/Tokens")
+    print("    • Compact indicator badges for background agents")
+    print("    • Click any agent badge to open full Quotas Dashboard (agent-quotas)")
+    print("  - YouTube Music Widget (Right Corner):")
+    print("    • Displays '▶ ♫ Song • Artist' when active")
+    print("    • Click title to bring app to front, click ⏸/▶ to toggle playback")
     return 0
 
 

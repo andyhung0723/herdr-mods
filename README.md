@@ -54,7 +54,7 @@
 | [`herdr-chrome`](./herdr-chrome) | `enhanced-workspace-chrome` | 頂部 Chrome 列 | 動態即時時間與日期、點擊複製時間戳記、附帶可愛走動與搖尾巴的柯基犬動畫。 |
 | [`herdr-files`](./herdr-files) | `enhanced-files` | 左側檔案樹 | 新增 VS Code 等級右鍵選單（新建檔案/資料夾、重新命名、重複、刪除、複製路徑、在 Path Finder 中開啟）。 |
 | [`herdr-tabs`](./herdr-tabs) | `enhanced-tabs` | 頂部分頁列 | 整合 Git、Agent、Spectra、Services 等右側獨立面板快速開關切換按鈕。 |
-| [`herdr-status`](./herdr-status) | `workspace-status` | 右下角狀態列 | 透過 macOS `MediaRemote` 即時同步 YouTube Music（PWA / 瀏覽器）當前播放歌曲與播放/暫停控制。 |
+| [`herdr-status`](./herdr-status) | `workspace-status` | 底部主狀態列 | 整合 AI Agent 統一狀態列（優先展開當前聚焦的 Claude Code / Codex / Antigravity 指標與限額）與右下角 YouTube Music 即時播放卡。 |
 | [`herdr-spaces`](./herdr-spaces) | `enhanced-spaces` | Space 切換區 | 增強版工作空間圖示與 Spaces 切換指示。 |
 | [`herdr-wallpaper`](./herdr-wallpaper) | `wallpaper-carousel` | 背景 | 自動桌布輪播器，包含 32 幀無縫循環的平滑駭客任務代碼雨（Matrix Rain）。 |
 

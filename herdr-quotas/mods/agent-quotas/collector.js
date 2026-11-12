@@ -262,7 +262,7 @@ export async function collectCodexData() {
     let scriptPath = `${h}/.config/herdr-app/mods/agent-quotas/codex_limits.py`;
     const exists = await readTextFile(scriptPath);
     if (!exists) {
-      scriptPath = `${h}/Workspace/side-project/herdr-customized/herdr-quotas/mods/agent-quotas/codex_limits.py`;
+      scriptPath = `${h}/Workspace/side-project/herdr-mods/herdr-quotas/mods/agent-quotas/codex_limits.py`;
     }
     const res = await exec("python3", [scriptPath]);
     if (res.code === 0 && res.stdout) {
@@ -341,7 +341,7 @@ export async function collectAntigravityData() {
     let scriptPath = `${h}/.config/herdr-app/mods/agent-quotas/antigravity_limits.py`;
     const exists = await readTextFile(scriptPath);
     if (!exists) {
-      scriptPath = `${h}/Workspace/side-project/herdr-customized/herdr-quotas/mods/agent-quotas/antigravity_limits.py`;
+      scriptPath = `${h}/Workspace/side-project/herdr-mods/herdr-quotas/mods/agent-quotas/antigravity_limits.py`;
     }
     const res = await exec("python3", [scriptPath]);
     if (res.code === 0 && res.stdout) {

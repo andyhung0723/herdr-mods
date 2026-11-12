@@ -1,19 +1,30 @@
-# Herdr Workspace Status (with YouTube Music Now Playing)
+# Herdr Workspace Status (Unified AI Agent Status Bar & YouTube Music)
 
-強化 Herdr 底層狀態列（`workspace-status`），在**右下角**即時同步電腦上 **YouTube Music App（Edge PWA / 瀏覽器）** 目前正在播放的歌曲資訊（曲名、歌手與播放狀態）。
+強化 Herdr 底層主狀態列（`workspace-status`），整合 **AI Agent 統一狀態列（Claude Code / OpenAI Codex / Google Antigravity）** 與 **YouTube Music 即時音樂控制卡**。
 
 ## 功能
 
-1. **右下角 Now Playing 動態音樂卡**
-   - 當您在電腦上打開 YouTube Music 聽歌時，右下角狀態列（`commands` 旁）會即時顯示：
-     - **播放中**：`▶ ♫ [歌曲名稱] · [歌手]`（綠色/青色高亮）
-     - **暫停時**：`⏸ [歌曲名稱]`（柔和暗灰）
-     - **未開啟或無音樂時**：自動優雅收合隱藏，完全不干擾畫面。
-2. **快捷互動操作**
-   - 點擊歌曲文字：一鍵喚醒並將 YouTube Music App 切換到最前台。
-   - 點擊 `⏸` / `▶`：直接暫停／繼續播放。
-3. **免帳號、純本機探測**
-   - 0.05 秒輕量本機探測，不走網路請求，零負擔。
+### 1. 統一 AI Agent 狀態列（居中優先顯示）
+- **優先顯示當前 Active Agent**：
+  - 聚焦於 **Claude Code** 終端：展開顯示 Model 名稱（如 `Opus 5.5`）、推理強度標籤（如 `med`）、即時 Context 佔比（`ctx 45%`）、5 小時配額（`5h 48%`）、以及累積花費（`$64.20`）；兩側以精緻小 Badge 顯示 Codex 與 Antigravity 狀態。
+  - 聚焦於 **OpenAI Codex** 終端：展開顯示 Model 名稱（如 `gpt-6.1-sol`）、推理強度標籤（如 `med`）、7 天配額（`7d 36%`）、以及當日累積 Tokens（`142k tok`）；兩側以小 Badge 顯示 Claude 與 Antigravity。
+  - 聚焦於 **Google Antigravity** 終端：展開顯示 Model 名稱（如 `Gemini 3.8 Flash`）、5 小時剩餘配額（`5h 87% rem`）、每週剩餘配額（`wk 82% rem`）、以及當日執行 Steps（`42 steps`）；兩側以小 Badge 顯示 Claude 與 Codex。
+  - **一般終端／Neutral 模式**：三者以對齊的小膠囊徽章並列顯示，資訊一目了然。
+- **即時數據無縫同步**：
+  - Claude Code：直接讀取 session 寫出的 `/tmp/claude-statusline-input.json`（<1ms 無阻塞），並具備 `~/.claude.json` fallback。
+  - Codex：即時讀取 `~/.codex/config.toml` 與 RPC/SQLite 統計。
+  - Antigravity：即時讀取 `~/.gemini/antigravity-cli/settings.json` 與 usage limit 探測。
+- **快捷交互**：
+  - 滑鼠 Hover：顯示完整配額重置倒數（如 `resets in 2h 14m`）、詳細 Token 與 Cost 統計。
+  - 點擊任一 Agent 膠囊／徽章：直接開啟 `agent-quotas` 儀表板彈窗。
+
+### 2. 右下角 YouTube Music Now Playing 動態音樂卡
+- 當電腦上打開 YouTube Music 聽歌時，右下角狀態列（`commands` 旁）即時顯示：
+  - **播放中**：`▶ ♫ [歌曲名稱] · [歌手]`（綠色/青色高亮）
+  - **暫停時**：`⏸ [歌曲名稱]`（柔和暗灰）
+  - **未開啟或無音樂時**：自動收合隱藏。
+- 點擊歌曲文字：一鍵喚醒 YouTube Music 切換到最前台。
+- 點擊 `⏸` / `▶`：直接暫停／繼續播放。
 
 ## 安裝
 
