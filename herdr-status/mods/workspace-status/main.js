@@ -1,6 +1,6 @@
 import { View, div, svg } from "gpui-kit";
 import { h_flex } from "gpui-base";
-import { spaces, agents, theme, run, window, keys, exec, appHome, focused, panes, home } from "herdr";
+import { spaces, agents, terminals, theme, run, window, keys, exec, appHome, focused, panes, home } from "herdr";
 import {
   collectAllAgentsStatus,
   detectActiveAgent,
@@ -271,6 +271,35 @@ export default class WorkspaceStatus extends View {
               .text_size(11)
               .text_color(sevenD >= 85 ? (t.blocked ?? "#f38ba8") : t.muted)
               .child(`7d ${sevenD}%`)
+          )
+      )
+      .when(Boolean(claude?.subagents && claude.subagents.total > 0), (el) =>
+        el
+          .child(div().text_color(t.dim).child("·"))
+          .child(
+            h_flex()
+              .gap(3)
+              .items_center()
+              .px(5)
+              .py(1)
+              .rounded(3)
+              .bg(t.dim ? `${t.dim}26` : "#45475a33")
+              .tooltip(
+                `${claude.subagents.total} subagents: ${claude.subagents.running} running, ${claude.subagents.done} done\n` +
+                  claude.subagents.items.map((s) => `• ${s.name} (${s.status})`).join("\n")
+              )
+              .child(
+                svg("mods/workspace-chrome/spinner.svg")
+                  .size(10)
+                  .text_color(t.ansi2 ?? "#a6e3a1")
+                  .when(claude.subagents.running > 0, (s) => s.spin(900))
+              )
+              .child(
+                div()
+                  .text_size(10.5)
+                  .text_color(t.foreground)
+                  .child(`${claude.subagents.total} sub (${claude.subagents.running}/${claude.subagents.done})`)
+              )
           )
       );
   }
@@ -603,9 +632,75 @@ export default class WorkspaceStatus extends View {
     return a.program?.name || a.app || null;
   }
 
-  // Render Agents count & breakdown pill with rich tooltip (run / idle / blocked and models)
+  // Collect all subagents from Herdr terminals tree (k.parent) and Claude transcript tasks
+  collectAllSubagents() {
+    const allTerminals = typeof terminals === "function" ? terminals() : [];
+    const mainList = typeof agents === "function" ? agents() : [];
+    const result = {
+      total: 0,
+      running: 0,
+      idle: 0,
+      blocked: 0,
+      byParent: new Map(),
+      items: [],
+    };
+
+    // 1. Check Herdr terminals tree (k.parent)
+    for (const a of mainList) {
+      const kids = allTerminals.filter((k) => k.parent === a.address && k.state === "live");
+      if (kids.length > 0) {
+        const parentSubs = [];
+        for (const k of kids) {
+          const s = k.status;
+          const isRunning = s === "working" || s === "running";
+          const isBlocked = s === "blocked";
+          result.total++;
+          if (isRunning) result.running++;
+          else if (isBlocked) result.blocked++;
+          else result.idle++;
+
+          const subItem = {
+            id: k.address,
+            parent: a.address,
+            name: k.title || k.name || k.program?.name || "Subagent",
+            status: isRunning ? "running" : isBlocked ? "blocked" : "done",
+          };
+          result.items.push(subItem);
+          parentSubs.push(subItem);
+        }
+        result.byParent.set(a.address, parentSubs);
+      }
+    }
+
+    // 2. Check Claude Code transcript subagents if not already tracked via Herdr terminals
+    const claudeSubs = this.agentStatus?.claude?.subagents;
+    if (claudeSubs && claudeSubs.total > 0 && result.total === 0) {
+      result.total += claudeSubs.total;
+      result.running += claudeSubs.running;
+      result.idle += claudeSubs.done;
+      const claudeItems = [];
+      for (const item of claudeSubs.items) {
+        const subItem = {
+          id: item.id,
+          parent: "claude",
+          name: item.name,
+          status: item.status,
+        };
+        result.items.push(subItem);
+        claudeItems.push(subItem);
+      }
+      result.byParent.set("claude", claudeItems);
+    }
+
+    return result;
+  }
+
+  // Render Agents count & breakdown pill with rich tooltip (run / idle / blocked, subagents, and models)
   renderAgentsWidget(t, cx) {
     const list = typeof agents === "function" ? agents() : [];
+    const subStats = this.collectAllSubagents();
+    const hasSubs = subStats.total > 0;
+
     let running = 0;
     let idle = 0;
     let blocked = 0;
@@ -620,7 +715,7 @@ export default class WorkspaceStatus extends View {
     }
 
     const total = list.length;
-    if (total === 0) {
+    if (total === 0 && !hasSubs) {
       return h_flex()
         .id("statusbar-agents")
         .items_center()
@@ -629,8 +724,11 @@ export default class WorkspaceStatus extends View {
         .child("0 agents");
     }
 
-    const tooltipLines = [`Agents (${total} total${running > 0 ? ` · ${running} running` : ""}${blocked > 0 ? ` · ${blocked} needs you` : ""})`];
-    tooltipLines.push("──────────────────────────────");
+    const headerTitle = hasSubs
+      ? `Agents (${total} main · ${subStats.total} subagents${running > 0 || subStats.running > 0 ? ` · ${running + subStats.running} running` : ""})`
+      : `Agents (${total} total${running > 0 ? ` · ${running} running` : ""}${blocked > 0 ? ` · ${blocked} needs you` : ""})`;
+
+    const tooltipLines = [headerTitle, "──────────────────────────────"];
     for (const a of list) {
       const model = this.resolveAgentModel(a);
       const loc = a.space_name ? `[${a.space_name}${a.tab_name ? ` · ${a.tab_name}` : ""}]` : "";
@@ -644,14 +742,31 @@ export default class WorkspaceStatus extends View {
       let line = `• ${appName} ${loc}\n   狀態: ${statusText}`;
       if (model) line += `\n   模型: ${model}`;
       if (a.title && a.title !== appName) line += `\n   標題: ${a.title}`;
+
+      // Check subagents for this agent
+      const raw = `${a.app || ""} ${a.program?.key || ""}`.toLowerCase();
+      const parentKey = raw.includes("claude") ? "claude" : a.address;
+      const subs = subStats.byParent.get(a.address) || subStats.byParent.get(parentKey) || [];
+      if (subs.length > 0) {
+        const subRunning = subs.filter((x) => x.status === "running").length;
+        const subDone = subs.filter((x) => x.status !== "running").length;
+        line += `\n   └─ Subagents (${subs.length} 個: ${subRunning} 執行中 / ${subDone} 已完成)`;
+        for (const sub of subs) {
+          const subIcon = sub.status === "running" ? "🟢" : "⚪";
+          line += `\n      ├── ${subIcon} ${sub.name} (${sub.status})`;
+        }
+      }
+
       tooltipLines.push(line);
     }
     tooltipLines.push("──────────────────────────────\n點擊開啟 Agent 清單");
     const fullTooltip = tooltipLines.join("\n");
 
-    const statusDotColor = blocked > 0
+    const isAnyRunning = running > 0 || subStats.running > 0;
+    const isAnyBlocked = blocked > 0 || subStats.blocked > 0;
+    const statusDotColor = isAnyBlocked
       ? (t.blocked ?? "#fab387")
-      : running > 0
+      : isAnyRunning
       ? (t.ansi2 ?? "#a6e3a1")
       : t.dim;
 
@@ -671,7 +786,7 @@ export default class WorkspaceStatus extends View {
         } catch {}
       })
       .child(
-        running > 0
+        isAnyRunning
           ? svg("mods/workspace-chrome/spinner.svg")
               .size(11)
               .flex_none()
@@ -681,10 +796,54 @@ export default class WorkspaceStatus extends View {
       )
       .child(
         div()
-          .text_color(running > 0 ? t.foreground : t.muted)
-          .child(`${total} agents`)
+          .text_color(isAnyRunning ? t.foreground : t.muted)
+          .child(`${total} agent${total > 1 ? "s" : ""}`)
       )
-      .when(running > 0, (el) =>
+      .when(hasSubs, (el) =>
+        el
+          .child(div().text_color(t.dim).child("·"))
+          .child(
+            h_flex()
+              .items_center()
+              .gap(3)
+              .child(
+                div()
+                  .text_color(subStats.running > 0 ? t.foreground : t.muted)
+                  .child(`${subStats.total} subagents`)
+              )
+              .child(div().text_color(t.dim).child("("))
+              .child(
+                svg("mods/workspace-chrome/spinner.svg")
+                  .size(9)
+                  .flex_none()
+                  .text_color(t.ansi2 ?? "#a6e3a1")
+                  .when(subStats.running > 0, (s) => s.spin(900))
+              )
+              .child(
+                div()
+                  .text_size(10.5)
+                  .text_color(t.ansi2 ?? "#a6e3a1")
+                  .child(String(subStats.running))
+              )
+              .child(div().text_color(t.dim).child("/"))
+              .child(
+                div()
+                  .size(6)
+                  .rounded(3)
+                  .border(1)
+                  .border_color(t.dim)
+                  .flex_none()
+              )
+              .child(
+                div()
+                  .text_size(10.5)
+                  .text_color(t.muted)
+                  .child(String(subStats.idle))
+              )
+              .child(div().text_color(t.dim).child(")"))
+          )
+      )
+      .when(!hasSubs && running > 0, (el) =>
         el.child(
           div()
             .text_size(10.5)
@@ -692,12 +851,12 @@ export default class WorkspaceStatus extends View {
             .child(`(${running} running)`)
         )
       )
-      .when(blocked > 0, (el) =>
+      .when(blocked > 0 || subStats.blocked > 0, (el) =>
         el.child(
           div()
             .text_size(10.5)
             .text_color(t.blocked ?? "#fab387")
-            .child(`· ${blocked} needs you`)
+            .child(`· ${blocked + subStats.blocked} needs you`)
         )
       );
   }

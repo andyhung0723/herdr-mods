@@ -157,6 +157,36 @@ export function detectActiveAgent({ focused, panes, agents }) {
   return null;
 }
 
+export function parseTranscriptTasks(transcriptContent) {
+  if (!transcriptContent) return [];
+  const lines = transcriptContent.split("\n").filter(Boolean);
+  const tasks = new Map();
+
+  for (const line of lines) {
+    if (!line.includes("tool_use") && !line.includes("tool_result")) continue;
+    try {
+      const entry = JSON.parse(line);
+      const msg = entry.message || entry;
+      const contents = Array.isArray(msg?.content) ? msg.content : [];
+
+      for (const item of contents) {
+        if (item.type === "tool_use" && (item.name === "Task" || item.name === "subagent")) {
+          tasks.set(item.id, {
+            id: item.id,
+            name: item.input?.description || item.input?.prompt?.slice(0, 30) || "Subagent",
+            status: "running",
+          });
+        } else if (item.type === "tool_result" && tasks.has(item.tool_use_id)) {
+          const t = tasks.get(item.tool_use_id);
+          t.status = "done";
+        }
+      }
+    } catch {}
+  }
+
+  return Array.from(tasks.values());
+}
+
 export async function getLiveClaudeStatus() {
   const h = home();
   let liveJson = null;
@@ -182,6 +212,18 @@ export async function getLiveClaudeStatus() {
     const formattedCost = typeof costUsd === "number" ? `$${costUsd.toFixed(2)}` : null;
     const agentCwd = liveJson.cwd || liveJson.workspace?.current_dir || null;
 
+    let subagents = [];
+    if (liveJson.transcript_path) {
+      try {
+        const transcriptRaw = await readTextFile(liveJson.transcript_path).catch(() => null);
+        if (transcriptRaw) {
+          subagents = parseTranscriptTasks(transcriptRaw);
+        }
+      } catch {}
+    }
+    const subagentsRunning = subagents.filter((s) => s.status === "running").length;
+    const subagentsDone = subagents.filter((s) => s.status === "done").length;
+
     return {
       id: "claude",
       name: "Claude Code",
@@ -195,6 +237,12 @@ export async function getLiveClaudeStatus() {
       timeRemaining: formatTimeRemaining(fiveHourResetsAt),
       cost: formattedCost,
       cwd: agentCwd,
+      subagents: {
+        total: subagents.length,
+        running: subagentsRunning,
+        done: subagentsDone,
+        items: subagents,
+      },
       source: "live-session",
       available: true,
     };

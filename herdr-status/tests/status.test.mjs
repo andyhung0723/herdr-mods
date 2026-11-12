@@ -46,6 +46,7 @@ async function harness({
   mockSong = MOCK_SONG_ACTIVE,
   focused = null,
   panes = [],
+  terminals = [],
   files = {},
 } = {}) {
   const events = [];
@@ -63,6 +64,7 @@ async function harness({
     appHome: () => "/Users/dev/.config/herdr-app",
     spaces: () => [{ active: true, machine: "This computer", branch: "main" }],
     agents: () => [{ address: "t1", status: "working" }, { address: "t2", status: "idle" }],
+    terminals: () => terminals,
     focused: () => focused,
     panes: () => panes,
     theme: () => ({
@@ -553,4 +555,80 @@ test("statusbar-agents displays breakdown of running and idle agents with rich m
     events.some((e) => e[0] === "run" && e[1] === "mod.open" && e[2]?.name === "agents"),
     "Clicking agents widget should trigger mod.open for agents"
   );
+});
+
+test("statusbar-agents detects Herdr terminal subagents and displays subagents (running / idle) count and tree", async () => {
+  const { View, cx } = await harness({
+    focused: { pane: "p1", terminal: "t1" },
+    panes: [{ pane: "p1", app: "claude-code", focused: true }],
+    terminals: [
+      { address: "sub1", parent: "t1", state: "live", status: "working", title: "Codebase Researcher" },
+      { address: "sub2", parent: "t1", state: "live", status: "working", title: "Unit Test Runner" },
+      { address: "sub3", parent: "t1", state: "live", status: "running", title: "Doc Parser" },
+      { address: "sub4", parent: "t1", state: "live", status: "done", title: "Linter" },
+      { address: "sub5", parent: "t1", state: "live", status: "idle", title: "Dependency Checker" },
+    ],
+  });
+
+  const view = new View();
+  view.init({}, cx);
+  await view.pollAgentStatus(cx);
+
+  const rendered = view.render(cx);
+  const agentsWidget = findElementById(rendered, "statusbar-agents");
+  assert.ok(agentsWidget, "Should render statusbar-agents widget");
+
+  const texts = collectAllText(agentsWidget);
+  assert.ok(texts.some((t) => t.includes("5 subagents")), "Should display 5 subagents");
+  assert.ok(texts.some((t) => t.includes("3")), "Should display running count 3");
+  assert.ok(texts.some((t) => t.includes("2")), "Should display idle count 2");
+
+  assert.ok(agentsWidget._tooltip.includes("5 subagents"), "Tooltip should include subagents count");
+  assert.ok(agentsWidget._tooltip.includes("Codebase Researcher"), "Tooltip should list subagent names");
+  assert.ok(agentsWidget._tooltip.includes("Linter"), "Tooltip should list completed subagent");
+});
+
+test("parseTranscriptTasks parses Claude Code transcript tasks and displays on expanded Claude pill", async () => {
+  const mockTranscript = [
+    JSON.stringify({
+      type: "assistant",
+      message: {
+        content: [
+          { type: "tool_use", id: "task_1", name: "Task", input: { description: "Subagent Alpha" } },
+          { type: "tool_use", id: "task_2", name: "Task", input: { description: "Subagent Beta" } },
+        ],
+      },
+    }),
+    JSON.stringify({
+      type: "user",
+      message: {
+        content: [{ type: "tool_result", tool_use_id: "task_1", content: "Done" }],
+      },
+    }),
+  ].join("\n");
+
+  const customClaudeStatusline = {
+    ...MOCK_CLAUDE_STATUSLINE,
+    transcript_path: "/tmp/mock-transcript.jsonl",
+  };
+
+  const { View, cx } = await harness({
+    focused: { pane: "p1", terminal: "t1", cwd: "/Users/dev/Workspace/project-x" },
+    panes: [{ pane: "p1", app: "claude-code", focused: true }],
+    files: {
+      "/tmp/claude-statusline-input.json": JSON.stringify(customClaudeStatusline),
+      "/tmp/mock-transcript.jsonl": mockTranscript,
+    },
+  });
+
+  const view = new View();
+  view.init({}, cx);
+  await view.pollAgentStatus(cx);
+
+  const rendered = view.render(cx);
+  const expandedClaude = findElementById(rendered, "agent-status-claude-expanded");
+  assert.ok(expandedClaude, "Should render expanded Claude pill");
+
+  const claudeTexts = collectAllText(expandedClaude);
+  assert.ok(claudeTexts.some((t) => t.includes("2 sub (1/1)")), "Should display 2 sub (1/1)");
 });
