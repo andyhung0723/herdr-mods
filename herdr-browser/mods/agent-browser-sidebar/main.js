@@ -1,11 +1,46 @@
-// Agent Browser Sidebar Widget for Herdr
-import { View, div, svg } from "gpui-kit";
+// Agent Browser section for Herdr's sidebar.
+// Mirrors the Agents section (header, row metrics, rail mode) so it reads as part of the same list.
+import { View, div, image, svg } from "gpui-kit";
 import { h_flex, v_flex } from "gpui-base";
-import { theme, run, setShared, shared, focused } from "herdr";
+import { theme, run, setShared, shared, agents, layout } from "herdr";
 import { SHARED_ACTIVE_AGENT, daemonJson, singleFlight, vendorColor, sessionLabel } from "./daemon-client.js";
 
 const ICON_BROWSER = "mods/agent-browser-sidebar/browser.svg";
 const POLL_MS = 1500;
+const STACK_ID = "work-main-stack";
+const BROWSER_BLOCK_ID = "browser-main";
+
+function find(node, id) {
+  if (node?.id === id) return node;
+  for (const child of node?.children ?? []) {
+    const found = find(child, id);
+    if (found) return found;
+  }
+  return null;
+}
+
+// Same rule as the Agents section: the sidebar is a rail when narrower than 160px.
+const narrow = () => (find(layout(), "sidebar")?.size?.px ?? Infinity) < 160;
+const browserShown = () => find(layout(), STACK_ID)?.active === BROWSER_BLOCK_ID;
+
+function programIcon(program, size, color) {
+  if (!program?.icon) return svg(ICON_BROWSER).size(size).flex_none().text_color(color);
+  return program.tint ? svg(program.icon).size(size).flex_none().text_color(color) : image(program.icon).w(size).h(size).flex_none();
+}
+
+// The icon already says which agent; the name says where it lives, like an Agents row.
+function rowName(session, agent) {
+  if (agent) return `${agent.space_name} · ${agent.tab_name}`;
+  return sessionLabel(session);
+}
+
+function hostOf(url) {
+  try {
+    return new URL(url).host || url;
+  } catch {
+    return url;
+  }
+}
 
 export default class AgentBrowserSidebar extends View {
   init(_props, cx) {
@@ -38,78 +73,116 @@ export default class AgentBrowserSidebar extends View {
 
   openBrowser(agentId) {
     if (agentId) setShared(SHARED_ACTIVE_AGENT, agentId);
-    run("layout.select", { stack: "work-main-stack", child: "browser-main" });
+    run("layout.select", { stack: STACK_ID, child: BROWSER_BLOCK_ID });
   }
 
   render() {
     const t = theme();
-    const active = shared(SHARED_ACTIVE_AGENT);
-    const focusedTerminal = focused()?.terminal?.toLowerCase() ?? null;
-    const live = this.online && this.sessions.length > 0;
-    const statusColor = live ? (t.ansi2 ?? "#a6e3a1") : t.dim;
+    const rail = narrow();
+    const agentByTerminal = new Map(agents().map((a) => [a.address.toLowerCase(), a]));
+    const activeId = browserShown() ? shared(SHARED_ACTIVE_AGENT) : null;
+    const rows = this.sessions.map((s) => {
+      const agent = agentByTerminal.get(s.terminal);
+      const ctx = { t, program: agent?.program, name: rowName(s, agent), selected: s.agentId === activeId };
+      return rail ? this.railRow(s, ctx) : this.row(s, ctx);
+    });
 
     return v_flex()
-      .p(6)
-      .gap(4)
-      .rounded(6)
-      .bg(t.chrome ?? t.surface)
-      .border(1)
+      .size_full()
+      .min_h(0)
+      .bg(t.chrome)
+      .border_t(1)
       .border_color(t.border)
-      .child(
-        h_flex()
-          .px(4)
-          .py(2)
-          .gap(6)
-          .items_center()
-          .child(svg(ICON_BROWSER).size(13).flex_none().text_color(statusColor))
-          .child(div().flex_1().text_size(11.5).font_bold().child("Agent Browser"))
-          .when(live, (el) => el.child(div().text_size(10).font_semibold().text_color(statusColor).child(String(this.sessions.length))))
-          .child(div().size(6).rounded(3).bg(statusColor))
+      .text_size(13)
+      .when(!rail, (el) => el.child(this.header(t)))
+      .when(!rail && rows.length === 0, (el) =>
+        el.child(
+          div()
+            .px(16)
+            .text_size(12)
+            .text_color(t.dim)
+            .child(this.online ? "Agents' browser sessions show up here." : "Browser hub offline. It starts on an agent's first browser tool call.")
+        )
       )
+      .child(v_flex().id("ab-list").flex_1().min_h(0).px(rail ? 0 : 8).overflow_y_scrollbar().children(rows));
+  }
+
+  header(t) {
+    return h_flex()
+      .px(16)
+      .h(41)
+      .pt(14)
+      .pb(5)
+      .flex_none()
+      .items_center()
+      .justify_between()
+      .child(div().text_size(11.5).font_medium().text_color(t.dim).child("Browser"))
       .child(
-        live
-          ? v_flex()
-              .gap(3)
-              .children(this.sessions.map((s) => this.renderSession(t, s, s.agentId === active, s.terminal === focusedTerminal)))
-          : h_flex()
-              .p(6)
-              .rounded(4)
-              .justify_center()
-              .bg(t.surface)
-              .cursor_pointer()
-              .hover((h) => h.bg(t.hover))
-              .on_click(() => this.openBrowser(null))
-              .child(div().text_size(10.5).text_color(t.dim).child(this.online ? "No sessions yet →" : "Hub offline →"))
+        div()
+          .id("ab-open")
+          .text_size(11)
+          .text_color(t.dim)
+          .hover((s) => s.text_color(t.foreground))
+          .tooltip("Open the browser view")
+          .on_click(() => this.openBrowser(null))
+          .child(svg(ICON_BROWSER).size(14))
       );
   }
 
-  renderSession(t, s, selected, isFocusedAgent) {
-    const color = vendorColor(s, t);
-    const background = selected ? (t.selected ?? t.raised) : t.surface;
-    let host = s.url;
-    try {
-      host = new URL(s.url).host || s.url;
-    } catch {}
-    return v_flex()
-      .p(5)
-      .gap(2)
-      .rounded(4)
-      .bg(background)
-      .border(1)
-      .border_color(isFocusedAgent ? color : background)
+  row(s, { t, program, name, selected }) {
+    const human = s.driver === "human";
+    return h_flex()
+      .id(`ab-${s.agentId}`)
+      .px(8)
+      .h(42)
+      .flex_none()
+      .rounded(8)
+      .items_center()
+      .gap(9)
+      .when(selected, (el) => el.bg(t.selected))
       .cursor_pointer()
-      .hover((h) => h.bg(t.hover))
+      .hover((el) => el.bg(t.hover))
+      .tooltip(s.url)
       .on_click(() => this.openBrowser(s.agentId))
+      .child(programIcon(program, 16, vendorColor(s, t)))
       .child(
-        h_flex()
-          .gap(5)
-          .items_center()
+        v_flex()
+          .flex_1()
           .min_w(0)
-          .child(div().size(6).rounded(3).flex_none().bg(color))
-          .child(div().flex_1().text_size(10).font_semibold().truncate().text_color(color).child(sessionLabel(s)))
-          .when(s.driver === "human", (el) => el.child(div().text_size(9).text_color(t.blocked ?? "#f59e0b").child("YOU")))
+          .gap(1)
+          .child(div().truncate().text_color(t.foreground).child(name))
+          .child(div().truncate().text_size(11).text_color(t.dim).child(s.title ? `${s.title} · ${hostOf(s.url)}` : hostOf(s.url)))
       )
-      .child(div().text_size(10.5).truncate().text_color(t.foreground).child(s.title || host))
-      .child(div().text_size(9.5).truncate().text_color(t.dim).child(host));
+      .when(human, (el) =>
+        el.child(
+          div()
+            .flex_none()
+            .px(6)
+            .h(18)
+            .rounded(5)
+            .bg((t.blocked ?? "#f59e0b") + "26")
+            .text_size(10.5)
+            .font_semibold()
+            .text_color(t.blocked ?? "#f59e0b")
+            .flex()
+            .items_center()
+            .child("You")
+        )
+      );
+  }
+
+  railRow(s, { t, program, selected }) {
+    return h_flex()
+      .id(`ab-${s.agentId}`)
+      .h(26)
+      .flex_none()
+      .items_center()
+      .justify_center()
+      .when(selected, (el) => el.bg(t.selected))
+      .cursor_pointer()
+      .hover((el) => el.bg(t.hover))
+      .tooltip(`${sessionLabel(s)} — ${s.title || hostOf(s.url)}`)
+      .on_click(() => this.openBrowser(s.agentId))
+      .child(programIcon(program, 16, vendorColor(s, t)));
   }
 }

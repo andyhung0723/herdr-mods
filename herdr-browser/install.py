@@ -22,8 +22,12 @@ MOD_MAIN = "agent-browser-main"
 MCP_NAME = "herdr-browser"
 SHARED_MOD_FILES = ["daemon-client.js"]
 
-SIDEBAR_BLOCK_SIZE = {"size": {"px": 132}, "min": 70, "max": 280}
-LEGACY_SIDEBAR_BLOCK_SIZE = {"size": {"px": 92}, "min": 70, "max": 140}
+# Header (41px) + two 42px session rows; shrinks to the header alone.
+SIDEBAR_BLOCK_SIZE = {"size": {"px": 136}, "min": 41, "max": 320}
+LEGACY_SIDEBAR_BLOCK_SIZES = [
+    {"size": {"px": 92}, "min": 70, "max": 140},
+    {"size": {"px": 132}, "min": 70, "max": 280},
+]
 
 
 class InstallError(RuntimeError):
@@ -135,8 +139,8 @@ def update_layout(layout_path: Path, backups_dir: Path, dry_run: bool) -> None:
                 if existing is None:
                     children.append({"id": "agent-browser", "type": "block", "content": {"mod": MOD_SIDEBAR}, **SIDEBAR_BLOCK_SIZE})
                     changed = True
-                elif all(existing.get(k) == v for k, v in LEGACY_SIDEBAR_BLOCK_SIZE.items()):
-                    # Session rows grew to three lines; only resize blocks still at the old defaults.
+                elif any(all(existing.get(k) == v for k, v in legacy.items()) for legacy in LEGACY_SIDEBAR_BLOCK_SIZES):
+                    # Only resize blocks still at a previous installer default; keep user-tuned sizes.
                     existing.update(SIDEBAR_BLOCK_SIZE)
                     changed = True
             for v in node.values():
@@ -323,6 +327,10 @@ def main() -> int:
         return 1
 
     print("\n✅ Herdr Agent Browser Hub installed successfully!")
+    if args.skip_mcp:
+        print("\nMCP registration skipped; start the daemon with:")
+        print(f"  node {source_root / 'daemon' / 'server.mjs'}")
+        return 0
     print("\nNext steps:")
     print("  1. Restart Claude Code / Codex sessions so they load the herdr-browser MCP server.")
     print("  2. Ask an agent to use browser_navigate; the daemon starts on the first call.")
