@@ -567,12 +567,10 @@ export default class WorkspaceStatus extends View {
           .child(`${list.length} agents`)
           .when(needs > 0, (el) => el.child(div().text_color(t.blocked).child(`· ${needs} needs you`)))
       )
-      // Subtle vertical divider between workspace info and agent status
-      .child(div().h(11).w(1).bg(t.border ?? "#313244"))
-      // Unified AI Agent Status Bar (Left-aligned!)
-      .child(this.renderAgentStatusBar(t, cx))
-      // Spacer: absorbs all remaining space and pushes YTM/commands to the far right
+      // Spacer: absorbs all middle space, pushing AI Agent Status Bar and controls to the right
       .child(div().flex_1())
+      // Right Group: Unified AI Agent Status Bar (Right-aligned!)
+      .child(this.renderAgentStatusBar(t, cx))
       // Right Corner: YouTube Music Widget (when active)
       .when(Boolean(this.song && this.song.active), (el) =>
         el.child(this.renderMusicWidget(t, this.song, cx))
