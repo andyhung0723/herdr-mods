@@ -6,6 +6,7 @@ import {
   detectActiveAgent,
   formatEffort,
   formatCwd,
+  shrinkPath,
 } from "./agent-collector.js";
 
 const MUSIC_ICON = "mods/workspace-status/music.svg";
@@ -477,9 +478,12 @@ export default class WorkspaceStatus extends View {
       );
   }
 
-  // Render Agent Working Directory full path badge (Right-aligned)
+  // Render Agent Working Directory path badge (with smart path shortening)
   renderAgentCwd(cwd, t, cx) {
     if (!cwd) return null;
+    const userHome = typeof home === "function" ? home() : "";
+    const displayPath = shrinkPath(cwd, userHome, 28);
+
     return h_flex()
       .id("agent-cwd")
       .items_center()
@@ -514,7 +518,7 @@ export default class WorkspaceStatus extends View {
           .truncate()
           .text_size(11)
           .text_color(t.muted)
-          .child(cwd)
+          .child(displayPath)
       );
   }
 

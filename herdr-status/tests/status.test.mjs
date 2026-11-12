@@ -307,7 +307,8 @@ test("agent collector detects active Claude pane and renders expanded Claude pil
   const agentCwdEl = findElementById(rendered, "agent-cwd");
   assert.ok(agentCwdEl, "Should render agent-cwd badge");
   const cwdTexts = collectAllText(agentCwdEl);
-  assert.ok(cwdTexts.some((t) => t.includes("/Users/dev/Workspace/project-x")), "Should display full agent cwd path");
+  assert.ok(cwdTexts.some((t) => t.includes("~/Workspace/project-x")), "Should display agent cwd path");
+  assert.ok(agentCwdEl._tooltip.includes("/Users/dev/Workspace/project-x"), "Tooltip should contain full path");
 
   const expandedClaude = findElementById(rendered, "agent-status-claude-expanded");
   assert.ok(expandedClaude, "Should render expanded Claude status pill");
@@ -454,4 +455,44 @@ test("clicking agent-cwd copies full path to clipboard", async () => {
 
   agentCwdEl._onClick(null, cx);
   assert.deepEqual(copied, ["/Users/dev/Workspace/project-x"]);
+});
+
+test("shrinkPath preserves last 2 segments and contracts leading segments to first letters", async () => {
+  const { View, collector, cx } = await harness({
+    focused: { pane: "p1", terminal: "t1", cwd: "/Users/dev/Workspace/side-project/herdr-mods" },
+    panes: [{ pane: "p1", app: "claude-code", focused: true }],
+  });
+
+  // Direct collector helper assertions
+  assert.equal(
+    collector.shrinkPath("/Users/dev/Workspace/side-project/herdr-mods", "/Users/dev"),
+    "~/W/side-project/herdr-mods"
+  );
+  assert.equal(
+    collector.shrinkPath("/Users/dev/Workspace/dentsu/code/AI-Media/pitch/prd", "/Users/dev"),
+    "~/W/d/c/A/pitch/prd"
+  );
+  assert.equal(
+    collector.shrinkPath("/Users/dev/Workspace/project-x", "/Users/dev"),
+    "~/Workspace/project-x"
+  );
+
+  // Render assertion
+  const view = new View();
+  view.init({}, cx);
+  await view.pollAgentStatus(cx);
+
+  const rendered = view.render(cx);
+  const agentCwdEl = findElementById(rendered, "agent-cwd");
+  assert.ok(agentCwdEl);
+
+  const texts = collectAllText(agentCwdEl);
+  assert.ok(
+    texts.some((t) => t.includes("~/W/side-project/herdr-mods")),
+    "Should display shortened path with last 2 segments full"
+  );
+  assert.ok(
+    agentCwdEl._tooltip.includes("/Users/dev/Workspace/side-project/herdr-mods"),
+    "Tooltip should always keep unabbreviated path"
+  );
 });

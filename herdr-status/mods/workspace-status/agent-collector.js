@@ -67,6 +67,35 @@ export function formatCwd(cwd, userHome) {
   return parts[parts.length - 1] || cwd;
 }
 
+export function shrinkPath(cwd, userHome, maxLen = 28) {
+  if (!cwd) return "";
+  let path = cwd;
+  let isHome = false;
+
+  if (userHome && path.startsWith(userHome)) {
+    path = path.slice(userHome.length);
+    isHome = true;
+  }
+
+  const parts = path.split("/").filter(Boolean);
+  const formatted = isHome ? (parts.length === 0 ? "~" : `~/${parts.join("/")}`) : cwd;
+
+  // If already at most 2 segments or short enough, don't shrink
+  if (parts.length <= 2 || formatted.length <= maxLen) {
+    return formatted;
+  }
+
+  // Keep last 2 segments full, shrink preceding segments to first character
+  const leading = parts.slice(0, -2).map((seg) => {
+    if (seg.startsWith(".") && seg.length > 1) return seg.slice(0, 2);
+    return seg[0];
+  });
+  const trailing = parts.slice(-2);
+
+  const contracted = [...leading, ...trailing].join("/");
+  return isHome ? `~/${contracted}` : `/${contracted}`;
+}
+
 export function detectActiveAgent({ focused, panes, agents }) {
   const f = typeof focused === "function" ? focused() : null;
   const allPanes = typeof panes === "function" ? panes() : [];
