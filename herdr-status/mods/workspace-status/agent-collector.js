@@ -38,11 +38,12 @@ export function formatTokenCount(num) {
 
 export function formatEffort(effort) {
   if (!effort) return "";
-  const s = String(effort).toLowerCase();
-  if (s === "medium" || s === "med") return "med";
+  const s = String(effort).trim().toLowerCase();
+  if (s === "med" || s === "medium") return "medium";
   if (s === "high") return "high";
   if (s === "low") return "low";
-  return s.slice(0, 4);
+  if (s === "extra_high" || s === "extra-high" || s === "extra high") return "extra high";
+  return s;
 }
 
 export function formatShortModel(model) {
@@ -345,6 +346,7 @@ export async function getLiveCodexStatus() {
 export async function getLiveAntigravityStatus() {
   const h = home();
   let model = "Gemini 3.8 Flash";
+  let effort = "";
 
   // 1. Read settings.json
   try {
@@ -355,12 +357,19 @@ export async function getLiveAntigravityStatus() {
     }
   } catch {}
 
+  const effortMatch = model.match(/\(([^)]+)\)/);
+  if (effortMatch) {
+    effort = formatEffort(effortMatch[1]);
+    model = model.replace(/\s*\([^)]+\)/g, "").trim();
+  }
+
   // 2. Limits with cache TTL
   const now = Date.now();
   if (agyCache.data && now - agyCache.timestamp < CACHE_TTL_MS) {
     return {
       ...agyCache.data,
       model,
+      effort,
     };
   }
 
@@ -388,7 +397,15 @@ export async function getLiveAntigravityStatus() {
       const res = await exec("python3", [probeScript]).catch(() => null);
       if (res?.code === 0 && res?.stdout?.trim()) {
         const parsed = JSON.parse(res.stdout.trim());
-        if (parsed?.model) model = parsed.model;
+        if (parsed?.model) {
+          const em = parsed.model.match(/\(([^)]+)\)/);
+          if (em) {
+            effort = formatEffort(em[1]);
+            model = parsed.model.replace(/\s*\([^)]+\)/g, "").trim();
+          } else {
+            model = parsed.model;
+          }
+        }
         if (parsed?.fiveHour && typeof parsed.fiveHour.percent === "number") {
           fiveHour = {
             percent: parsed.fiveHour.percent,
@@ -429,6 +446,7 @@ export async function getLiveAntigravityStatus() {
     id: "antigravity",
     name: "Antigravity",
     model,
+    effort,
     fiveHour,
     weekly,
     stepsToday,

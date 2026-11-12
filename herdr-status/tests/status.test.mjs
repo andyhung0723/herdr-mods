@@ -39,7 +39,7 @@ model_reasoning_effort = "medium"
 `;
 
 const MOCK_ANTIGRAVITY_SETTINGS = JSON.stringify({
-  model: "Gemini 3.8 Flash",
+  model: "Gemini 3.8 Flash (Medium)",
 });
 
 async function harness({
@@ -115,7 +115,7 @@ async function harness({
           return {
             code: 0,
             stdout: JSON.stringify({
-              model: "Gemini 3.8 Flash",
+              model: "Gemini 3.8 Flash (Medium)",
               fiveHour: { percent: 15, remainingPercent: 85, resetTime: "2026-11-12T06:56:32Z" },
               weekly: { percent: 20, remainingPercent: 80, resetTime: "2026-11-15T03:05:09Z" },
             }),
@@ -314,6 +314,7 @@ test("agent collector detects active Claude pane and renders expanded Claude pil
   assert.ok(expandedClaude, "Should render expanded Claude status pill");
   const claudeTexts = collectAllText(expandedClaude);
   assert.ok(claudeTexts.some((t) => t.includes("Opus 5.5")), "Should display model Opus 5.5");
+  assert.ok(claudeTexts.some((t) => t.includes("medium")), "Should display full effort medium");
   assert.ok(claudeTexts.some((t) => t.includes("5h 55%")), "Should display 5h quota");
   assert.ok(claudeTexts.some((t) => t.includes("7d 18%")), "Should display 7d quota for Claude");
   assert.equal(claudeTexts.some((t) => t.includes("$")), false, "Claude should NOT display cost/dollar amount in pill");
@@ -344,6 +345,7 @@ test("agent collector detects active Codex pane and renders expanded Codex pill 
   assert.ok(expandedCodex, "Should render expanded Codex status pill");
   const codexTexts = collectAllText(expandedCodex);
   assert.ok(codexTexts.some((t) => t.includes("gpt-6.1-sol")), "Should display model gpt-6.1-sol");
+  assert.ok(codexTexts.some((t) => t.includes("medium")), "Should display full effort medium");
   assert.ok(codexTexts.some((t) => t.includes("7d 36%")), "Should display 7d quota for Codex");
   assert.equal(codexTexts.some((t) => t.includes("tok")), false, "Codex should NOT display tok");
 
@@ -370,6 +372,8 @@ test("agent collector detects active Antigravity pane and renders expanded Antig
   assert.ok(expandedAgy, "Should render expanded Antigravity status pill");
   const agyTexts = collectAllText(expandedAgy);
   assert.ok(agyTexts.some((t) => t.includes("Gemini 3.8 Flash")), "Should display Gemini model");
+  assert.ok(agyTexts.some((t) => t.includes("medium")), "Should display full effort medium");
+  assert.equal(agyTexts.some((t) => t.includes("(Medium)")), false, "AGY should NOT include (Medium) in model name");
   assert.ok(agyTexts.some((t) => t.includes("5h 85%")), "Should display 5h quota");
   assert.ok(agyTexts.some((t) => t.includes("7d 80%")), "Should display 7d quota (not wk)");
   assert.equal(agyTexts.some((t) => t.includes("rem")), false, "AGY should NOT display rem text");

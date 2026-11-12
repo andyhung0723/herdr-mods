@@ -336,11 +336,20 @@ export default class WorkspaceStatus extends View {
 
   // Render expanded active Antigravity pill
   renderExpandedAntigravity(t, agy) {
-    const model = agy?.model || "Gemini 3.8 Flash";
+    let model = agy?.model || "Gemini 3.8 Flash";
+    let effort = formatEffort(agy?.effort);
+    if (!effort && model) {
+      const match = model.match(/\(([^)]+)\)/);
+      if (match) {
+        effort = formatEffort(match[1]);
+        model = model.replace(/\s*\([^)]+\)/g, "").trim();
+      }
+    }
     const fiveHRem = agy?.fiveHour?.remainingPercent;
     const weekRem = agy?.weekly?.remainingPercent;
 
     let tip = `Antigravity · ${model}`;
+    if (effort) tip += ` (${effort})`;
     if (fiveHRem !== null && fiveHRem !== undefined) tip += `\n5-Hour Limit: ${fiveHRem}% remaining`;
     if (agy?.fiveHour?.timeRemaining) tip += ` (${agy.fiveHour.timeRemaining})`;
     if (weekRem !== null && weekRem !== undefined) tip += `\n7-Day Limit: ${weekRem}% remaining`;
@@ -368,6 +377,18 @@ export default class WorkspaceStatus extends View {
           .font_medium()
           .text_color(t.foreground)
           .child(model)
+      )
+      .when(Boolean(effort), (el) =>
+        el.child(
+          div()
+            .px(3)
+            .py(0.5)
+            .rounded(3)
+            .bg(t.dim ? `${t.dim}33` : "#45475a")
+            .text_size(9.5)
+            .text_color(t.muted)
+            .child(effort)
+        )
       )
       .when(fiveHRem !== null && fiveHRem !== undefined, (el) =>
         el
