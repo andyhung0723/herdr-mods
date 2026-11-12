@@ -287,9 +287,9 @@ test("activate and toggle actions call python probe", async () => {
 
 test("agent collector detects active Claude pane and renders expanded Claude pill", async () => {
   const { View, cx } = await harness({
-    focused: { pane: "p1", terminal: "t1", agent: null },
+    focused: { pane: "p1", terminal: "t1", agent: null, cwd: "/Users/dev/Workspace/project-x" },
     panes: [
-      { pane: "p1", app: "claude-code", title: "Claude Code", focused: true, program: { name: "claude" } },
+      { pane: "p1", app: "claude-code", title: "Claude Code", focused: true, program: { name: "claude" }, branch: "feature-auth" },
     ],
   });
 
@@ -300,10 +300,17 @@ test("agent collector detects active Claude pane and renders expanded Claude pil
   const rendered = view.render(cx);
   assert.ok(rendered);
 
+  // Verify Directory and Branch on left
+  const allTexts = collectAllText(rendered);
+  assert.ok(allTexts.some((t) => t.includes("project-x")), "Should display current directory project-x");
+  assert.ok(allTexts.some((t) => t.includes("feature-auth")), "Should display git branch feature-auth");
+
   const expandedClaude = findElementById(rendered, "agent-status-claude-expanded");
   assert.ok(expandedClaude, "Should render expanded Claude status pill");
   const claudeTexts = collectAllText(expandedClaude);
   assert.ok(claudeTexts.some((t) => t.includes("Opus 5.5")), "Should display model Opus 5.5");
+  assert.ok(claudeTexts.some((t) => t.includes("5h 55%")), "Should display 5h quota");
+  assert.ok(claudeTexts.some((t) => t.includes("7d 18%")), "Should display 7d quota for Claude");
 
   const codexBadge = findElementById(rendered, "agent-badge-codex");
   assert.ok(codexBadge, "Should render compact Codex badge flanking");
@@ -312,7 +319,7 @@ test("agent collector detects active Claude pane and renders expanded Claude pil
   assert.ok(agyBadge, "Should render compact Antigravity badge flanking");
 });
 
-test("agent collector detects active Codex pane and renders expanded Codex pill", async () => {
+test("agent collector detects active Codex pane and renders expanded Codex pill without tok", async () => {
   const { View, cx } = await harness({
     focused: { pane: "p2", terminal: "t2", agent: null },
     panes: [
@@ -331,12 +338,14 @@ test("agent collector detects active Codex pane and renders expanded Codex pill"
   assert.ok(expandedCodex, "Should render expanded Codex status pill");
   const codexTexts = collectAllText(expandedCodex);
   assert.ok(codexTexts.some((t) => t.includes("gpt-6.1-sol")), "Should display model gpt-6.1-sol");
+  assert.ok(codexTexts.some((t) => t.includes("7d 36%")), "Should display 7d quota for Codex");
+  assert.equal(codexTexts.some((t) => t.includes("tok")), false, "Codex should NOT display tok");
 
   const claudeBadge = findElementById(rendered, "agent-badge-claude");
   assert.ok(claudeBadge, "Should render compact Claude badge flanking");
 });
 
-test("agent collector detects active Antigravity pane and renders expanded Antigravity pill", async () => {
+test("agent collector detects active Antigravity pane and renders expanded Antigravity pill with 7d and without rem/steps", async () => {
   const { View, cx } = await harness({
     focused: { pane: "p3", terminal: "t3", agent: null },
     panes: [
@@ -355,6 +364,10 @@ test("agent collector detects active Antigravity pane and renders expanded Antig
   assert.ok(expandedAgy, "Should render expanded Antigravity status pill");
   const agyTexts = collectAllText(expandedAgy);
   assert.ok(agyTexts.some((t) => t.includes("Gemini 3.8 Flash")), "Should display Gemini model");
+  assert.ok(agyTexts.some((t) => t.includes("5h 85%")), "Should display 5h quota");
+  assert.ok(agyTexts.some((t) => t.includes("7d 80%")), "Should display 7d quota (not wk)");
+  assert.equal(agyTexts.some((t) => t.includes("rem")), false, "AGY should NOT display rem text");
+  assert.equal(agyTexts.some((t) => t.includes("steps")), false, "AGY should NOT display steps text");
 
   const codexBadge = findElementById(rendered, "agent-badge-codex");
   assert.ok(codexBadge, "Should render compact Codex badge flanking");

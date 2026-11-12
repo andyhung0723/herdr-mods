@@ -54,6 +54,19 @@ export function formatShortModel(model) {
   return s;
 }
 
+export function formatCwd(cwd, userHome) {
+  if (!cwd) return null;
+  const h = userHome || "";
+  if (h && (cwd === h || cwd === `${h}/`)) return "~";
+  if (h && cwd.startsWith(h)) {
+    const rel = cwd.slice(h.length).replace(/^\/+/, "");
+    const parts = rel.split("/").filter(Boolean);
+    return parts[parts.length - 1] || "~";
+  }
+  const parts = cwd.split("/").filter(Boolean);
+  return parts[parts.length - 1] || cwd;
+}
+
 export function detectActiveAgent({ focused, panes, agents }) {
   const f = typeof focused === "function" ? focused() : null;
   const allPanes = typeof panes === "function" ? panes() : [];

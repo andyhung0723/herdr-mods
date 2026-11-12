@@ -1,10 +1,11 @@
 import { View, div, svg } from "gpui-kit";
 import { h_flex } from "gpui-base";
-import { spaces, agents, theme, run, window, keys, exec, appHome, focused, panes } from "herdr";
+import { spaces, agents, theme, run, window, keys, exec, appHome, focused, panes, home } from "herdr";
 import {
   collectAllAgentsStatus,
   detectActiveAgent,
   formatEffort,
+  formatCwd,
 } from "./agent-collector.js";
 
 const MUSIC_ICON = "mods/workspace-status/music.svg";
@@ -195,14 +196,15 @@ export default class WorkspaceStatus extends View {
     const effort = formatEffort(claude?.effort);
     const ctx = claude?.contextPercent;
     const fiveH = claude?.fiveHourPercent;
+    const sevenD = claude?.sevenDayPercent;
     const cost = claude?.cost;
 
     let tip = `Claude Code · ${model}`;
     if (claude?.effort) tip += ` (${claude.effort})`;
-    if (ctx !== null && ctx !== undefined) tip += `\nContext: ${ctx}% (${Math.round(claude.contextTokens / 1000)}k tokens)`;
+    if (ctx !== null && ctx !== undefined) tip += `\nContext: ${ctx}% (${Math.round((claude.contextTokens || 0) / 1000)}k tokens)`;
     if (fiveH !== null && fiveH !== undefined) tip += `\n5-Hour Quota: ${fiveH}% used`;
     if (claude?.timeRemaining) tip += ` (${claude.timeRemaining})`;
-    if (claude?.sevenDayPercent !== null && claude?.sevenDayPercent !== undefined) tip += `\nWeekly Quota: ${claude.sevenDayPercent}% used`;
+    if (sevenD !== null && sevenD !== undefined) tip += `\n7-Day Quota: ${sevenD}% used`;
     if (cost) tip += `\nSession Cost: ${cost}`;
     tip += "\nClick to open AI Quotas Dashboard";
 
@@ -260,6 +262,16 @@ export default class WorkspaceStatus extends View {
               .child(`5h ${fiveH}%`)
           )
       )
+      .when(sevenD !== null && sevenD !== undefined, (el) =>
+        el
+          .child(div().text_color(t.dim).child("·"))
+          .child(
+            div()
+              .text_size(11)
+              .text_color(sevenD >= 85 ? (t.blocked ?? "#f38ba8") : t.muted)
+              .child(`7d ${sevenD}%`)
+          )
+      )
       .when(Boolean(cost), (el) =>
         el
           .child(div().text_color(t.dim).child("·"))
@@ -272,11 +284,10 @@ export default class WorkspaceStatus extends View {
     const model = codex?.model || "gpt-6.1-sol";
     const effort = formatEffort(codex?.effort);
     const week = codex?.weekPercent;
-    const tokens = codex?.formattedTokens;
 
     let tip = `Codex · ${model}`;
     if (codex?.effort) tip += ` (${codex.effort})`;
-    if (week !== null && week !== undefined) tip += `\nWeekly Limit: ${week}% used`;
+    if (week !== null && week !== undefined) tip += `\n7-Day Limit: ${week}% used`;
     if (codex?.timeRemaining) tip += ` (${codex.timeRemaining})`;
     if (codex?.tokensToday) tip += `\nTokens Today: ${codex.tokensToday.toLocaleString()}`;
     tip += "\nClick to open AI Quotas Dashboard";
@@ -324,11 +335,6 @@ export default class WorkspaceStatus extends View {
               .text_color(week >= 85 ? (t.blocked ?? "#f38ba8") : t.muted)
               .child(`7d ${week}%`)
           )
-      )
-      .when(Boolean(tokens && tokens !== "0"), (el) =>
-        el
-          .child(div().text_color(t.dim).child("·"))
-          .child(div().text_size(11).text_color(t.dim).child(`${tokens} tok`))
       );
   }
 
@@ -337,14 +343,12 @@ export default class WorkspaceStatus extends View {
     const model = agy?.model || "Gemini 3.8 Flash";
     const fiveHRem = agy?.fiveHour?.remainingPercent;
     const weekRem = agy?.weekly?.remainingPercent;
-    const steps = agy?.stepsToday;
 
     let tip = `Antigravity · ${model}`;
     if (fiveHRem !== null && fiveHRem !== undefined) tip += `\n5-Hour Limit: ${fiveHRem}% remaining`;
     if (agy?.fiveHour?.timeRemaining) tip += ` (${agy.fiveHour.timeRemaining})`;
-    if (weekRem !== null && weekRem !== undefined) tip += `\nWeekly Limit: ${weekRem}% remaining`;
+    if (weekRem !== null && weekRem !== undefined) tip += `\n7-Day Limit: ${weekRem}% remaining`;
     if (agy?.weekly?.timeRemaining) tip += ` (${agy.weekly.timeRemaining})`;
-    if (steps) tip += `\nSteps Today: ${steps}`;
     tip += "\nClick to open AI Quotas Dashboard";
 
     return h_flex()
@@ -376,7 +380,7 @@ export default class WorkspaceStatus extends View {
             div()
               .text_size(11)
               .text_color(fiveHRem <= 15 ? (t.blocked ?? "#f38ba8") : t.muted)
-              .child(`5h ${fiveHRem}% rem`)
+              .child(`5h ${fiveHRem}%`)
           )
       )
       .when(weekRem !== null && weekRem !== undefined, (el) =>
@@ -386,13 +390,8 @@ export default class WorkspaceStatus extends View {
             div()
               .text_size(11)
               .text_color(weekRem <= 15 ? (t.blocked ?? "#f38ba8") : t.muted)
-              .child(`wk ${weekRem}% rem`)
+              .child(`7d ${weekRem}%`)
           )
-      )
-      .when(Boolean(steps && steps > 0), (el) =>
-        el
-          .child(div().text_color(t.dim).child("·"))
-          .child(div().text_size(11).text_color(t.dim).child(`${steps} steps`))
       );
   }
 
@@ -519,29 +518,47 @@ export default class WorkspaceStatus extends View {
 
   render(cx) {
     const t = theme();
+    const f = typeof focused === "function" ? focused() : null;
+    const allPanes = typeof panes === "function" ? panes() : [];
+    const currentPane = allPanes.find((p) => p.focused || (f && p.pane === f.pane));
     const space = spaces().find((s) => s.active);
+
+    const userHome = typeof home === "function" ? home() : "";
+    const cwd = f?.cwd || currentPane?.cwd || space?.cwd || null;
+    const folderName = formatCwd(cwd, userHome);
+    const branchName = currentPane?.branch || space?.branch || null;
+
     const list = agents();
     const needs = list.filter((a) => a.status === "blocked").length;
-    const label = (icon, text) =>
-      h_flex()
-        .gap(6)
+
+    const label = (icon, text, tip) => {
+      const el = h_flex()
+        .gap(5)
         .items_center()
         .child(svg(`mods/workspace-chrome/${icon}.svg`).size(13))
         .child(text);
+      if (tip) el.tooltip(tip);
+      return el;
+    };
 
     return h_flex()
       .size_full()
       .px(14)
-      .gap(16)
+      .gap(12)
       .items_center()
       .bg(t.chrome)
       .border_t(1)
       .border_color(t.border)
       .text_size(11.8)
       .text_color(t.muted)
-      // Left: Machine, Branch, Agents
-      .child(label(space?.machine ? "server" : "monitor", space?.machine ?? "This computer"))
-      .when(Boolean(space?.branch), (el) => el.child(label("branch", space.branch)))
+      // Left Group: Folder & Git Branch together
+      .when(Boolean(folderName), (el) => el.child(label("folder", folderName, cwd)))
+      .when(Boolean(branchName), (el) => el.child(label("branch", branchName)))
+      // Machine (if remote or custom named)
+      .when(Boolean(space?.machine && space.machine !== "This computer"), (el) =>
+        el.child(label("server", space.machine))
+      )
+      // Agent Count
       .child(
         h_flex()
           .gap(6)
@@ -550,14 +567,12 @@ export default class WorkspaceStatus extends View {
           .child(`${list.length} agents`)
           .when(needs > 0, (el) => el.child(div().text_color(t.blocked).child(`· ${needs} needs you`)))
       )
-      // Center: Unified AI Agent Status Bar
-      .child(
-        h_flex()
-          .flex_1()
-          .justify_center()
-          .items_center()
-          .child(this.renderAgentStatusBar(t, cx))
-      )
+      // Subtle vertical divider between workspace info and agent status
+      .child(div().h(11).w(1).bg(t.border ?? "#313244"))
+      // Unified AI Agent Status Bar (Left-aligned!)
+      .child(this.renderAgentStatusBar(t, cx))
+      // Spacer: absorbs all remaining space and pushes YTM/commands to the far right
+      .child(div().flex_1())
       // Right Corner: YouTube Music Widget (when active)
       .when(Boolean(this.song && this.song.active), (el) =>
         el.child(this.renderMusicWidget(t, this.song, cx))
