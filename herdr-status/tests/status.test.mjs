@@ -500,3 +500,57 @@ test("shrinkPath preserves last 2 segments and contracts leading segments to fir
     "Tooltip should always keep unabbreviated path"
   );
 });
+
+test("git-branch badge renders on the right with matching style and copies to clipboard on click", async () => {
+  const copied = [];
+  const { View, cx } = await harness({
+    focused: { pane: "p1", terminal: "t1", cwd: "/Users/dev/Workspace/project-x", branch: "feature/unified-status" },
+    panes: [{ pane: "p1", app: "claude-code", focused: true, branch: "feature/unified-status" }],
+  });
+  cx.write_to_clipboard = (text) => copied.push(text);
+
+  const view = new View();
+  view.init({}, cx);
+  await view.pollAgentStatus(cx);
+
+  const rendered = view.render(cx);
+  const gitBranchEl = findElementById(rendered, "git-branch");
+  assert.ok(gitBranchEl, "Should render git-branch badge");
+
+  const branchTexts = collectAllText(gitBranchEl);
+  assert.ok(branchTexts.some((t) => t.includes("feature/unified-status")), "Should display git branch");
+  assert.ok(gitBranchEl._tooltip.includes("feature/unified-status"), "Tooltip should contain branch name");
+
+  gitBranchEl._onClick(null, cx);
+  assert.deepEqual(copied, ["feature/unified-status"]);
+});
+
+test("statusbar-agents displays breakdown of running and idle agents with rich model tooltip and triggers agents mod on click", async () => {
+  const { View, cx, events } = await harness({
+    focused: { pane: "p1", terminal: "t1" },
+    panes: [{ pane: "p1", app: "claude-code", focused: true }],
+  });
+
+  const view = new View();
+  view.init({}, cx);
+  await view.pollAgentStatus(cx);
+
+  const rendered = view.render(cx);
+  const agentsWidget = findElementById(rendered, "statusbar-agents");
+  assert.ok(agentsWidget, "Should render statusbar-agents widget");
+
+  const texts = collectAllText(agentsWidget);
+  assert.ok(texts.some((t) => t.includes("2 agents")), "Should display total agents count");
+  assert.ok(texts.some((t) => t.includes("(1 running)")), "Should display running agents count");
+
+  assert.ok(agentsWidget._tooltip.includes("Agents (2 total · 1 running)"), "Tooltip should have summary header");
+  assert.ok(agentsWidget._tooltip.includes("running"), "Tooltip should list running status");
+  assert.ok(agentsWidget._tooltip.includes("idle"), "Tooltip should list idle status");
+  assert.ok(agentsWidget._tooltip.includes("點擊開啟 Agent 清單"), "Tooltip should indicate click action");
+
+  agentsWidget._onClick(null, cx);
+  assert.ok(
+    events.some((e) => e[0] === "run" && e[1] === "mod.open" && e[2]?.name === "agents"),
+    "Clicking agents widget should trigger mod.open for agents"
+  );
+});

@@ -543,6 +543,165 @@ export default class WorkspaceStatus extends View {
       );
   }
 
+  // Render Git Branch badge (matching agent-cwd pill styling, positioned to the right of path)
+  renderGitBranch(branchName, t, cx) {
+    if (!branchName) return null;
+
+    return h_flex()
+      .id("git-branch")
+      .items_center()
+      .gap(5)
+      .px(8)
+      .h(22)
+      .max_w(220)
+      .rounded(5)
+      .bg(t.surface ?? "#1e1e2e")
+      .border(1)
+      .border_color(t.border)
+      .cursor_pointer()
+      .tooltip(`Git 分支: ${branchName}\n點擊複製分支名稱`)
+      .hover((s) => s.bg(t.selected ?? "#334155"))
+      .on_click((_e, cx) => {
+        try {
+          if (typeof cx?.write_to_clipboard === "function") {
+            cx.write_to_clipboard(branchName);
+          } else if (typeof exec === "function") {
+            exec("sh", ["-c", 'printf "%s" "$1" | pbcopy', "sh", branchName]).catch(() => null);
+          }
+        } catch {}
+      })
+      .child(
+        svg("mods/workspace-chrome/branch.svg")
+          .size(13)
+          .flex_shrink_0()
+          .text_color(t.ansi4 ?? "#89b4fa")
+      )
+      .child(
+        div()
+          .truncate()
+          .text_size(11)
+          .text_color(t.muted)
+          .child(branchName)
+      );
+  }
+
+  // Resolve agent model info for agent status list/tooltip
+  resolveAgentModel(a) {
+    if (!a) return null;
+    const { claude, codex, antigravity } = this.agentStatus || {};
+    const raw = `${a.app || ""} ${a.program?.key || ""} ${a.program?.name || ""} ${a.title || ""}`.toLowerCase();
+
+    if (raw.includes("claude")) {
+      return claude?.model ? `${claude.model}${claude.effort ? ` (${claude.effort})` : ""}` : "Claude";
+    }
+    if (raw.includes("codex") || raw.includes("openai")) {
+      return codex?.model ? `${codex.model}${codex.effort ? ` (${codex.effort})` : ""}` : "Codex";
+    }
+    if (raw.includes("antigravity") || raw.includes("agy") || raw.includes("gemini")) {
+      return antigravity?.model ? `${antigravity.model}${antigravity.effort ? ` (${antigravity.effort})` : ""}` : "Antigravity";
+    }
+    return a.program?.name || a.app || null;
+  }
+
+  // Render Agents count & breakdown pill with rich tooltip (run / idle / blocked and models)
+  renderAgentsWidget(t, cx) {
+    const list = typeof agents === "function" ? agents() : [];
+    let running = 0;
+    let idle = 0;
+    let blocked = 0;
+    let done = 0;
+
+    for (const a of list) {
+      const s = a.status;
+      if (s === "working" || s === "running") running++;
+      else if (s === "blocked" || s === "error") blocked++;
+      else if (s === "done") done++;
+      else idle++;
+    }
+
+    const total = list.length;
+    if (total === 0) {
+      return h_flex()
+        .id("statusbar-agents")
+        .items_center()
+        .gap(6)
+        .child(div().size(6).rounded(3).bg(t.dim))
+        .child("0 agents");
+    }
+
+    const tooltipLines = [`Agents (${total} total${running > 0 ? ` · ${running} running` : ""}${blocked > 0 ? ` · ${blocked} needs you` : ""})`];
+    tooltipLines.push("──────────────────────────────");
+    for (const a of list) {
+      const model = this.resolveAgentModel(a);
+      const loc = a.space_name ? `[${a.space_name}${a.tab_name ? ` · ${a.tab_name}` : ""}]` : "";
+      const appName = a.app || a.program?.name || "Agent";
+      const s = a.status;
+      const statusText = s === "working" || s === "running" ? "🟢 running"
+        : s === "blocked" ? "🟠 needs you"
+        : s === "done" ? "🔵 done"
+        : "⚪ idle";
+
+      let line = `• ${appName} ${loc}\n   狀態: ${statusText}`;
+      if (model) line += `\n   模型: ${model}`;
+      if (a.title && a.title !== appName) line += `\n   標題: ${a.title}`;
+      tooltipLines.push(line);
+    }
+    tooltipLines.push("──────────────────────────────\n點擊開啟 Agent 清單");
+    const fullTooltip = tooltipLines.join("\n");
+
+    const statusDotColor = blocked > 0
+      ? (t.blocked ?? "#fab387")
+      : running > 0
+      ? (t.ansi2 ?? "#a6e3a1")
+      : t.dim;
+
+    return h_flex()
+      .id("statusbar-agents")
+      .items_center()
+      .gap(6)
+      .px(6)
+      .h(22)
+      .rounded(4)
+      .cursor_pointer()
+      .tooltip(fullTooltip)
+      .hover((s) => s.bg(t.surface ?? "#1e1e2e"))
+      .on_click(() => {
+        try {
+          run("mod.open", { name: "agents" });
+        } catch {}
+      })
+      .child(
+        running > 0
+          ? svg("mods/workspace-chrome/spinner.svg")
+              .size(11)
+              .flex_none()
+              .text_color(t.ansi2 ?? "#a6e3a1")
+              .spin(900)
+          : div().size(6).rounded(3).bg(statusDotColor)
+      )
+      .child(
+        div()
+          .text_color(running > 0 ? t.foreground : t.muted)
+          .child(`${total} agents`)
+      )
+      .when(running > 0, (el) =>
+        el.child(
+          div()
+            .text_size(10.5)
+            .text_color(t.ansi2 ?? "#a6e3a1")
+            .child(`(${running} running)`)
+        )
+      )
+      .when(blocked > 0, (el) =>
+        el.child(
+          div()
+            .text_size(10.5)
+            .text_color(t.blocked ?? "#fab387")
+            .child(`· ${blocked} needs you`)
+        )
+      );
+  }
+
   renderAgentStatusBar(t, cx) {
     const active = detectActiveAgent({ focused, panes, agents });
     const { claude, codex, antigravity } = this.agentStatus;
@@ -617,25 +776,18 @@ export default class WorkspaceStatus extends View {
       .border_color(t.border)
       .text_size(11.8)
       .text_color(t.muted)
-      // Left Group: Git Branch
-      .when(Boolean(branchName), (el) => el.child(label("branch", branchName)))
       // Machine (if remote or custom named)
       .when(Boolean(space?.machine && space.machine !== "This computer"), (el) =>
         el.child(label("server", space.machine))
       )
-      // Agent Count
-      .child(
-        h_flex()
-          .gap(6)
-          .items_center()
-          .child(div().size(6).rounded(3).bg(t.dim))
-          .child(`${list.length} agents`)
-          .when(needs > 0, (el) => el.child(div().text_color(t.blocked).child(`· ${needs} needs you`)))
-      )
+      // Agent Count & Breakdown
+      .child(this.renderAgentsWidget(t, cx))
       // Spacer: absorbs all middle space, pushing AI Agent Status Bar and controls to the right
       .child(div().flex_1())
       // Right Group: Agent CWD Full Path
       .when(Boolean(agentCwd), (el) => el.child(this.renderAgentCwd(agentCwd, t, cx)))
+      // Right Group: Git Branch (right after path, matching styling)
+      .when(Boolean(branchName), (el) => el.child(this.renderGitBranch(branchName, t, cx)))
       // Right Group: Unified AI Agent Status Bar (Right-aligned!)
       .child(this.renderAgentStatusBar(t, cx))
       // Right Corner: YouTube Music Widget (when active)
