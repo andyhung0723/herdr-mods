@@ -482,6 +482,47 @@ export default class WorkspaceStatus extends View {
       );
   }
 
+  // Render Agent Working Directory full path badge (Right-aligned)
+  renderAgentCwd(cwd, t, cx) {
+    if (!cwd) return null;
+    return h_flex()
+      .id("agent-cwd")
+      .items_center()
+      .gap(5)
+      .px(8)
+      .h(22)
+      .max_w(360)
+      .rounded(5)
+      .bg(t.surface ?? "#1e1e2e")
+      .border(1)
+      .border_color(t.border)
+      .cursor_pointer()
+      .tooltip(`Agent 完整路徑: ${cwd}\n點擊複製路徑`)
+      .hover((s) => s.bg(t.selected ?? "#334155"))
+      .on_click((_e, cx) => {
+        try {
+          if (typeof cx?.write_to_clipboard === "function") {
+            cx.write_to_clipboard(cwd);
+          } else if (typeof exec === "function") {
+            exec("sh", ["-c", 'printf "%s" "$1" | pbcopy', "sh", cwd]).catch(() => null);
+          }
+        } catch {}
+      })
+      .child(
+        svg("mods/workspace-chrome/folder.svg")
+          .size(13)
+          .flex_shrink_0()
+          .text_color(t.ansi2 ?? "#a6e3a1")
+      )
+      .child(
+        div()
+          .truncate()
+          .text_size(11)
+          .text_color(t.muted)
+          .child(cwd)
+      );
+  }
+
   renderAgentStatusBar(t, cx) {
     const active = detectActiveAgent({ focused, panes, agents });
     const { claude, codex, antigravity } = this.agentStatus;
@@ -523,11 +564,15 @@ export default class WorkspaceStatus extends View {
     const currentPane = allPanes.find((p) => p.focused || (f && p.pane === f.pane));
     const space = spaces().find((s) => s.active);
 
-    const userHome = typeof home === "function" ? home() : "";
-    const cwd = f?.cwd || currentPane?.cwd || space?.cwd || null;
-    const folderName = formatCwd(cwd, userHome);
-    const branchName = currentPane?.branch || space?.branch || null;
+    const activeAgent = detectActiveAgent({ focused, panes, agents });
+    const agentCwd =
+      (activeAgent === "claude" && this.agentStatus?.claude?.cwd) ||
+      f?.cwd ||
+      currentPane?.cwd ||
+      space?.cwd ||
+      null;
 
+    const branchName = currentPane?.branch || space?.branch || null;
     const list = agents();
     const needs = list.filter((a) => a.status === "blocked").length;
 
@@ -551,8 +596,7 @@ export default class WorkspaceStatus extends View {
       .border_color(t.border)
       .text_size(11.8)
       .text_color(t.muted)
-      // Left Group: Folder & Git Branch together
-      .when(Boolean(folderName), (el) => el.child(label("folder", folderName, cwd)))
+      // Left Group: Git Branch
       .when(Boolean(branchName), (el) => el.child(label("branch", branchName)))
       // Machine (if remote or custom named)
       .when(Boolean(space?.machine && space.machine !== "This computer"), (el) =>
@@ -569,6 +613,8 @@ export default class WorkspaceStatus extends View {
       )
       // Spacer: absorbs all middle space, pushing AI Agent Status Bar and controls to the right
       .child(div().flex_1())
+      // Right Group: Agent CWD Full Path
+      .when(Boolean(agentCwd), (el) => el.child(this.renderAgentCwd(agentCwd, t, cx)))
       // Right Group: Unified AI Agent Status Bar (Right-aligned!)
       .child(this.renderAgentStatusBar(t, cx))
       // Right Corner: YouTube Music Widget (when active)

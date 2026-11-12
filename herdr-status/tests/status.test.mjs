@@ -300,10 +300,14 @@ test("agent collector detects active Claude pane and renders expanded Claude pil
   const rendered = view.render(cx);
   assert.ok(rendered);
 
-  // Verify Directory and Branch on left
+  // Verify Branch on left, and Agent full CWD path on right
   const allTexts = collectAllText(rendered);
-  assert.ok(allTexts.some((t) => t.includes("project-x")), "Should display current directory project-x");
   assert.ok(allTexts.some((t) => t.includes("feature-auth")), "Should display git branch feature-auth");
+
+  const agentCwdEl = findElementById(rendered, "agent-cwd");
+  assert.ok(agentCwdEl, "Should render agent-cwd badge");
+  const cwdTexts = collectAllText(agentCwdEl);
+  assert.ok(cwdTexts.some((t) => t.includes("/Users/dev/Workspace/project-x")), "Should display full agent cwd path");
 
   const expandedClaude = findElementById(rendered, "agent-status-claude-expanded");
   assert.ok(expandedClaude, "Should render expanded Claude status pill");
@@ -416,4 +420,24 @@ test("clicking agent status badge calls mod.open for agent-quotas dashboard", as
     events.some((e) => e[0] === "run" && e[1] === "mod.open" && e[2]?.name === "agent-quotas"),
     "Should trigger mod.open for agent-quotas"
   );
+});
+
+test("clicking agent-cwd copies full path to clipboard", async () => {
+  const copied = [];
+  const { View, cx } = await harness({
+    focused: { pane: "p1", terminal: "t1", cwd: "/Users/dev/Workspace/project-x" },
+    panes: [{ pane: "p1", app: "claude-code", focused: true }],
+  });
+  cx.write_to_clipboard = (text) => copied.push(text);
+
+  const view = new View();
+  view.init({}, cx);
+  await view.pollAgentStatus(cx);
+
+  const rendered = view.render(cx);
+  const agentCwdEl = findElementById(rendered, "agent-cwd");
+  assert.ok(agentCwdEl, "Should render agent-cwd");
+
+  agentCwdEl._onClick(null, cx);
+  assert.deepEqual(copied, ["/Users/dev/Workspace/project-x"]);
 });

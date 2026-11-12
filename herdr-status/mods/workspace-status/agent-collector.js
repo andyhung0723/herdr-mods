@@ -121,6 +121,7 @@ export async function getLiveClaudeStatus() {
     const fiveHourResetsAt = rateLimits.five_hour?.resets_at ?? null;
     const costUsd = liveJson.cost?.total_cost_usd;
     const formattedCost = typeof costUsd === "number" ? `$${costUsd.toFixed(2)}` : null;
+    const agentCwd = liveJson.cwd || liveJson.workspace?.current_dir || null;
 
     return {
       id: "claude",
@@ -134,6 +135,7 @@ export async function getLiveClaudeStatus() {
       fiveHourResetsAt: fiveHourResetsAt,
       timeRemaining: formatTimeRemaining(fiveHourResetsAt),
       cost: formattedCost,
+      cwd: agentCwd,
       source: "live-session",
       available: true,
     };
