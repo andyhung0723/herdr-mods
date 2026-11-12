@@ -1,47 +1,54 @@
 # Herdr Agent Browser Hub
 
-為 Herdr 打造的受控瀏覽器中心與多 Agent 隔離協作系統（支援 Microsoft Edge / Chromium）。
+為 Herdr 打造的受控瀏覽器中心：每個 Agent pane 擁有自己隔離的 headless Edge 分頁，畫面串回 Herdr，必要時人可以接手操作。
 
 ---
 
 ## 功能特點
 
-1. **左側邊欄導航 + 中間主視圖切換**：
-   - 左側側邊欄整合 `Agent Browser` 小卡片，即時列出各 Agent（Claude Code、Codex、Antigravity）當前正在操作的網頁與標題。
-   - 點擊卡片，中間主面板立即透過 `layout.select` 平滑切換為高解析度全螢幕瀏覽器畫布；點擊終端機隨時切回。
+1. **每個 Agent pane 一個隔離 session**
+   - Session id = `<vendor>-<terminal>`，例如 `claude-t25`、`codex-t1x`。vendor 取自 MCP client 的 `clientInfo.name`（或 `--agent=`），terminal 取自 Herdr 注入的 `HC_TERMINAL_ID`。
+   - 每個 session 是獨立的 `BrowserContext`，Cookie 與 Storage 互不相通，也不碰日常 Edge profile。
+   - Herdr terminal 結束後 60 秒內自動關閉對應 session；閒置 30 分鐘的 session 也會回收。
 
-2. **零桌面亂彈視窗（Zero Rogue Windows）**：
-   - 以受控模式 (`--headless=new`) 啟動單一 Microsoft Edge 核心處理程序。
-   - 所有網頁畫面均透過原生 CDP Screencast 串流到 Herdr 內部，絕不在使用者的 macOS 桌面上彈出任何視窗或搶走視窗焦點。
+2. **給 Agent 用的工具（MCP）**
+   - `browser_snapshot` 回傳精簡的 accessibility tree，互動元素帶 `[ref=eN]`；`browser_click` / `browser_type` 直接吃 ref。
+   - 點擊、輸入、按鍵都是真實的 CDP input event（`isTrusted: true`），React/Vue 受控元件也能正確收到。
+   - `browser_navigate` 會等待 load，網路錯誤（例如 `ERR_CONNECTION_REFUSED`）會回報成錯誤。
+   - 同一 session 的動作依序執行，即使 agent 平行呼叫工具也不會亂序。
 
-3. **多 Agent 暫態無痕隔離（BrowserContext Isolation）**：
-   - 每個 Agent 連線時獲派獨立的無痕 `BrowserContext`，Cookie、LocalStorage 與分頁互相完全隔離，不污染日常個人 Edge Profile。
-   - 強制單例 Page 限制，防止 AI 在重試迴圈中開出一堆無效分頁。
+3. **Herdr UI**
+   - 側邊欄 `Agent Browser` 卡片列出所有 session（`Claude · Space / Tab`），焦點 agent 會加框；點擊後主面板切到瀏覽器畫面。
+   - 主畫面保持長寬比顯示即時畫面，提供上一頁、下一頁、重新整理與 session 切換。
+   - 只在主畫面可見時才 screencast，畫面不在時不消耗 CPU。
 
-4. **人機雙向協作（Human-in-the-Loop）**：
-   - 頂部導航列提供 URL 顯示、上一頁/下一頁、重新整理與 Agent 切換分頁。
-   - 支援「AI Driving」與「Human Takeover」一鍵切換，遇 CAPTCHA 或登入驗證時可直接接管點擊。
+4. **Human Takeover**
+   - 點「AI Driving」切成「You're driving」後，滑鼠點擊、滾輪、鍵盤都會轉送到頁面（`cmd-` 快捷鍵保留給 Herdr）。
+   - 接手期間 agent 的操作會被拒絕，並收到「人類接手中」的錯誤訊息，切回後恢復。
 
 ---
 
-## 快速安裝
+## 安裝
 
-在一般終端機或 Herdr shell 中執行：
+需要 `herdr-app`、Node 22+、Microsoft Edge（或 Chrome）。請在主 checkout 執行（MCP 註冊會寫入 installer 所在的絕對路徑）：
 
 ```bash
+python3 herdr-browser/install.py --dry-run   # 先看會改什麼
 python3 herdr-browser/install.py
 ```
 
-這會自動完成：
-- 檢查並安裝 `agent-browser-sidebar` 與 `agent-browser-main` 兩個 Herdr Mod。
-- 更新版面配置（在側邊欄加入 Browser 小部件，並將主工作區包裝為 Stack 支援即時切換）。
-- 自動為 Claude Code 配置 `herdr-browser` MCP 服務（`~/.claude.json`）。
+這會：
+- 複製 `agent-browser-sidebar` 與 `agent-browser-main` 兩個 mod，並更新 layout（側邊欄卡片 + `work-main-stack`）。
+- 有 agent-loadout（`loadout` CLI）時，把 `mcp:herdr-browser` 加進 loadout manifest 並 `loadout apply --only mcp:herdr-browser`（Claude 與 Codex 的所有 target）。Codex 需要的 `env_vars = ["HC_TERMINAL_ID"]` 會一併寫入。
+- 沒有 loadout 時，印出手動註冊指令。`--skip-mcp` 可跳過這一步。
+
+安裝後重開 Claude Code / Codex session 讓 MCP 生效。
 
 ---
 
-## 啟動守護程序（Daemon）
+## Daemon
 
-MCP server 第一次被呼叫時，若 daemon 沒在跑會自動在背景啟動（log：`~/.config/herdr-browser/daemon.log`）。也可以手動啟動：
+Agent 第一次呼叫 `browser_*` 工具時，若 daemon 沒在跑會自動在背景啟動（log：`~/.config/herdr-browser/daemon.log`）。也可以手動啟動：
 
 ```bash
 node herdr-browser/daemon/server.mjs
@@ -53,20 +60,25 @@ node herdr-browser/daemon/server.mjs
 - 除了 `/health`，所有 endpoint 都需要 `Authorization: Bearer <token>`；token 在 `~/.config/herdr-browser/token`（0600），daemon 首次啟動時產生。
 - `navigate` 只允許 `http:`、`https:`、`about:`、`data:`，擋掉 `file:`、`edge:`、`chrome:` 等。
 - Edge 使用 `--remote-debugging-port=0`，profile 放在 `~/.config/herdr-browser/edge-profile`，實際 port 從 `DevToolsActivePort` 讀取；不會接上其他佔用 9222 的瀏覽器。
+- 「誰在操控」（agent / human）是協調用的鎖，不是安全邊界：兩種 client 都持有同一個 token。
+
+### 架構
+
+```
+Claude Code / Codex ──stdio──▶ mcp-server.mjs ──HTTP+token──▶ server.mjs ──CDP──▶ headless Edge
+                                                                  ▲                 (1 BrowserContext / agent pane)
+Herdr mods (sidebar, main) ──────────HTTP+token───────────────────┘
+   main view: GET /frame?after=seq → 寫入 ~/.config/herdr-app/cache/agent-browser/f-*.jpg → image()
+```
+
+Herdr 的 `image()` 只能讀 app home 底下的相對路徑，而且以路徑做 cache，所以每張 frame 用新檔名寫入，只保留最近 3 張。
 
 ---
 
 ## 測試與驗證
 
-執行單元測試：
-
 ```bash
 node --test herdr-browser/tests/*.test.mjs
-```
-
-執行 Herdr 原生模組檢查：
-
-```bash
 herdr-app check herdr-browser/mods/agent-browser-sidebar
 herdr-app check herdr-browser/mods/agent-browser-main
 ```

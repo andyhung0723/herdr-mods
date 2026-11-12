@@ -3,45 +3,58 @@ import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { vendorFromClientName } from "../daemon/mcp-server.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const mcpServerPath = path.resolve(__dirname, "../daemon/mcp-server.mjs");
 
-test("mcp-server handles initialize, tools/list, and tool calls over stdio", async () => {
-  const proc = spawn("node", [mcpServerPath, "--agent=claude-test"], {
-    stdio: ["pipe", "pipe", "pipe"],
-  });
+test("vendorFromClientName maps known MCP clients", () => {
+  assert.equal(vendorFromClientName("claude-code"), "claude");
+  assert.equal(vendorFromClientName("codex-mcp-client"), "codex");
+  assert.equal(vendorFromClientName("Antigravity"), "antigravity");
+  assert.equal(vendorFromClientName("Some Client"), "some-client");
+});
 
-  const responses = [];
-
+function rpcSession(args, env = {}) {
+  const proc = spawn(process.execPath, [mcpServerPath, ...args], { stdio: ["pipe", "pipe", "pipe"], env: { ...process.env, ...env } });
+  const waiters = new Map();
+  let buffer = "";
   proc.stdout.on("data", (chunk) => {
-    const lines = chunk.toString().split("\n");
-    for (const l of lines) {
-      if (l.trim()) {
-        try {
-          responses.push(JSON.parse(l.trim()));
-        } catch {}
-      }
+    buffer += chunk;
+    let nl;
+    while ((nl = buffer.indexOf("\n")) >= 0) {
+      const msg = JSON.parse(buffer.slice(0, nl));
+      buffer = buffer.slice(nl + 1);
+      waiters.get(msg.id)?.(msg);
     }
   });
+  let nextId = 1;
+  const request = (method, params = {}) =>
+    new Promise((resolve) => {
+      const id = nextId++;
+      waiters.set(id, resolve);
+      proc.stdin.write(JSON.stringify({ jsonrpc: "2.0", id, method, params }) + "\n");
+    });
+  return { request, close: () => proc.kill("SIGTERM") };
+}
 
-  // 1. Send initialize
-  proc.stdin.write(JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize", params: {} }) + "\n");
-  await new Promise((r) => setTimeout(r, 200));
+test("mcp-server speaks initialize / tools/list over stdio", async () => {
+  const rpc = rpcSession([]);
+  try {
+    const init = await rpc.request("initialize", { protocolVersion: "2025-06-18", clientInfo: { name: "claude-code" } });
+    assert.equal(init.result.serverInfo.name, "herdr-browser");
+    assert.equal(init.result.protocolVersion, "2025-06-18");
 
-  assert.ok(responses.some((r) => r.id === 1 && r.result?.serverInfo?.name === "herdr-browser"));
+    const list = await rpc.request("tools/list");
+    const names = list.result.tools.map((t) => t.name);
+    for (const n of ["browser_navigate", "browser_snapshot", "browser_click", "browser_type", "browser_press_key", "browser_close"]) {
+      assert.ok(names.includes(n), n);
+    }
+    assert.ok(list.result.tools.every((t) => !("action" in t)), "internal fields must not leak");
 
-  // 2. Send tools/list
-  proc.stdin.write(JSON.stringify({ jsonrpc: "2.0", id: 2, method: "tools/list", params: {} }) + "\n");
-  await new Promise((r) => setTimeout(r, 200));
-
-  const listResp = responses.find((r) => r.id === 2);
-  assert.ok(listResp);
-  assert.ok(Array.isArray(listResp.result?.tools));
-  assert.ok(listResp.result.tools.some((t) => t.name === "browser_navigate"));
-  assert.ok(listResp.result.tools.some((t) => t.name === "browser_click"));
-  assert.ok(listResp.result.tools.some((t) => t.name === "browser_type"));
-  assert.ok(listResp.result.tools.some((t) => t.name === "browser_snapshot"));
-
-  proc.kill("SIGTERM");
+    const unknown = await rpc.request("tools/call", { name: "nope", arguments: {} });
+    assert.ok(unknown.error);
+  } finally {
+    rpc.close();
+  }
 });

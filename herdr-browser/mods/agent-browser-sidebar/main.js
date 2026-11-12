@@ -1,83 +1,52 @@
 // Agent Browser Sidebar Widget for Herdr
 import { View, div, svg } from "gpui-kit";
 import { h_flex, v_flex } from "gpui-base";
-import { theme, run, setShared, shared, home, readTextFile } from "herdr";
+import { theme, run, setShared, shared, focused } from "herdr";
+import { SHARED_ACTIVE_AGENT, daemonJson, singleFlight, vendorColor, sessionLabel } from "./daemon-client.js";
 
-const DAEMON_URL = "http://127.0.0.1:9223";
 const ICON_BROWSER = "mods/agent-browser-sidebar/browser.svg";
-const SHARED_ACTIVE_AGENT = "agent-browser.active-agent";
-const TOKEN_PATH = `${home()}/.config/herdr-browser/token`;
-let cachedToken = null;
-
-// Token is re-read after a 401 so a regenerated token doesn't need a mod reload.
-async function daemonFetch(path, init = {}) {
-  cachedToken ??= (await readTextFile(TOKEN_PATH))?.trim() || null;
-  const send = () =>
-    fetch(`${DAEMON_URL}${path}`, {
-      ...init,
-      headers: { ...init.headers, ...(cachedToken && { Authorization: `Bearer ${cachedToken}` }) },
-    });
-  let res = await send();
-  if (res.status === 401) {
-    cachedToken = (await readTextFile(TOKEN_PATH))?.trim() || null;
-    res = await send();
-  }
-  return res;
-}
+const POLL_MS = 1500;
 
 export default class AgentBrowserSidebar extends View {
   init(_props, cx) {
     this.sessions = [];
-    this.loading = false;
-    this.activeAgent = shared(SHARED_ACTIVE_AGENT) || "default";
+    this.online = false;
+    this.dirty = true;
+    this.poll = singleFlight(() => this.refreshSessions());
 
-    // Poll daemon sessions every 1.5 seconds
-    cx.timer.every(1500, (tcx) => {
-      this.refreshSessions(tcx);
-    });
-
-    this.refreshSessions(cx);
-  }
-
-  async refreshSessions(cx) {
-    try {
-      const res = await daemonFetch("/sessions", { signal: AbortSignal.timeout(1000) });
-      if (res.ok) {
-        const data = await res.json();
-        this.sessions = Array.isArray(data.sessions) ? data.sessions : [];
-        cx?.notify?.();
+    cx.timer.every(POLL_MS, (tcx) => {
+      this.poll();
+      if (this.dirty) {
+        this.dirty = false;
+        tcx.notify();
       }
+    });
+    this.poll();
+  }
+
+  async refreshSessions() {
+    try {
+      const data = await daemonJson("/sessions");
+      this.sessions = data.sessions;
+      this.online = true;
     } catch {
-      // Daemon might be offline or starting
       this.sessions = [];
+      this.online = false;
     }
+    this.dirty = true;
   }
 
-  switchToBrowser(agentId) {
-    const targetAgent = agentId || (this.sessions[0]?.agentId || "default");
-    setShared(SHARED_ACTIVE_AGENT, targetAgent);
-    this.activeAgent = targetAgent;
-
-    // Switch central main panel to browser view!
-    try {
-      run("layout.select", { stack: "work-main-stack", child: "browser-main" });
-    } catch (err) {
-      console.error("Failed to select browser-main in work-main-stack:", err);
-    }
+  openBrowser(agentId) {
+    if (agentId) setShared(SHARED_ACTIVE_AGENT, agentId);
+    run("layout.select", { stack: "work-main-stack", child: "browser-main" });
   }
 
-  async launchNewSession(agentId = "default") {
-    try {
-      await daemonFetch(`/session/${encodeURIComponent(agentId)}`, { method: "POST" });
-      this.switchToBrowser(agentId);
-    } catch (err) {
-      console.error("Failed to launch session:", err);
-    }
-  }
-
-  render(cx) {
+  render() {
     const t = theme();
-    const hasSessions = this.sessions.length > 0;
+    const active = shared(SHARED_ACTIVE_AGENT);
+    const focusedTerminal = focused()?.terminal?.toLowerCase() ?? null;
+    const live = this.online && this.sessions.length > 0;
+    const statusColor = live ? (t.ansi2 ?? "#a6e3a1") : t.dim;
 
     return v_flex()
       .p(6)
@@ -86,116 +55,60 @@ export default class AgentBrowserSidebar extends View {
       .bg(t.chrome ?? t.surface)
       .border(1)
       .border_color(t.border)
-      // Header
       .child(
         h_flex()
-          .items_center()
-          .justify_between()
           .px(4)
           .py(2)
-          .child(
-            h_flex()
-              .items_center()
-              .gap(6)
-              .child(svg(ICON_BROWSER).size(13).flex_none().text_color(hasSessions ? (t.ansi2 ?? "#a6e3a1") : t.muted))
-              .child(div().text_size(11.5).font_bold().text_color(t.foreground).child("Agent Browser"))
-          )
-          .child(
-            h_flex()
-              .items_center()
-              .gap(4)
-              .when(hasSessions, (el) =>
-                el.child(
-                  div()
-                    .px(5)
-                    .h(16)
-                    .rounded(8)
-                    .bg(t.raised)
-                    .text_size(10)
-                    .font_semibold()
-                    .text_color(t.ansi2 ?? "#a6e3a1")
-                    .child(String(this.sessions.length))
-                )
-              )
-              .child(
-                div()
-                  .size(6)
-                  .rounded(3)
-                  .bg(hasSessions ? (t.ansi2 ?? "#a6e3a1") : t.dim)
-              )
-          )
+          .gap(6)
+          .items_center()
+          .child(svg(ICON_BROWSER).size(13).flex_none().text_color(statusColor))
+          .child(div().flex_1().text_size(11.5).font_bold().child("Agent Browser"))
+          .when(live, (el) => el.child(div().text_size(10).font_semibold().text_color(statusColor).child(String(this.sessions.length))))
+          .child(div().size(6).rounded(3).bg(statusColor))
       )
-      // Sessions List
       .child(
-        hasSessions
-          ? v_flex().gap(3).children(
-              this.sessions.map((s) => {
-                const isSelected = this.activeAgent === s.agentId;
-                const agentBadgeColor =
-                  s.agentId.includes("claude")
-                    ? "#f97316"
-                    : s.agentId.includes("codex")
-                    ? "#06b6d4"
-                    : s.agentId.includes("antigravity") || s.agentId.includes("agy")
-                    ? "#a855f7"
-                    : t.accent ?? "#89b4fa";
-
-                let domain = "";
-                try {
-                  domain = new URL(s.url).hostname || s.url;
-                } catch {
-                  domain = s.url || "about:blank";
-                }
-
-                return h_flex()
-                  .p(5)
-                  .rounded(4)
-                  .bg(isSelected ? (t.selected ?? "#334155") : t.surface)
-                  .border(1)
-                  .border_color(isSelected ? (t.accent ?? t.border) : "transparent")
-                  .items_center()
-                  .justify_between()
-                  .gap(4)
-                  .cursor_pointer()
-                  .hover((h) => h.bg(t.hover))
-                  .on_click(() => this.switchToBrowser(s.agentId))
-                  .child(
-                    h_flex()
-                      .items_center()
-                      .gap(5)
-                      .min_w(0)
-                      .flex_1()
-                      .child(
-                        div()
-                          .px(4)
-                          .py(1)
-                          .rounded(3)
-                          .bg(agentBadgeColor + "22")
-                          .text_size(9)
-                          .font_bold()
-                          .text_color(agentBadgeColor)
-                          .child(s.agentId.toUpperCase())
-                      )
-                      .child(
-                        div()
-                          .text_size(10.5)
-                          .text_color(t.foreground)
-                          .truncate()
-                          .child(s.title || domain)
-                      )
-                  );
-              })
-            )
+        live
+          ? v_flex()
+              .gap(3)
+              .children(this.sessions.map((s) => this.renderSession(t, s, s.agentId === active, s.terminal === focusedTerminal)))
           : h_flex()
               .p(6)
-              .items_center()
-              .justify_center()
               .rounded(4)
+              .justify_center()
               .bg(t.surface)
               .cursor_pointer()
               .hover((h) => h.bg(t.hover))
-              .on_click(() => this.launchNewSession("default"))
-              .child(div().text_size(10.5).text_color(t.dim).child("Open Agent Browser →"))
+              .on_click(() => this.openBrowser(null))
+              .child(div().text_size(10.5).text_color(t.dim).child(this.online ? "No sessions yet →" : "Hub offline →"))
       );
+  }
+
+  renderSession(t, s, selected, isFocusedAgent) {
+    const color = vendorColor(s, t);
+    let host = s.url;
+    try {
+      host = new URL(s.url).host || s.url;
+    } catch {}
+    return v_flex()
+      .p(5)
+      .gap(2)
+      .rounded(4)
+      .bg(selected ? (t.selected ?? t.raised) : t.surface)
+      .border(1)
+      .border_color(isFocusedAgent ? color : "transparent")
+      .cursor_pointer()
+      .hover((h) => h.bg(t.hover))
+      .on_click(() => this.openBrowser(s.agentId))
+      .child(
+        h_flex()
+          .gap(5)
+          .items_center()
+          .min_w(0)
+          .child(div().size(6).rounded(3).flex_none().bg(color))
+          .child(div().flex_1().text_size(10).font_semibold().truncate().text_color(color).child(sessionLabel(s)))
+          .when(s.driver === "human", (el) => el.child(div().text_size(9).text_color(t.blocked ?? "#f59e0b").child("YOU")))
+      )
+      .child(div().text_size(10.5).truncate().text_color(t.foreground).child(s.title || host))
+      .child(div().text_size(9.5).truncate().text_color(t.dim).child(host));
   }
 }

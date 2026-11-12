@@ -6,15 +6,20 @@
 // requires `Authorization: Bearer <token>` (token in ~/.config/herdr-browser/token,
 // mode 0600). Without CORS a web page cannot attach that header, and the Host
 // check rejects DNS-rebinding requests that would otherwise look same-origin.
+import { execFile } from "node:child_process";
 import crypto from "node:crypto";
 import http from "node:http";
-import { BrowserHub, normalizeNavigationUrl } from "./browser-hub.mjs";
+import { promisify } from "node:util";
+import { ActionError, HumanDrivingError } from "./agent-session.mjs";
+import { BrowserHub } from "./browser-hub.mjs";
 import { stopEdge } from "./edge-launcher.mjs";
 import { DAEMON_HOST, DAEMON_PORT, loadOrCreateToken } from "./state.mjs";
+import { normalizeNavigationUrl } from "./url-policy.mjs";
 
 const ALLOWED_HOSTS = new Set([`${DAEMON_HOST}:${DAEMON_PORT}`, `localhost:${DAEMON_PORT}`]);
 const MAX_BODY_BYTES = 1024 * 1024;
 const AGENT_ID_PATTERN = /^[a-z0-9][a-z0-9_-]{0,63}$/;
+const TERMINAL_PRUNE_INTERVAL_MS = 60_000;
 
 const token = loadOrCreateToken();
 const tokenBuffer = Buffer.from(token);
@@ -51,6 +56,12 @@ function parseAgentId(pathname, prefix) {
   return agentId;
 }
 
+function parseClientMeta(client) {
+  if (!client || typeof client !== "object") return undefined;
+  const clean = (v) => (typeof v === "string" && /^[A-Za-z0-9_.-]{1,64}$/.test(v) ? v.toLowerCase() : undefined);
+  return { vendor: clean(client.vendor), terminal: clean(client.terminal) };
+}
+
 async function readJsonBody(req) {
   let size = 0;
   const chunks = [];
@@ -67,23 +78,62 @@ async function readJsonBody(req) {
   }
 }
 
-function assertNavigableUrl(url) {
-  try {
-    normalizeNavigationUrl(url);
-  } catch (err) {
-    throw new HttpError(400, err.message);
+// `driving: true` actions change the page and are refused for the agent while a human drives.
+const ACTIONS = {
+  navigate: { driving: true, run: (s, p) => s.navigate(p.url) },
+  reload: { driving: true, run: (s) => s.reload() },
+  back: { driving: true, run: (s) => s.goHistory(-1) },
+  forward: { driving: true, run: (s) => s.goHistory(1) },
+  click: { driving: true, run: (s, p) => s.click(p) },
+  type: { driving: true, run: (s, p) => s.type(p) },
+  press_key: { driving: true, run: (s, p) => s.pressKey(p.key, { text: p.text }) },
+  scroll: { driving: true, run: (s, p) => s.scroll(p) },
+  evaluate: { driving: true, run: (s, p) => s.evaluate(p.script) },
+  snapshot: { driving: false, run: (s) => s.snapshot() },
+  screenshot: { driving: false, run: (s) => s.screenshot() },
+  set_driver: { driving: false, humanOnly: true, run: (s, p) => s.setDriver(p.driver) },
+};
+
+async function handleAction(res, agentId, payload) {
+  const { action } = payload;
+  const isHuman = payload.source === "human";
+
+  if (action === "close") {
+    const closed = await hub.closeSession(agentId);
+    sendJson(res, 200, { ok: true, agentId, result: { closed } });
+    return;
   }
+
+  const spec = Object.hasOwn(ACTIONS, action) ? ACTIONS[action] : null;
+  if (!spec) throw new HttpError(400, `Unknown action: ${action}`);
+  if (spec.humanOnly && !isHuman) throw new HttpError(403, `${action} is only available from the Herdr UI`);
+  if (action === "navigate") {
+    try {
+      normalizeNavigationUrl(payload.url);
+    } catch (err) {
+      throw new HttpError(400, err.message);
+    }
+  }
+
+  const session = await hub.getOrCreateSession(agentId, parseClientMeta(payload.client));
+  if (spec.driving && !isHuman) session.assertAgentMayAct();
+  if (!isHuman) session.touch();
+
+  const result = await session.exclusive(async () => {
+    const value = await spec.run(session, payload);
+    if (spec.driving) await session.refreshTitleAndUrl();
+    return value;
+  });
+  sendJson(res, 200, { ok: true, agentId, url: session.currentUrl, title: session.currentTitle, driver: session.driver, result });
 }
 
-const ACTIONS = {
-  navigate: (session, p) => session.navigate(p.url),
-  click: (session, p) => session.click({ selector: p.selector, x: p.x, y: p.y }),
-  type: (session, p) => session.type({ selector: p.selector, text: p.text, clear: p.clear }),
-  reload: (session) => session.navigate(session.currentUrl),
-  snapshot: (session) => session.getSnapshot(),
-  screenshot: (session) => session.screenshot("jpeg"),
-  evaluate: (session, p) => session.evaluate(p.script),
-};
+async function handleFrame(res, agentId, url) {
+  const session = hub.sessions.get(agentId);
+  if (!session?.isAlive) throw new HttpError(404, "Session not found");
+  await session.noteViewed();
+  const after = Number(url.searchParams.get("after")) || 0;
+  sendJson(res, 200, { ok: true, agentId, ...session.frameAfter(after) });
+}
 
 async function handleRequest(req, res, url) {
   const { pathname } = url;
@@ -108,56 +158,28 @@ async function handleRequest(req, res, url) {
 
   if (pathname.startsWith("/session/") && req.method === "POST") {
     const session = await hub.getOrCreateSession(parseAgentId(pathname, "/session/"));
-    sendJson(res, 200, { ok: true, agentId: session.agentId, url: session.currentUrl, title: session.currentTitle });
+    sendJson(res, 200, { ok: true, ...session.describe() });
     return;
   }
 
   if (pathname.startsWith("/frame/") && req.method === "GET") {
-    const agentId = parseAgentId(pathname, "/frame/");
-    const session = hub.sessions.get(agentId);
-    if (!session) throw new HttpError(404, "Session not found");
-
-    if (url.searchParams.get("raw") === "1" && session.lastFrame) {
-      const imgBuffer = Buffer.from(session.lastFrame, "base64");
-      res.writeHead(200, { "Content-Type": "image/jpeg", "Content-Length": imgBuffer.length, "Cache-Control": "no-store" });
-      res.end(imgBuffer);
-      return;
-    }
-
-    sendJson(res, 200, {
-      ok: true,
-      agentId,
-      url: session.currentUrl,
-      title: session.currentTitle,
-      hasFrame: Boolean(session.lastFrame),
-      frame: session.lastFrame || null,
-      time: session.lastFrameTime,
-    });
+    await handleFrame(res, parseAgentId(pathname, "/frame/"), url);
     return;
   }
 
   if (pathname.startsWith("/action/") && req.method === "POST") {
-    const agentId = parseAgentId(pathname, "/action/");
-    const payload = await readJsonBody(req);
-    const { action } = payload;
-
-    if (action === "close") {
-      await hub.closeSession(agentId);
-      sendJson(res, 200, { ok: true, agentId, result: { closed: agentId } });
-      return;
-    }
-
-    const run = Object.hasOwn(ACTIONS, action) ? ACTIONS[action] : null;
-    if (!run) throw new HttpError(400, `Unknown action: ${action}`);
-    if (action === "navigate") assertNavigableUrl(payload.url);
-
-    const session = await hub.getOrCreateSession(agentId);
-    const result = await run(session, payload);
-    sendJson(res, 200, { ok: true, agentId, url: session.currentUrl, title: session.currentTitle, result });
+    await handleAction(res, parseAgentId(pathname, "/action/"), await readJsonBody(req));
     return;
   }
 
   throw new HttpError(404, "Not found");
+}
+
+function statusFor(err) {
+  if (err instanceof HttpError) return err.status;
+  if (err instanceof HumanDrivingError) return 409;
+  if (err instanceof ActionError) return 422;
+  return 500;
 }
 
 const server = http.createServer(async (req, res) => {
@@ -166,11 +188,32 @@ const server = http.createServer(async (req, res) => {
     const url = new URL(req.url, `http://${req.headers.host}`);
     await handleRequest(req, res, url);
   } catch (err) {
-    const status = err instanceof HttpError ? err.status : 500;
+    const status = statusFor(err);
     if (status >= 500) console.error("Daemon request error:", err);
     if (!res.headersSent) sendJson(res, status, { ok: false, error: err.message });
   }
 });
+
+// Sessions belong to Herdr terminals; when the terminal is gone, so is the session.
+const execFileAsync = promisify(execFile);
+async function pruneSessionsOfEndedTerminals() {
+  const owned = hub.listSessions().filter((s) => s.terminal);
+  if (owned.length === 0) return;
+  let live;
+  try {
+    const { stdout } = await execFileAsync("hc", ["ls", "--json"], { timeout: 5000 });
+    live = new Set(JSON.parse(stdout).terminals.filter((t) => t.state === "live").map((t) => t.address.toLowerCase()));
+  } catch {
+    return; // hc unavailable: fall back to idle-timeout cleanup only
+  }
+  for (const s of owned) {
+    if (!live.has(s.terminal)) {
+      console.log(`Terminal ${s.terminal} ended; closing session ${s.agentId}`);
+      await hub.closeSession(s.agentId).catch(() => {});
+    }
+  }
+}
+setInterval(pruneSessionsOfEndedTerminals, TERMINAL_PRUNE_INTERVAL_MS).unref();
 
 server.on("error", (err) => {
   if (err.code === "EADDRINUSE") {

@@ -12,12 +12,18 @@ import os
 import shutil
 import subprocess
 import sys
+import tomllib
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 MOD_SIDEBAR = "agent-browser-sidebar"
 MOD_MAIN = "agent-browser-main"
+MCP_NAME = "herdr-browser"
+SHARED_MOD_FILES = ["daemon-client.js"]
+
+SIDEBAR_BLOCK_SIZE = {"size": {"px": 132}, "min": 70, "max": 280}
+LEGACY_SIDEBAR_BLOCK_SIZE = {"size": {"px": 92}, "min": 70, "max": 140}
 
 
 class InstallError(RuntimeError):
@@ -35,6 +41,16 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         "--layout",
         default="main-popup",
         help="Personal layout to configure (default: main-popup)",
+    )
+    parser.add_argument(
+        "--skip-mcp",
+        action="store_true",
+        help="Do not register the herdr-browser MCP server",
+    )
+    parser.add_argument(
+        "--loadout-manifest",
+        type=Path,
+        help="agent-loadout manifest (default: $LOADOUT_MANIFEST or ~/.config/agent-loadout/loadout.toml)",
     )
     parser.add_argument(
         "--dry-run",
@@ -79,6 +95,14 @@ def backup_file(path: Path, backups_dir: Path) -> Path:
     return dest
 
 
+def assert_shared_files_in_sync(mods_root: Path) -> None:
+    for name in SHARED_MOD_FILES:
+        sidebar = (mods_root / MOD_SIDEBAR / name).read_bytes()
+        main = (mods_root / MOD_MAIN / name).read_bytes()
+        if sidebar != main:
+            raise InstallError(f"{name} differs between {MOD_SIDEBAR} and {MOD_MAIN}; keep both copies identical")
+
+
 def copy_mod(src: Path, dest: Path, dry_run: bool) -> None:
     if dry_run:
         print(f"[dry-run] Copy mod {src.name} -> {dest}")
@@ -107,19 +131,13 @@ def update_layout(layout_path: Path, backups_dir: Path, dry_run: bool) -> None:
         if isinstance(node, dict):
             if node.get("id") == "sidebar-lists" and isinstance(node.get("children"), list):
                 children = node["children"]
-                if not any(c.get("id") == "agent-browser" for c in children if isinstance(c, dict)):
-                    children.append({
-                        "id": "agent-browser",
-                        "type": "block",
-                        "content": {
-                            "mod": MOD_SIDEBAR
-                        },
-                        "size": {
-                            "px": 92
-                        },
-                        "min": 70,
-                        "max": 140
-                    })
+                existing = next((c for c in children if isinstance(c, dict) and c.get("id") == "agent-browser"), None)
+                if existing is None:
+                    children.append({"id": "agent-browser", "type": "block", "content": {"mod": MOD_SIDEBAR}, **SIDEBAR_BLOCK_SIZE})
+                    changed = True
+                elif all(existing.get(k) == v for k, v in LEGACY_SIDEBAR_BLOCK_SIZE.items()):
+                    # Session rows grew to three lines; only resize blocks still at the old defaults.
+                    existing.update(SIDEBAR_BLOCK_SIZE)
                     changed = True
             for v in node.values():
                 update_sidebar(v)
@@ -202,26 +220,66 @@ def update_layout(layout_path: Path, backups_dir: Path, dry_run: bool) -> None:
         print(f"Layout {layout_path.name} already configured for browser hub")
 
 
-def update_mcp_configs(source_root: Path, dry_run: bool) -> None:
-    # Update Claude Code config in ~/.claude.json
-    claude_json_path = Path.home() / ".claude.json"
-    mcp_script = source_root / "daemon" / "mcp-server.mjs"
+def loadout_manifest_path(override: Path | None) -> Path:
+    if override is not None:
+        return override.expanduser()
+    env = os.environ.get("LOADOUT_MANIFEST")
+    return Path(env).expanduser() if env else Path.home() / ".config" / "agent-loadout" / "loadout.toml"
 
-    if claude_json_path.exists():
-        try:
-            cfg = json.loads(claude_json_path.read_text("utf-8"))
-            mcp_servers = cfg.setdefault("mcpServers", {})
-            mcp_servers["herdr-browser"] = {
-                "command": "node",
-                "args": [str(mcp_script), "--agent=claude"],
-            }
-            if dry_run:
-                print(f"[dry-run] Configure herdr-browser MCP in {claude_json_path}")
-            else:
-                claude_json_path.write_text(json.dumps(cfg, indent=2, ensure_ascii=False) + "\n", "utf-8")
-                print(f"Configured herdr-browser MCP server in {claude_json_path}")
-        except Exception as e:
-            print(f"Notice: Could not update {claude_json_path}: {e}")
+
+def mcp_manifest_entry(mcp_script: Path) -> str:
+    # Codex forwards only listed env vars to MCP servers; HC_TERMINAL_ID gives
+    # each agent pane its own browser session. Claude Code inherits the env.
+    return (
+        "\n[[mcp]]\n"
+        f'name = "{MCP_NAME}"\n'
+        'command = "node"\n'
+        f"args = [{json.dumps(str(mcp_script))}]\n"
+        'to = ["tool:claude", "tool:codex"]\n'
+        "[mcp.codex]\n"
+        'env_vars = ["HC_TERMINAL_ID"]\n'
+    )
+
+
+def register_mcp(source_root: Path, manifest: Path, backups_dir: Path, dry_run: bool) -> None:
+    mcp_script = source_root / "daemon" / "mcp-server.mjs"
+    if shutil.which("loadout") is None or not manifest.exists():
+        print("loadout not found; register the MCP server manually:")
+        print(f"  claude mcp add -s user {MCP_NAME} -- node {mcp_script}")
+        print(f"  codex: [mcp_servers.{MCP_NAME}] command = \"node\", args = [\"{mcp_script}\"], env_vars = [\"HC_TERMINAL_ID\"]")
+        return
+
+    entries = tomllib.loads(manifest.read_text("utf-8")).get("mcp", [])
+    existing = next((e for e in entries if e.get("name") == MCP_NAME), None)
+    if existing is None:
+        if dry_run:
+            print(f"[dry-run] Append mcp:{MCP_NAME} to {manifest}:{mcp_manifest_entry(mcp_script)}")
+            return
+        bk = backup_file(manifest, backups_dir)
+        print(f"Backed up {manifest.name} to {bk}")
+        with manifest.open("a", encoding="utf-8") as f:
+            f.write(mcp_manifest_entry(mcp_script))
+        print(f"Added mcp:{MCP_NAME} to {manifest}")
+    elif existing.get("args") != [str(mcp_script)]:
+        print(f"Notice: mcp:{MCP_NAME} already in {manifest} with args {existing.get('args')}; leaving it as is")
+
+    cmd = ["loadout", "--manifest", str(manifest), "plan" if dry_run else "apply", "--only", f"mcp:{MCP_NAME}"]
+    res = subprocess.run(cmd, capture_output=True, text=True, timeout=120, check=False)
+    print((res.stdout + res.stderr).strip())
+    if res.returncode != 0:
+        raise InstallError(f"{' '.join(cmd)} failed")
+
+
+def warn_legacy_claude_json(source_root: Path) -> None:
+    # Older installers wrote ~/.claude.json directly, which loadout-managed
+    # setups (CLAUDE_CONFIG_DIR) never read.
+    legacy = Path.home() / ".claude.json"
+    try:
+        servers = json.loads(legacy.read_text("utf-8")).get("mcpServers", {})
+    except (OSError, ValueError):
+        return
+    if MCP_NAME in servers and str(source_root) in json.dumps(servers[MCP_NAME]):
+        print(f"Notice: stale {MCP_NAME} entry from an older installer remains in {legacy} (safe to remove).")
 
 
 def main() -> int:
@@ -235,6 +293,7 @@ def main() -> int:
 
     print("Running herdr-app check on browser mods...")
     try:
+        assert_shared_files_in_sync(source_root / "mods")
         run_mod_check(mod_sidebar_src, home)
         print(f"✔ {MOD_SIDEBAR} passed check")
         run_mod_check(mod_main_src, home)
@@ -256,18 +315,18 @@ def main() -> int:
         layout_path = home / "layouts" / f"{args.layout}.json"
         update_layout(layout_path, backups_dir, args.dry_run)
 
-        update_mcp_configs(source_root, args.dry_run)
+        if not args.skip_mcp:
+            register_mcp(source_root, loadout_manifest_path(args.loadout_manifest), backups_dir, args.dry_run)
+            warn_legacy_claude_json(source_root)
     except InstallError as e:
         print(f"Install failed: {e}", file=sys.stderr)
         return 1
 
     print("\n✅ Herdr Agent Browser Hub installed successfully!")
     print("\nNext steps:")
-    print("  1. Start the Browser Hub Daemon in a background terminal:")
-    print(f"     node {source_root / 'daemon' / 'server.mjs'}")
-    print("  2. In Claude Code, run:")
-    print("     claude --mcp herdr-browser")
-    print("  3. Check the left sidebar in Herdr for the 'Agent Browser' card and click to open!")
+    print("  1. Restart Claude Code / Codex sessions so they load the herdr-browser MCP server.")
+    print("  2. Ask an agent to use browser_navigate; the daemon starts on the first call.")
+    print("  3. Click the agent's card in Herdr's 'Agent Browser' sidebar widget to watch or take over.")
     return 0
 
 
