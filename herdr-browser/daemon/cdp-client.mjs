@@ -7,6 +7,7 @@ export class CDPClient {
     this.nextId = 1;
     this.pending = new Map();
     this.listeners = new Map();
+    this.disconnectHandlers = new Set();
     this.isOpen = false;
   }
 
@@ -34,11 +35,13 @@ export class CDPClient {
       };
 
       this.ws.onclose = () => {
+        const wasOpen = this.isOpen;
         this.isOpen = false;
-        for (const [id, { reject }] of this.pending) {
+        for (const { reject } of this.pending.values()) {
           reject(new Error("CDP connection closed"));
         }
         this.pending.clear();
+        if (wasOpen) this.emitDisconnect();
       };
 
       this.ws.onmessage = (event) => {
@@ -121,7 +124,24 @@ export class CDPClient {
     }
   }
 
+  onDisconnect(handler) {
+    this.disconnectHandlers.add(handler);
+    return () => this.disconnectHandlers.delete(handler);
+  }
+
+  emitDisconnect() {
+    for (const h of this.disconnectHandlers) {
+      try {
+        h();
+      } catch (err) {
+        console.error("Error in CDP disconnect handler:", err);
+      }
+    }
+  }
+
+  // Intentional close: callers already know, so disconnect handlers are not fired.
   close() {
+    this.disconnectHandlers.clear();
     if (this.ws) {
       try {
         this.ws.close();

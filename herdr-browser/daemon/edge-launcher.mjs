@@ -1,63 +1,80 @@
 // Edge Browser Process Manager for Herdr Agent Browser Hub
+//
+// The browser listens on an OS-assigned debugging port (`--remote-debugging-port=0`)
+// and reports it through `<profile>/DevToolsActivePort`. We never attach to a
+// fixed well-known port, so a user's own Chrome/Edge with remote debugging
+// enabled can never be mistaken for the hub's headless browser.
 import { spawn } from "node:child_process";
 import fs from "node:fs";
+import path from "node:path";
+import { EDGE_PROFILE_DIR } from "./state.mjs";
 
-const EDGE_PATHS = [
+const BROWSER_PATHS = [
   "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge",
   "/Applications/Microsoft Edge Beta.app/Contents/MacOS/Microsoft Edge Beta",
   "/Applications/Microsoft Edge Dev.app/Contents/MacOS/Microsoft Edge Dev",
   "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
 ];
 
-const DEFAULT_PORT = 9222;
-const PROFILE_DIR = "/tmp/herdr-browser-edge-profile";
+const LAUNCH_TIMEOUT_MS = 10_000;
+const POLL_INTERVAL_MS = 150;
 
 let edgeProcess = null;
 
 export function findBrowserExecutable() {
-  for (const p of EDGE_PATHS) {
-    if (fs.existsSync(p)) return p;
-  }
-  return null;
+  return BROWSER_PATHS.find((p) => fs.existsSync(p)) ?? null;
 }
 
-export async function isPortOpen(port = DEFAULT_PORT) {
+function activePortFile(profileDir) {
+  return path.join(profileDir, "DevToolsActivePort");
+}
+
+function readActivePort(profileDir) {
+  try {
+    const [portLine, browserPath] = fs.readFileSync(activePortFile(profileDir), "utf8").split("\n");
+    const port = Number(portLine);
+    if (!Number.isInteger(port) || port <= 0 || !browserPath?.startsWith("/devtools/browser/")) return null;
+    return { port, browserPath: browserPath.trim() };
+  } catch {
+    return null;
+  }
+}
+
+async function fetchVersion(port) {
   try {
     const res = await fetch(`http://127.0.0.1:${port}/json/version`, { signal: AbortSignal.timeout(1000) });
-    if (res.ok) {
-      const data = await res.json();
-      return data;
-    }
-  } catch {}
-  return null;
+    return res.ok ? await res.json() : null;
+  } catch {
+    return null;
+  }
 }
 
-export async function ensureEdgeRunning(port = DEFAULT_PORT) {
-  // 1. Check if already running on the port
-  const existing = await isPortOpen(port);
-  if (existing) {
-    return {
-      port,
-      wsEndpoint: existing.webSocketDebuggerUrl,
-      browser: existing.Browser,
-      isNew: false,
-    };
-  }
+// A DevToolsActivePort file only proves which browser *was* ours. Confirm the
+// browser now on that port has the same browser target id before trusting it.
+async function probeOwnedBrowser(profileDir) {
+  const active = readActivePort(profileDir);
+  if (!active) return null;
+  const version = await fetchVersion(active.port);
+  if (!version?.webSocketDebuggerUrl?.endsWith(active.browserPath)) return null;
+  return { port: active.port, wsEndpoint: version.webSocketDebuggerUrl, browser: version.Browser };
+}
 
-  // 2. Locate Edge executable
+export async function ensureEdgeRunning({ profileDir = EDGE_PROFILE_DIR } = {}) {
+  const owned = await probeOwnedBrowser(profileDir);
+  if (owned) return { ...owned, isNew: false };
+
   const execPath = findBrowserExecutable();
   if (!execPath) {
     throw new Error("No Microsoft Edge (or Chrome) executable found in /Applications");
   }
 
-  // Ensure clean profile dir
-  fs.mkdirSync(PROFILE_DIR, { recursive: true });
+  fs.mkdirSync(profileDir, { recursive: true, mode: 0o700 });
+  fs.rmSync(activePortFile(profileDir), { force: true });
 
-  // 3. Launch Edge in background
   const args = [
     "--headless=new",
-    `--remote-debugging-port=${port}`,
-    `--user-data-dir=${PROFILE_DIR}`,
+    "--remote-debugging-port=0",
+    `--user-data-dir=${profileDir}`,
     "--disable-background-networking",
     "--disable-default-apps",
     "--disable-extensions",
@@ -69,35 +86,36 @@ export async function ensureEdgeRunning(port = DEFAULT_PORT) {
     "--window-size=1280,800",
   ];
 
-  edgeProcess = spawn(execPath, args, {
-    detached: true,
-    stdio: "ignore",
-  });
-  edgeProcess.unref();
+  const child = spawn(execPath, args, { detached: true, stdio: "ignore" });
+  child.unref();
+  edgeProcess = child;
 
-  // 4. Poll until CDP is available (up to 6 seconds)
-  const startTime = Date.now();
-  while (Date.now() - startTime < 6000) {
-    await new Promise((r) => setTimeout(r, 200));
-    const info = await isPortOpen(port);
-    if (info) {
-      return {
-        port,
-        wsEndpoint: info.webSocketDebuggerUrl,
-        browser: info.Browser,
-        isNew: true,
-      };
-    }
+  let exitedEarly = false;
+  child.once("exit", () => {
+    exitedEarly = true;
+    if (edgeProcess === child) edgeProcess = null;
+  });
+
+  const deadline = Date.now() + LAUNCH_TIMEOUT_MS;
+  while (Date.now() < deadline && !exitedEarly) {
+    await new Promise((r) => setTimeout(r, POLL_INTERVAL_MS));
+    const ready = await probeOwnedBrowser(profileDir);
+    if (ready) return { ...ready, isNew: true };
   }
 
-  throw new Error(`Edge launched (PID ${edgeProcess?.pid}) but did not respond on port ${port} within 6s`);
+  stopEdge();
+  throw new Error(
+    exitedEarly
+      ? `Browser exited during startup (profile may be locked by another process: ${profileDir})`
+      : `Browser did not report a DevTools port within ${LAUNCH_TIMEOUT_MS}ms`
+  );
 }
 
 export function stopEdge() {
-  if (edgeProcess && !edgeProcess.killed) {
+  if (edgeProcess && edgeProcess.exitCode === null) {
     try {
       edgeProcess.kill("SIGTERM");
     } catch {}
-    edgeProcess = null;
   }
+  edgeProcess = null;
 }

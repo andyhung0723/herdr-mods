@@ -1,19 +1,19 @@
 #!/usr/bin/env node
 // Model Context Protocol (MCP) Server for Herdr Agent Browser
+import { spawn } from "node:child_process";
 import readline from "node:readline";
-import { BrowserHub } from "./browser-hub.mjs";
+import { fileURLToPath } from "node:url";
+import { DAEMON_LOG_PATH, DAEMON_URL, openDaemonLog, readToken } from "./state.mjs";
 
 const args = process.argv.slice(2);
 let agentName = process.env.HERDR_AGENT_NAME || "default";
 
 for (const arg of args) {
   if (arg.startsWith("--agent=")) {
-    agentName = arg.split("=")[1];
+    agentName = arg.slice("--agent=".length);
   }
 }
-
-// Global Hub instance for standalone mode
-let localHub = null;
+agentName = agentName.trim().toLowerCase();
 
 const TOOLS = [
   {
@@ -81,132 +81,113 @@ const TOOLS = [
   },
 ];
 
-async function executeViaDaemon(action, payload) {
+const TOOL_ACTIONS = {
+  browser_navigate: "navigate",
+  browser_click: "click",
+  browser_type: "type",
+  browser_snapshot: "snapshot",
+  browser_screenshot: "screenshot",
+  browser_evaluate: "evaluate",
+};
+
+const ACTION_TIMEOUT_MS = 60_000;
+const DAEMON_BOOT_TIMEOUT_MS = 15_000;
+
+// Transport failure (daemon not listening) is the only case where we may start
+// the daemon and retry. Any HTTP response — including 4xx/5xx from a failed
+// click or evaluate — is final: retrying elsewhere would re-run side effects.
+class DaemonUnreachableError extends Error {}
+
+async function postAction(action, payload) {
+  const token = readToken();
+  let res;
   try {
-    const res = await fetch(`http://127.0.0.1:9223/action/${agentName}`, {
+    res = await fetch(`${DAEMON_URL}/action/${encodeURIComponent(agentName)}`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ action, ...payload }),
-      signal: AbortSignal.timeout(30000),
+      headers: { "Content-Type": "application/json", ...(token && { Authorization: `Bearer ${token}` }) },
+      body: JSON.stringify({ ...payload, action }),
+      signal: AbortSignal.timeout(ACTION_TIMEOUT_MS),
     });
-    if (res.ok) {
-      const data = await res.json();
-      return data;
+  } catch (err) {
+    if (err.name === "TimeoutError") throw new Error(`Browser action "${action}" timed out after ${ACTION_TIMEOUT_MS}ms`);
+    throw new DaemonUnreachableError(err.message);
+  }
+  const data = await res.json().catch(() => ({ ok: false, error: `HTTP ${res.status}` }));
+  if (!res.ok || !data.ok) throw new Error(data.error || `HTTP ${res.status}`);
+  return data;
+}
+
+async function isDaemonUp() {
+  try {
+    const res = await fetch(`${DAEMON_URL}/health`, { signal: AbortSignal.timeout(500) });
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
+
+let daemonBoot = null;
+
+function ensureDaemon() {
+  daemonBoot ??= (async () => {
+    if (await isDaemonUp()) return;
+    const log = openDaemonLog();
+    const child = spawn(process.execPath, [fileURLToPath(new URL("./server.mjs", import.meta.url))], {
+      detached: true,
+      stdio: ["ignore", log, log],
+    });
+    child.unref();
+
+    const deadline = Date.now() + DAEMON_BOOT_TIMEOUT_MS;
+    while (Date.now() < deadline) {
+      await new Promise((r) => setTimeout(r, 200));
+      if (await isDaemonUp()) return;
     }
-  } catch {}
-  return null;
+    throw new Error(`Browser Hub daemon did not start within ${DAEMON_BOOT_TIMEOUT_MS}ms (see ${DAEMON_LOG_PATH})`);
+  })().finally(() => {
+    daemonBoot = null;
+  });
+  return daemonBoot;
+}
+
+async function executeAction(action, payload) {
+  try {
+    return await postAction(action, payload);
+  } catch (err) {
+    if (!(err instanceof DaemonUnreachableError)) throw err;
+    await ensureDaemon();
+    return postAction(action, payload);
+  }
+}
+
+function toolText(text, isError = false) {
+  return { content: [{ type: "text", text }], ...(isError && { isError: true }) };
+}
+
+function formatResult(name, data) {
+  const { result } = data;
+  switch (name) {
+    case "browser_screenshot":
+      return { content: [{ type: "image", data: result, mimeType: "image/jpeg" }] };
+    case "browser_snapshot":
+    case "browser_evaluate":
+      return toolText(typeof result === "string" ? result : JSON.stringify(result ?? null, null, 2));
+    case "browser_navigate":
+      return toolText(`Navigated to: ${data.url}\nTitle: ${data.title}`);
+    default: {
+      const failed = result && typeof result === "object" && result.ok === false;
+      return toolText(`${failed ? "Failed" : "OK"}: ${name} on ${data.url}\n${JSON.stringify(result ?? null)}`, failed);
+    }
+  }
 }
 
 async function handleToolCall(name, params) {
-  // Try central daemon first
-  let actionName = "";
-  if (name === "browser_navigate") actionName = "navigate";
-  else if (name === "browser_click") actionName = "click";
-  else if (name === "browser_type") actionName = "type";
-  else if (name === "browser_snapshot") actionName = "snapshot";
-  else if (name === "browser_screenshot") actionName = "screenshot";
-  else if (name === "browser_evaluate") actionName = "evaluate";
-
-  const daemonResult = await executeViaDaemon(actionName, params);
-  if (daemonResult && daemonResult.ok) {
-    if (name === "browser_screenshot") {
-      return {
-        content: [{ type: "image", data: daemonResult.result, mimeType: "image/jpeg" }],
-      };
-    }
-    if (name === "browser_snapshot" || name === "browser_evaluate") {
-      return {
-        content: [{ type: "text", text: typeof daemonResult.result === "string" ? daemonResult.result : JSON.stringify(daemonResult.result, null, 2) }],
-      };
-    }
-    return {
-      content: [
-        {
-          type: "text",
-          text: `Action ${name} succeeded on ${daemonResult.url || ""}\n${JSON.stringify(daemonResult.result || "")}`,
-        },
-      ],
-    };
-  }
-
-  // Fallback to standalone local hub
-  if (!localHub) {
-    localHub = new BrowserHub();
-    await localHub.init();
-  }
-  const session = await localHub.getOrCreateSession(agentName);
-
-  switch (name) {
-    case "browser_navigate": {
-      await session.navigate(params.url);
-      return {
-        content: [
-          {
-            type: "text",
-            text: `Successfully navigated to: ${session.currentUrl}\nTitle: ${session.currentTitle}`,
-          },
-        ],
-      };
-    }
-    case "browser_click": {
-      const res = await session.click(params);
-      return {
-        content: [
-          {
-            type: "text",
-            text: res.ok ? `Clicked successfully: ${JSON.stringify(res)}` : `Click failed: ${res.error}`,
-          },
-        ],
-        isError: !res.ok,
-      };
-    }
-    case "browser_type": {
-      const res = await session.type(params);
-      return {
-        content: [
-          {
-            type: "text",
-            text: `Typed ${res.typedLength} characters into ${params.selector || "active element"}`,
-          },
-        ],
-      };
-    }
-    case "browser_snapshot": {
-      const snapshot = await session.getSnapshot();
-      return {
-        content: [
-          {
-            type: "text",
-            text: JSON.stringify(snapshot, null, 2),
-          },
-        ],
-      };
-    }
-    case "browser_screenshot": {
-      const b64 = await session.screenshot("jpeg");
-      return {
-        content: [
-          {
-            type: "image",
-            data: b64,
-            mimeType: "image/jpeg",
-          },
-        ],
-      };
-    }
-    case "browser_evaluate": {
-      const result = await session.evaluate(params.script);
-      return {
-        content: [
-          {
-            type: "text",
-            text: JSON.stringify(result, null, 2),
-          },
-        ],
-      };
-    }
-    default:
-      throw new Error(`Unknown tool: ${name}`);
+  const action = Object.hasOwn(TOOL_ACTIONS, name) ? TOOL_ACTIONS[name] : null;
+  if (!action) throw new Error(`Unknown tool: ${name}`);
+  try {
+    return formatResult(name, await executeAction(action, params));
+  } catch (err) {
+    return toolText(`${name} failed: ${err.message}`, true);
   }
 }
 
@@ -270,12 +251,5 @@ rl.on("line", async (line) => {
   }
 });
 
-process.on("SIGINT", async () => {
-  if (localHub) await localHub.destroy().catch(() => {});
-  process.exit(0);
-});
-
-process.on("SIGTERM", async () => {
-  if (localHub) await localHub.destroy().catch(() => {});
-  process.exit(0);
-});
+process.on("SIGINT", () => process.exit(0));
+process.on("SIGTERM", () => process.exit(0));

@@ -41,11 +41,18 @@ python3 herdr-browser/install.py
 
 ## 啟動守護程序（Daemon）
 
-在背景終端機中啟動 Browser Hub Daemon：
+MCP server 第一次被呼叫時，若 daemon 沒在跑會自動在背景啟動（log：`~/.config/herdr-browser/daemon.log`）。也可以手動啟動：
 
 ```bash
 node herdr-browser/daemon/server.mjs
 ```
+
+### 安全模型
+
+- Daemon 只綁 `127.0.0.1:9223`，不回 CORS header，並檢查 `Host`（防 DNS rebinding）。
+- 除了 `/health`，所有 endpoint 都需要 `Authorization: Bearer <token>`；token 在 `~/.config/herdr-browser/token`（0600），daemon 首次啟動時產生。
+- `navigate` 只允許 `http:`、`https:`、`about:`、`data:`，擋掉 `file:`、`edge:`、`chrome:` 等。
+- Edge 使用 `--remote-debugging-port=0`，profile 放在 `~/.config/herdr-browser/edge-profile`，實際 port 從 `DevToolsActivePort` 讀取；不會接上其他佔用 9222 的瀏覽器。
 
 ---
 

@@ -1,11 +1,29 @@
 // Agent Browser Main View for Herdr
 import { View, div, svg, image } from "gpui-kit";
 import { h_flex, v_flex } from "gpui-base";
-import { theme, run, shared, setShared } from "herdr";
+import { theme, run, shared, setShared, home, readTextFile } from "herdr";
 
 const DAEMON_URL = "http://127.0.0.1:9223";
 const SHARED_ACTIVE_AGENT = "agent-browser.active-agent";
 const FRAMES_DIR = "/tmp/herdr-browser-frames";
+const TOKEN_PATH = `${home()}/.config/herdr-browser/token`;
+let cachedToken = null;
+
+// Token is re-read after a 401 so a regenerated token doesn't need a mod reload.
+async function daemonFetch(path, init = {}) {
+  cachedToken ??= (await readTextFile(TOKEN_PATH))?.trim() || null;
+  const send = () =>
+    fetch(`${DAEMON_URL}${path}`, {
+      ...init,
+      headers: { ...init.headers, ...(cachedToken && { Authorization: `Bearer ${cachedToken}` }) },
+    });
+  let res = await send();
+  if (res.status === 401) {
+    cachedToken = (await readTextFile(TOKEN_PATH))?.trim() || null;
+    res = await send();
+  }
+  return res;
+}
 
 export default class AgentBrowserMain extends View {
   init(_props, cx) {
@@ -30,7 +48,7 @@ export default class AgentBrowserMain extends View {
     this.activeAgent = currentAgent;
 
     try {
-      const res = await fetch(`${DAEMON_URL}/sessions`, { signal: AbortSignal.timeout(800) });
+      const res = await daemonFetch("/sessions", { signal: AbortSignal.timeout(800) });
       if (res.ok) {
         const data = await res.json();
         this.sessions = Array.isArray(data.sessions) ? data.sessions : [];
@@ -47,7 +65,7 @@ export default class AgentBrowserMain extends View {
   async navigateTo(url) {
     if (!url) return;
     try {
-      await fetch(`${DAEMON_URL}/action/${this.activeAgent}`, {
+      await daemonFetch(`/action/${encodeURIComponent(this.activeAgent)}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ action: "navigate", url }),
@@ -61,7 +79,7 @@ export default class AgentBrowserMain extends View {
 
   async reloadPage() {
     try {
-      await fetch(`${DAEMON_URL}/action/${this.activeAgent}`, {
+      await daemonFetch(`/action/${encodeURIComponent(this.activeAgent)}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ action: "reload" }),
@@ -72,7 +90,7 @@ export default class AgentBrowserMain extends View {
 
   async sendClick(x, y) {
     try {
-      await fetch(`${DAEMON_URL}/action/${this.activeAgent}`, {
+      await daemonFetch(`/action/${encodeURIComponent(this.activeAgent)}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ action: "click", x, y }),

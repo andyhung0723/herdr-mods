@@ -1,17 +1,35 @@
 import { test, after } from "node:test";
 import assert from "node:assert/strict";
-import { BrowserHub } from "../daemon/browser-hub.mjs";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { BrowserHub, normalizeNavigationUrl } from "../daemon/browser-hub.mjs";
 import { stopEdge } from "../daemon/edge-launcher.mjs";
 
+const profileDir = fs.mkdtempSync(path.join(os.tmpdir(), "herdr-browser-test-"));
+after(() => fs.rmSync(profileDir, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 }));
+
+test("normalizeNavigationUrl allows web schemes and blocks local/privileged ones", () => {
+  assert.equal(normalizeNavigationUrl("localhost:3000"), "http://localhost:3000/");
+  assert.equal(normalizeNavigationUrl("https://example.com/a"), "https://example.com/a");
+  assert.equal(normalizeNavigationUrl("about:blank"), "about:blank");
+  for (const blocked of ["file:///etc/passwd", "FILE:///etc/hosts", "edge://settings", "chrome://version", "javascript:alert(1)", ""]) {
+    assert.throws(() => normalizeNavigationUrl(blocked), undefined, blocked);
+  }
+});
+
 test("BrowserHub manages isolated multi-agent BrowserContexts", async () => {
-  const hub = new BrowserHub();
+  const hub = new BrowserHub({ profileDir });
   after(async () => {
     await hub.destroy();
     stopEdge();
   });
 
-  await hub.init();
+  const concurrentInits = [hub.init(), hub.init(), hub.init()];
+  assert.equal(new Set(concurrentInits).size, 1, "concurrent init() calls must share one launch");
+  await Promise.all(concurrentInits);
   assert.equal(hub.isReady, true);
+  assert.notEqual(hub.port, 9222, "must use an OS-assigned debugging port");
 
   // 1. Create session for Claude
   const claudeSession = await hub.getOrCreateSession("claude");
@@ -64,4 +82,17 @@ test("BrowserHub manages isolated multi-agent BrowserContexts", async () => {
   assert.equal(hub.listSessions().length, 1);
   assert.equal(hub.sessions.has("claude"), false);
   assert.equal(hub.sessions.has("codex"), true);
+});
+
+test("concurrent getOrCreateSession for one agent yields a single BrowserContext", async () => {
+  const hub = new BrowserHub({ profileDir });
+  after(async () => {
+    await hub.destroy();
+    stopEdge();
+  });
+
+  const sessions = await Promise.all([1, 2, 3].map(() => hub.getOrCreateSession("burst")));
+  assert.equal(new Set(sessions).size, 1);
+  const { browserContextIds } = await hub.browserClient.send("Target.getBrowserContexts");
+  assert.equal(browserContextIds.length, 1);
 });
