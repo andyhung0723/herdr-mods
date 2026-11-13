@@ -69,7 +69,7 @@ async function harness() {
   });
   const herdr = synthetic(api);
 
-  const mainCode = await readFile(new URL("../mods/help/main.js", import.meta.url), "utf8");
+  const mainCode = await readFile(new URL("../mods/enhanced-help/main.js", import.meta.url), "utf8");
   const main = new vm.SourceTextModule(mainCode, { context });
   await main.link((name) => ({ "gpui-kit": kit, "gpui-base": base, herdr }[name]));
   await main.evaluate();

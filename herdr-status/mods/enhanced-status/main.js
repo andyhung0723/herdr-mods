@@ -9,14 +9,14 @@ import {
   shrinkPath,
 } from "./agent-collector.js";
 
-const MUSIC_ICON = "mods/workspace-status/music.svg";
-const CLAUDE_ICON = "mods/workspace-status/claude.svg";
-const CODEX_ICON = "mods/workspace-status/codex.svg";
-const AGY_ICON = "mods/workspace-status/antigravity.svg";
+const MUSIC_ICON = "mods/enhanced-status/music.svg";
+const CLAUDE_ICON = "mods/enhanced-status/claude.svg";
+const CODEX_ICON = "mods/enhanced-status/codex.svg";
+const AGY_ICON = "mods/enhanced-status/antigravity.svg";
 
 function resolveProbePath() {
   const h = appHome();
-  return `${h}/mods/workspace-status/probe.py`;
+  return `${h}/mods/enhanced-status/probe.py`;
 }
 
 export default class WorkspaceStatus extends View {

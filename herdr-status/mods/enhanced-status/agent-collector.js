@@ -330,9 +330,10 @@ export async function getLiveCodexStatus() {
   try {
     const appH = typeof appHome === "function" ? appHome() : `${h}/.config/herdr-app`;
     const probeCandidates = [
+      `${appH}/mods/enhanced-status/codex_limits.py`,
       `${appH}/mods/workspace-status/codex_limits.py`,
       `${appH}/mods/agent-quotas/codex_limits.py`,
-      `${h}/Workspace/side-project/herdr-mods/herdr-status/mods/workspace-status/codex_limits.py`,
+      `${h}/Workspace/side-project/herdr-mods/herdr-status/mods/enhanced-status/codex_limits.py`,
     ];
 
     let probeScript = probeCandidates[0];
@@ -427,9 +428,10 @@ export async function getLiveAntigravityStatus() {
   try {
     const appH = typeof appHome === "function" ? appHome() : `${h}/.config/herdr-app`;
     const probeCandidates = [
+      `${appH}/mods/enhanced-status/antigravity_limits.py`,
       `${appH}/mods/workspace-status/antigravity_limits.py`,
       `${appH}/mods/agent-quotas/antigravity_limits.py`,
-      `${h}/Workspace/side-project/herdr-mods/herdr-status/mods/workspace-status/antigravity_limits.py`,
+      `${h}/Workspace/side-project/herdr-mods/herdr-status/mods/enhanced-status/antigravity_limits.py`,
     ];
 
     let probeScript = probeCandidates[0];

@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import shutil
 import subprocess
@@ -11,7 +12,7 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-MOD_NAME = "workspace-status"
+MOD_NAME = "enhanced-status"
 
 
 class InstallError(RuntimeError):
@@ -61,6 +62,18 @@ def copy_mod(src: Path, dest: Path, backups_dir: Path, dry_run: bool) -> None:
     print(f"Installed mod: {dest}")
 
 
+def update_layout_node(node: dict, target_id: str, new_mod: str) -> bool:
+    changed = False
+    if node.get("id") == target_id and isinstance(node.get("content"), dict):
+        if node["content"].get("mod") != new_mod:
+            node["content"]["mod"] = new_mod
+            changed = True
+    for child in node.get("children", []):
+        if isinstance(child, dict) and update_layout_node(child, target_id, new_mod):
+            changed = True
+    return changed
+
+
 def main() -> int:
     args = parse_args(sys.argv[1:])
     source_root = Path(__file__).resolve().parent
@@ -73,7 +86,7 @@ def main() -> int:
     home = resolve_home(args.home)
     print(f"Herdr app home: {home}")
 
-    print("Running herdr-app check on workspace-status mod...")
+    print("Running herdr-app check on enhanced-status mod...")
     child_env = os.environ.copy()
     child_env["HERDR_APP_HOME"] = str(home)
     res = subprocess.run(
@@ -85,9 +98,9 @@ def main() -> int:
         env=child_env,
     )
     if res.returncode != 0:
-        print(f"Error: workspace-status mod failed check: {res.stdout} {res.stderr}", file=sys.stderr)
+        print(f"Error: enhanced-status mod failed check: {res.stdout} {res.stderr}", file=sys.stderr)
         return 1
-    print("✔ workspace-status mod passed check")
+    print("✔ enhanced-status mod passed check")
 
     mods_dir = home / "mods"
     backups_dir = home / "backups"
@@ -100,6 +113,20 @@ def main() -> int:
     except InstallError as e:
         print(f"Install failed: {e}", file=sys.stderr)
         return 1
+
+    # Update layout in main-popup.json
+    layout_file = home / "layouts" / "main-popup.json"
+    if layout_file.exists():
+        try:
+            with open(layout_file, "r", encoding="utf-8") as f:
+                layout = json.load(f)
+            if update_layout_node(layout, "status", MOD_NAME):
+                if not args.dry_run:
+                    with open(layout_file, "w", encoding="utf-8") as f:
+                        json.dump(layout, f, indent=2)
+                print(f"Updated layout {layout_file.name}: status -> {MOD_NAME}")
+        except Exception as e:
+            print(f"Warning: Could not update layout: {e}", file=sys.stderr)
 
     print("\n✅ Enhanced Workspace Status installed successfully!")
     print("\nFeatures:")

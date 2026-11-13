@@ -49,8 +49,8 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument(
         "--interval",
         type=int,
-        default=75,
-        help="Frame/rotation interval in milliseconds (default: 75ms for ~13.3 FPS matrix rain)",
+        default=95,
+        help="Frame/rotation interval in milliseconds (default: 95ms for ~10.5 FPS matrix rain)",
     )
     parser.add_argument(
         "--dry-run",

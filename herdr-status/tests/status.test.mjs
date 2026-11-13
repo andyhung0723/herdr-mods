@@ -187,7 +187,7 @@ async function harness({
   const herdr = synthetic(api);
 
   const collectorCode = await readFile(
-    new URL("../mods/workspace-status/agent-collector.js", import.meta.url),
+    new URL("../mods/enhanced-status/agent-collector.js", import.meta.url),
     "utf8"
   );
   const collector = new vm.SourceTextModule(collectorCode, { context });
@@ -195,7 +195,7 @@ async function harness({
   await collector.evaluate();
 
   const mainCode = await readFile(
-    new URL("../mods/workspace-status/main.js", import.meta.url),
+    new URL("../mods/enhanced-status/main.js", import.meta.url),
     "utf8"
   );
   const main = new vm.SourceTextModule(mainCode, { context });

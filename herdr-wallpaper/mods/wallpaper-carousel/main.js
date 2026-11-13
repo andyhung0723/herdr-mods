@@ -16,7 +16,7 @@ import {
   getNextWallpaper,
 } from "./logic.js";
 
-const DEFAULT_MATRIX_INTERVAL_MS = 75;
+const DEFAULT_MATRIX_INTERVAL_MS = 95;
 const DEFAULT_CAROUSEL_INTERVAL_MS = 30000;
 const SHARED_KEY_PAUSED = "wallpaper-carousel.paused";
 const SHARED_KEY_CURRENT = "wallpaper-carousel.current";
@@ -36,9 +36,12 @@ function applyPanelOverride(layoutTree) {
   if (agentsNode?.content && agentsNode.content.mod === "agents") {
     agentsNode.content.mod = "enhanced-agents";
   }
+  const statusNode = findNode(layoutTree, "status");
+  if (statusNode?.content && statusNode.content.mod === "workspace-status") {
+    statusNode.content.mod = "enhanced-status";
+  }
   const override = shared("panel.override");
   if (!override || typeof override !== "object") return;
-  if (Date.now() - (override.at || 0) > 2500) return;
   const panel = findNode(layoutTree, "panel");
   const body = findNode(layoutTree, "panel-body");
   if (panel && typeof override.hidden === "boolean") {
