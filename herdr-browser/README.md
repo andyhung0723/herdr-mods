@@ -1,6 +1,6 @@
 # Herdr Agent Browser Hub
 
-> **已封存（2026-11-13）**：不再安裝或維護。在 Herdr pane 裡看 screencast 畫面不夠精準，無法拿來做前端驗收或 RWD；這類需求改用 Playwright Test（device projects、`toHaveScreenshot`、HTML report / trace viewer）、Playwright MCP 與 chrome-devtools-mcp。程式碼保留作參考，`install.py` 仍可用。
+> **已封存（2026-11-13）**：不再安裝或維護。在 Herdr pane 裡看 screencast 畫面不夠精準，無法拿來做前端驗收或 RWD；這類需求改用 Playwright Test（device projects、`toHaveScreenshot`、HTML report / trace viewer）與 chrome-devtools-mcp。程式碼保留作參考，`install.py` 仍可用。
 
 為 Herdr 打造的受控瀏覽器中心：每個 Agent pane 擁有自己隔離的 headless Edge 分頁，畫面串回 Herdr，必要時人可以接手操作。
 
