@@ -9,3 +9,6 @@ __pycache__/
 .playwright-mcp/
 node_modules/
 *.log
+
+# Local git worktrees
+.worktrees/

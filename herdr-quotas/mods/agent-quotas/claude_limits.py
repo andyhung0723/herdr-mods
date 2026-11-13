@@ -6,8 +6,18 @@ import subprocess
 import time
 import urllib.request
 
-CACHE_PATH = "/tmp/herdr-claude-limits-cache.json"
+CACHE_DIR = os.path.join(os.environ.get("XDG_CACHE_HOME") or os.path.expanduser("~/.cache"), "herdr")
+CACHE_PATH = os.path.join(CACHE_DIR, "claude-limits.json")
 CACHE_TTL_SEC = 45
+
+
+def write_private_cache(payload: dict) -> None:
+    os.makedirs(CACHE_DIR, mode=0o700, exist_ok=True)
+    tmp_path = f"{CACHE_PATH}.{os.getpid()}.tmp"
+    fd = os.open(tmp_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
+        json.dump(payload, f)
+    os.replace(tmp_path, CACHE_PATH)
 
 
 def get_keychain_token(config_dir: str) -> str | None:
@@ -101,7 +111,7 @@ def get_claude_limits() -> dict | None:
                 and cached_at >= best_fetched_at
             ):
                 return {
-                    "oauthAccount": oauth_account or cached.get("oauthAccount") or {},
+                    "oauthAccount": oauth_account or {},
                     "utilization": cached["utilization"],
                     "fetchedAtMs": cached_at,
                     "source": "cache",
@@ -131,9 +141,8 @@ def get_claude_limits() -> dict | None:
                 "source": "live",
             }
             try:
-                with open(CACHE_PATH, "w", encoding="utf-8") as f:
-                    json.dump(result, f)
-            except Exception:
+                write_private_cache({"utilization": live_u, "fetchedAtMs": now_ms})
+            except OSError:
                 pass
             return result
 
