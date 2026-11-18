@@ -475,8 +475,8 @@ test("shrinkPath preserves last 2 segments and contracts leading segments to fir
     "~/W/side-project/herdr-mods"
   );
   assert.equal(
-    collector.shrinkPath("/Users/dev/Workspace/dentsu/code/AI-Media/pitch/prd", "/Users/dev"),
-    "~/W/d/c/A/pitch/prd"
+    collector.shrinkPath("/Users/dev/Workspace/acme/code/web-app/pitch/prd", "/Users/dev"),
+    "~/W/a/c/w/pitch/prd"
   );
   assert.equal(
     collector.shrinkPath("/Users/dev/Workspace/project-x", "/Users/dev"),

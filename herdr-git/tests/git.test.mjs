@@ -445,27 +445,27 @@ test("resolveRepoRoot penetrates nested basename folder and previews untracked f
   const { git } = await harness({
     exec: async (_cmd, args, opts) => {
       if (args.includes("rev-parse") && args.includes("--show-toplevel")) {
-        if (opts?.cwd === "/workspace/AI-Media") {
+        if (opts?.cwd === "/workspace/web-app") {
           return { code: 128, stdout: "", stderr: "fatal: not a git repository" };
         }
-        if (opts?.cwd === "/workspace/AI-Media/AI-Media") {
-          return { code: 0, stdout: "/workspace/AI-Media/AI-Media\n" };
+        if (opts?.cwd === "/workspace/web-app/web-app") {
+          return { code: 0, stdout: "/workspace/web-app/web-app\n" };
         }
       }
       return { code: 0, stdout: "" };
     },
     readTextFile: async (path) => {
-      if (path === "/workspace/AI-Media/AI-Media/docs/flow.html") {
+      if (path === "/workspace/web-app/web-app/docs/flow.html") {
         return "<h1>Hello</h1>\n<p>Flow</p>\n";
       }
       return null;
     },
   });
 
-  const root = await git.resolveRepoRoot("/workspace/AI-Media", null);
-  assert.equal(root, "/workspace/AI-Media/AI-Media");
+  const root = await git.resolveRepoRoot("/workspace/web-app", null);
+  assert.equal(root, "/workspace/web-app/web-app");
 
-  const diff = await git.getFileDiff("/workspace/AI-Media", null, "docs/flow.html", false, true);
+  const diff = await git.getFileDiff("/workspace/web-app", null, "docs/flow.html", false, true);
   assert.equal(diff[0], "@@ -0,0 +1,2 @@");
   assert.equal(diff[1], "+<h1>Hello</h1>");
   assert.equal(diff[2], "+<p>Flow</p>");

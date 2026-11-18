@@ -121,7 +121,7 @@ export async function findSpectraRoot(cwd) {
     dir = parentDir(dir);
   }
 
-  // Fallback: if cwd is a workspace container folder (e.g. jira-discuss/ containing dsc-project-hub/),
+  // Fallback: if cwd is a workspace container folder (e.g. workspace/ containing project-hub/),
   // probe immediate subdirectories one level deep.
   if (!found && cleanCwd && cleanCwd !== h) {
     const probe = await exec("sh", [
