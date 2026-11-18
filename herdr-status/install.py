@@ -13,6 +13,9 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 MOD_NAME = "enhanced-status"
+IME_WATCHER_SOURCE = "ime-watcher.swift"
+IME_WATCHER_BINARY = "ime-watcher"
+IME_WATCHER_LABEL = "com.herdr.ime-watcher"
 
 
 class InstallError(RuntimeError):
@@ -60,6 +63,69 @@ def copy_mod(src: Path, dest: Path, backups_dir: Path, dry_run: bool) -> None:
         shutil.rmtree(dest)
     shutil.copytree(src, dest)
     print(f"Installed mod: {dest}")
+
+
+def build_ime_watcher(mod_dest: Path, dry_run: bool) -> Path | None:
+    source = mod_dest / IME_WATCHER_SOURCE
+    binary = mod_dest / IME_WATCHER_BINARY
+    if sys.platform != "darwin":
+        print("Skip ime-watcher: macOS only")
+        return None
+    if shutil.which("swiftc") is None:
+        print("Warning: swiftc not found (xcode-select --install); IME badge disabled", file=sys.stderr)
+        return None
+    if dry_run:
+        print(f"[dry-run] swiftc -O {source.name} -o {binary}")
+        return binary
+    res = subprocess.run(
+        ["swiftc", "-O", str(source), "-o", str(binary)],
+        capture_output=True,
+        text=True,
+        timeout=300,
+        check=False,
+    )
+    if res.returncode != 0:
+        print(f"Warning: ime-watcher build failed; IME badge disabled\n{res.stderr}", file=sys.stderr)
+        return None
+    print(f"Built {binary}")
+    return binary
+
+
+def render_launch_agent(binary: Path) -> str:
+    return f"""<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>{IME_WATCHER_LABEL}</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>{binary}</string>
+    </array>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+</dict>
+</plist>
+"""
+
+
+def install_launch_agent(binary: Path, dry_run: bool) -> None:
+    plist = Path.home() / "Library" / "LaunchAgents" / f"{IME_WATCHER_LABEL}.plist"
+    domain = f"gui/{os.getuid()}"
+    if dry_run:
+        print(f"[dry-run] Write {plist} and (re)start {domain}/{IME_WATCHER_LABEL}")
+        return
+    plist.parent.mkdir(parents=True, exist_ok=True)
+    plist.write_text(render_launch_agent(binary), encoding="utf-8")
+    # bootout fails harmlessly when the agent is not loaded yet.
+    subprocess.run(["launchctl", "bootout", f"{domain}/{IME_WATCHER_LABEL}"], capture_output=True, check=False)
+    res = subprocess.run(["launchctl", "bootstrap", domain, str(plist)], capture_output=True, text=True, check=False)
+    if res.returncode != 0:
+        print(f"Warning: could not start ime-watcher agent: {res.stderr.strip()}", file=sys.stderr)
+        return
+    print(f"Started launch agent {IME_WATCHER_LABEL}")
 
 
 def update_layout_node(node: dict, target_id: str, new_mod: str) -> bool:
@@ -113,6 +179,10 @@ def main() -> int:
     except InstallError as e:
         print(f"Install failed: {e}", file=sys.stderr)
         return 1
+
+    ime_watcher = build_ime_watcher(mods_dir / MOD_NAME, args.dry_run)
+    if ime_watcher is not None:
+        install_launch_agent(ime_watcher, args.dry_run)
 
     # Update layout in main-popup.json
     layout_file = home / "layouts" / "main-popup.json"

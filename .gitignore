@@ -12,3 +12,6 @@ node_modules/
 
 # Local git worktrees
 .worktrees/
+
+# Compiled binaries (build locally, never commit)
+herdr-status/mods/enhanced-status/ime-watcher

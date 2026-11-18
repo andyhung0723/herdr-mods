@@ -35,6 +35,11 @@
 - 點擊歌曲文字：一鍵喚醒 YouTube Music 切換到最前台。
 - 點擊 `⏸` / `▶`：直接暫停／繼續播放。
 
+### 3. 輸入法指示（IME Badge）
+- `mods/enhanced-status/ime-watcher.swift` 監聽 macOS 輸入法切換，把目前狀態寫入 `/tmp/herdr-ime.json`，狀態列再讀這個檔顯示 `注` / `倉` / `拼` / `ABC` 等 badge。
+- 安裝時以 `swiftc` 現場編譯（需要 Xcode Command Line Tools），並註冊 LaunchAgent `com.herdr.ime-watcher` 常駐。沒有 `swiftc` 時只略過這個功能，badge 固定顯示 `ABC`。
+- 除錯：`~/.config/herdr-app/mods/enhanced-status/ime-watcher --once` 印出目前判讀結果。
+
 ## 安裝
 
 ```bash
