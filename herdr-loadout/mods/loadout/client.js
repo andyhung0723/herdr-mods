@@ -39,9 +39,20 @@ export function cliArgs(config, args) {
   ];
 }
 
+const NODE_FALLBACK_SH =
+  'for n in "$HOME"/.nvm/versions/node/v2[4-9]*/bin/node "$HOME"/.nvm/versions/node/v[3-9][0-9]*/bin/node /opt/homebrew/bin/node /usr/local/bin/node; do [ -x "$n" ] && found="$n" && break; done; if [ -n "$found" ]; then exec "$found" "$@"; else exec node "$@"; fi';
+
 export async function runLoadout(config, args, { write = false } = {}) {
   const timeout = write ? WRITE_TIMEOUT_MS : READ_TIMEOUT_MS;
-  const result = await exec(config.node, cliArgs(config, args), { timeout });
+  const argv = cliArgs(config, args);
+  let result;
+  try {
+    result = await exec(config.node, argv, { timeout });
+  } catch (err) {
+    result = await exec("sh", ["-c", NODE_FALLBACK_SH, "sh", ...argv], { timeout }).catch(() => {
+      throw err;
+    });
+  }
   if (!ACCEPTED_EXIT_CODES.has(result.code)) {
     throw new Error(result.stderr.trim() || `loadout exited with ${result.code}`);
   }
