@@ -22,6 +22,27 @@ from pathlib import Path
 from typing import Any
 
 MOD_NAME = "enhanced-tabs"
+DOCK_MOD_NAME = "tool-dock"
+DOCK_NODE_TEMPLATE = {
+    "id": "tool-dock",
+    "type": "block",
+    "content": {
+        "mod": "tool-dock",
+    },
+    "size": {
+        "px": 48,
+    },
+    "min": 48,
+    "max": 48,
+    "background": "chrome",
+    "border": {
+        "width": 1,
+        "color": "border",
+    },
+    "radius": 16,
+    "shadow": "lg",
+    "resizable": False,
+}
 
 
 class InstallError(RuntimeError):
@@ -124,7 +145,17 @@ def update_layout(home: Path, dry_run: bool) -> bool:
             if isinstance(content, dict) and content.get("mod") != MOD_NAME:
                 content["mod"] = MOD_NAME
                 changed = True
-                return True
+            desired_tabs = {
+                "background": "chrome",
+                "radius": 14,
+                "border": {"width": 1, "color": "border"},
+                "shadow": "md",
+            }
+            for k, v in desired_tabs.items():
+                if node.get(k) != v:
+                    node[k] = v
+                    changed = True
+            return True
         children = node.get("children")
         if isinstance(children, list):
             for child in children:
@@ -133,12 +164,29 @@ def update_layout(home: Path, dry_run: bool) -> bool:
         return False
 
     update_node(root)
+
+    # Ensure tool-dock block sits at the far right of root.children
+    root_children = root.get("children")
+    if isinstance(root_children, list):
+        existing_dock = next(
+            (c for c in root_children if isinstance(c, dict) and c.get("id") == "tool-dock"),
+            None,
+        )
+        if existing_dock is None:
+            root_children.append(json.loads(json.dumps(DOCK_NODE_TEMPLATE)))
+            changed = True
+        else:
+            for k, v in DOCK_NODE_TEMPLATE.items():
+                if existing_dock.get(k) != v:
+                    existing_dock[k] = json.loads(json.dumps(v))
+                    changed = True
+
     if changed:
         write_json_dict(layout_path, data, dry_run)
-        print(f"Updated layout {layout_path.name}: tabs mod -> {MOD_NAME}")
+        print(f"Updated layout {layout_path.name}: tabs -> {MOD_NAME}, added/updated {DOCK_MOD_NAME}")
         return True
     else:
-        print(f"Tabs mod already set to {MOD_NAME} in {layout_path.name}")
+        print(f"Tabs and {DOCK_MOD_NAME} already configured in {layout_path.name}")
         return False
 
 
@@ -164,41 +212,49 @@ def main(argv: list[str]) -> int:
 
     source_mod_dir = repo_root / "mods" / MOD_NAME
     target_mod_dir = home / "mods" / MOD_NAME
+    source_dock_dir = repo_root / "mods" / DOCK_MOD_NAME
+    target_dock_dir = home / "mods" / DOCK_MOD_NAME
     default_tabs_dir = home / "mods" / "tabs"
 
     if not source_mod_dir.is_dir():
         raise InstallError(f"Source mod dir not found: {source_mod_dir}")
+    if not source_dock_dir.is_dir():
+        raise InstallError(f"Source dock mod dir not found: {source_dock_dir}")
 
-    # Validate source mod first
+    # Validate source mods first
     run_mod_check(source_mod_dir, home)
+    run_mod_check(source_dock_dir, home)
 
     # Backup existing
     files_to_backup = [
         home / "layouts" / "main-popup.json",
         target_mod_dir,
+        target_dock_dir,
         default_tabs_dir / "main.js",
     ]
     backup_dir = create_backup(home, files_to_backup, args.dry_run)
     print(f"Backup created at: {backup_dir}")
 
-    # Copy files to enhanced-tabs
+    # Copy files to enhanced-tabs and tool-dock
     copy_mod_files(source_mod_dir, target_mod_dir, args.dry_run)
+    copy_mod_files(source_dock_dir, target_dock_dir, args.dry_run)
 
     # Also update default tabs/main.js as seamless fallback
     if not args.dry_run and default_tabs_dir.is_dir():
         src_main = source_mod_dir / "main.js"
         dst_main = default_tabs_dir / "main.js"
         shutil.copy2(src_main, dst_main)
-        print(f"Updated default tabs/main.js -> Git button")
+        print("Updated default tabs/main.js")
 
     # Update layout main-popup.json
     update_layout(home, args.dry_run)
 
-    # Validate target mod
+    # Validate target mods
     if not args.dry_run:
         run_mod_check(target_mod_dir, home)
+        run_mod_check(target_dock_dir, home)
 
-    print("\nSuccessfully installed enhanced-tabs!")
+    print("\nSuccessfully installed enhanced-tabs and tool-dock!")
     print("- Top-right panel button updated from 'Changes' to 'Git'")
     print("- Uses official Git logo (icons/git.svg)")
     return 0
