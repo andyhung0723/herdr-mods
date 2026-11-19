@@ -1,13 +1,11 @@
-# Herdr Workspace Status (Unified AI Agent Status Bar & YouTube Music)
+# Herdr Workspace Status (Unified AI Agent Status Bar)
 
-強化 Herdr 底層主狀態列（`workspace-status`），整合 **AI Agent 統一狀態列（Claude Code / OpenAI Codex / Google Antigravity）**、**目錄與 Git 分支指示** 與 **YouTube Music 即時音樂控制卡**。
+強化 Herdr 底層主狀態列（`workspace-status`），整合 **AI Agent 統一狀態列（Claude Code / OpenAI Codex / Google Antigravity）**、**目錄與 Git 分支指示** 與 **輸入法指示**。YouTube Music 播放列已移到 `herdr-chrome` 的 sidebar。
 
 ## 畫面佈局
 
-- **左側環境資訊**：
-  - `[🌿 Git 分支] · [⚡ N agents]`
-- **右側狀態與控制區（靠右對齊）**：
-  - `[📁 Agent 目前目錄完整路徑]  [統一 AI Agent 狀態列]  [▶ ♫ 音樂控制]  [⌘⇧P 指令提示]`
+- **由左至右**：`[📁 Agent 目前目錄]  [🌿 Git 分支]  [輸入法]  [統一 AI Agent 狀態列]  [⚡ N agents]`
+  - 內容超出寬度時自動來回捲動，滑鼠移上去暫停，也可以用滾輪捲動。
   - 中間由彈性 Spacer 推移，當資訊精簡時靠右收闔。
   - 點擊目錄路徑即可一鍵複製完整絕對路徑至剪貼簿。
 
@@ -27,15 +25,7 @@
   - 滑鼠 Hover：顯示完整配額重置倒數（如 `resets in 2h 14m`）、詳細 Token 與 Cost 統計。
   - 點擊任一 Agent 膠囊／徽章：直接開啟 `agent-quotas` 儀表板彈窗。
 
-### 2. 右下角 YouTube Music Now Playing 動態音樂卡
-- 當電腦上打開 YouTube Music 聽歌時，右下角狀態列（`commands` 旁）即時顯示：
-  - **播放中**：`▶ ♫ [歌曲名稱] · [歌手]`（綠色/青色高亮）
-  - **暫停時**：`⏸ [歌曲名稱]`（柔和暗灰）
-  - **未開啟或無音樂時**：自動收合隱藏。
-- 點擊歌曲文字：一鍵喚醒 YouTube Music 切換到最前台。
-- 點擊 `⏸` / `▶`：直接暫停／繼續播放。
-
-### 3. 輸入法指示（IME Badge）
+### 2. 輸入法指示（IME Badge）
 - `mods/enhanced-status/ime-watcher.swift` 監聽 macOS 輸入法切換，把目前狀態寫入 `/tmp/herdr-ime.json`，狀態列再讀這個檔顯示 `注` / `倉` / `拼` / `ABC` 等 badge。
 - 安裝時以 `swiftc` 現場編譯（需要 Xcode Command Line Tools），並註冊 LaunchAgent `com.herdr.ime-watcher` 常駐。沒有 `swiftc` 時只略過這個功能，badge 固定顯示 `ABC`。
 - 除錯：`~/.config/herdr-app/mods/enhanced-status/ime-watcher --once` 印出目前判讀結果。

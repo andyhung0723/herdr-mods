@@ -1,6 +1,6 @@
 import { View, div, svg } from "gpui-kit";
 import { h_flex } from "gpui-base";
-import { spaces, agents, terminals, theme, run, window, keys, exec, appHome, focused, panes, home } from "herdr";
+import { spaces, agents, terminals, theme, run, exec, focused, panes, home, readTextFile } from "herdr";
 import {
   collectAllAgentsStatus,
   detectActiveAgent,
@@ -9,19 +9,18 @@ import {
   shrinkPath,
 } from "./agent-collector.js";
 
-const MUSIC_ICON = "mods/enhanced-status/music.svg";
 const CLAUDE_ICON = "mods/enhanced-status/claude.svg";
 const CODEX_ICON = "mods/enhanced-status/codex.svg";
 const AGY_ICON = "mods/enhanced-status/antigravity.svg";
 
-function resolveProbePath() {
-  const h = appHome();
-  return `${h}/mods/enhanced-status/probe.py`;
-}
+const MARQUEE_TICK_MS = 33;
+const MARQUEE_SPEED_PX_PER_SEC = 28;
+const MARQUEE_PAUSE_MS = 1800;
+const MARQUEE_WHEEL_PAUSE_MS = 2500;
+const HORIZONTAL_PADDING_PX = 28;
 
 export default class WorkspaceStatus extends View {
   init(_props, cx) {
-    this.song = null;
     this.polling = false;
 
     this.agentStatus = {
@@ -31,44 +30,130 @@ export default class WorkspaceStatus extends View {
     };
     this.agentPolling = false;
 
-    // Fast check: poll YouTube Music every 2.5 seconds
-    cx.timer.every(2500, (tcx) => this.pollMusic(tcx));
-    this.pollMusic(cx);
-
     // Poll AI Agent Status (Claude, Codex, Antigravity) every 3 seconds
     cx.timer.every(3000, (tcx) => this.pollAgentStatus(tcx));
     this.pollAgentStatus(cx);
+
+    // Poll Input Method (IME) state every 300ms
+    this.ime = { badge: "ABC", name: "ABC", isChinese: false };
+    cx.timer.every(300, (tcx) => this.pollIme(tcx));
+    this.pollIme(cx);
+
+    // Ping-pong horizontal auto-scroll state when status bar overflows
+    this.viewportWidth = 0;
+    this.contentWidth = 0;
+    this.scrollOffset = 0;
+    this.scrollDir = 1;
+    this.scrollPausedUntil = 0;
+    this.isHoveringBar = false;
+    this.lastScrollTickAt = 0;
+    cx.timer.every(MARQUEE_TICK_MS, (tcx) => this.tickMarquee(tcx));
   }
 
-  async pollMusic(cx) {
-    if (this.polling) return this._musicPollPromise;
-    this.polling = true;
-    this._musicPollPromise = (async () => {
-      try {
-        const probeScript = resolveProbePath();
-        const res = await exec("python3", [probeScript, "--action", "status"]);
-        if (res.code === 0 && res.stdout) {
-          const data = JSON.parse(res.stdout);
-          const prev = this.song;
-          const changed =
-            !prev ||
-            prev.active !== data.active ||
-            prev.title !== data.title ||
-            prev.playing !== data.playing ||
-            prev.artist !== data.artist;
+  getMaxScrollOffset() {
+    return Math.max(0, Math.ceil(this.contentWidth - this.viewportWidth));
+  }
 
-          if (changed) {
-            this.song = data;
-            cx?.notify?.();
-          }
-        }
-      } catch {
-        // ignore probe error
-      } finally {
-        this.polling = false;
+  updateMarqueeBounds(viewportW, contentW, cx) {
+    const prevMax = this.getMaxScrollOffset();
+    this.viewportWidth = Math.max(0, viewportW || 0);
+    this.contentWidth = Math.max(0, contentW || 0);
+    const nextMax = this.getMaxScrollOffset();
+
+    if (nextMax <= 1) {
+      if (this.scrollOffset !== 0) {
+        this.scrollOffset = 0;
+        this.scrollDir = 1;
+        this.lastScrollTickAt = 0;
+        cx?.notify?.();
+      } else {
+        this.scrollDir = 1;
+        this.lastScrollTickAt = 0;
       }
-    })();
-    return this._musicPollPromise;
+      return;
+    }
+
+    if (prevMax <= 1) {
+      this.scrollPausedUntil = Date.now() + MARQUEE_PAUSE_MS;
+      this.lastScrollTickAt = Date.now();
+    }
+
+    if (this.scrollOffset > nextMax) {
+      this.scrollOffset = nextMax;
+      cx?.notify?.();
+    }
+  }
+
+  tickMarquee(cx, now = Date.now()) {
+    const maxOffset = this.getMaxScrollOffset();
+    if (maxOffset <= 1) {
+      if (this.scrollOffset !== 0) {
+        this.scrollOffset = 0;
+        cx?.notify?.();
+      }
+      this.lastScrollTickAt = 0;
+      return;
+    }
+
+    if (this.isHoveringBar || now < this.scrollPausedUntil) {
+      this.lastScrollTickAt = now;
+      return;
+    }
+
+    if (!this.lastScrollTickAt) {
+      this.lastScrollTickAt = now;
+      return;
+    }
+
+    const dtSec = Math.min(0.1, (now - this.lastScrollTickAt) / 1000);
+    this.lastScrollTickAt = now;
+    if (dtSec <= 0) return;
+
+    let next = this.scrollOffset + this.scrollDir * MARQUEE_SPEED_PX_PER_SEC * dtSec;
+    if (next >= maxOffset) {
+      next = maxOffset;
+      this.scrollDir = -1;
+      this.scrollPausedUntil = now + MARQUEE_PAUSE_MS;
+    } else if (next <= 0) {
+      next = 0;
+      this.scrollDir = 1;
+      this.scrollPausedUntil = now + MARQUEE_PAUSE_MS;
+    }
+
+    if (Math.abs(next - this.scrollOffset) >= 0.25) {
+      this.scrollOffset = next;
+      cx?.notify?.();
+    }
+  }
+
+  handleScrollWheel(event, cx) {
+    const maxOffset = this.getMaxScrollOffset();
+    if (maxOffset <= 1) return;
+    const dx = event?.delta?.x ?? 0;
+    const dy = event?.delta?.y ?? 0;
+    const delta = Math.abs(dx) >= Math.abs(dy) ? dx : dy;
+    if (!delta) return;
+
+    const next = Math.max(0, Math.min(maxOffset, this.scrollOffset - delta));
+    if (next !== this.scrollOffset) {
+      this.scrollOffset = next;
+      this.scrollPausedUntil = Date.now() + MARQUEE_WHEEL_PAUSE_MS;
+      this.lastScrollTickAt = Date.now();
+      cx?.notify?.();
+    }
+  }
+
+  async pollIme(cx) {
+    try {
+      const text = await readTextFile("/tmp/herdr-ime.json");
+      if (text) {
+        const data = JSON.parse(text);
+        if (!this.ime || this.ime.badge !== data.badge || this.ime.isChinese !== data.isChinese) {
+          this.ime = data;
+          cx?.notify?.();
+        }
+      }
+    } catch {}
   }
 
   async pollAgentStatus(cx) {
@@ -88,107 +173,10 @@ export default class WorkspaceStatus extends View {
     return this._agentPollPromise;
   }
 
-  async activateYTM(cx) {
-    try {
-      const probeScript = resolveProbePath();
-      await exec("python3", [probeScript, "--action", "activate"]);
-    } catch {}
-  }
-
-  async togglePlay(cx) {
-    try {
-      const probeScript = resolveProbePath();
-      await exec("python3", [probeScript, "--action", "toggle"]);
-      await this.pollMusic(cx);
-    } catch {}
-  }
-
   openQuotasDashboard() {
     try {
       run("mod.open", { name: "agent-quotas" });
     } catch {}
-  }
-
-  // The palette key as actually bound, not a hardcoded one; without a
-  // binding the hint stays useful ("commands") instead of lying.
-  hint(t) {
-    const mac = window()?.platform === "macos";
-    const mod = {
-      cmd: mac ? "⌘" : "Ctrl+",
-      ctrl: mac ? "⌃" : "Ctrl+",
-      shift: mac ? "⇧" : "Shift+",
-      alt: mac ? "⌥" : "Alt+",
-      option: mac ? "⌥" : "Alt+",
-    };
-    const b = keys().find((k) => k.section === "global" && k.action === "app.palette");
-    const parts = b && b.keys.endsWith("--") ? [...b.keys.slice(0, -2).split("-"), "-"] : b?.keys.split("-");
-    const key = parts && parts.map((p) => mod[p.toLowerCase()] ?? p.toUpperCase()).join("");
-    return key ? `${key}  commands` : "commands";
-  }
-
-  renderMusicWidget(t, song, cx) {
-    const isPlaying = song.playing;
-    const accentColor = t.ansi2 ?? "#a6e3a1";
-    const fullInfo = song.artist ? `${song.title} · ${song.artist}` : song.title;
-    const tooltipText = `${fullInfo} (${isPlaying ? "Playing" : "Paused"})`;
-
-    return h_flex()
-      .id("ytm-now-playing")
-      .items_center()
-      .gap(6)
-      .px(8)
-      .h(22)
-      .max_w(420)
-      .rounded(5)
-      .cursor_pointer()
-      .tooltip(tooltipText)
-      .hover((s) => s.bg(t.selected ?? "#334155"))
-      .on_click((_e, cx) => this.activateYTM(cx))
-      // Music note icon
-      .child(
-        svg(MUSIC_ICON)
-          .size(13)
-          .flex_shrink_0()
-          .text_color(isPlaying ? accentColor : t.dim)
-      )
-      // Song title
-      .child(
-        div()
-          .max_w(240)
-          .truncate()
-          .text_size(11.5)
-          .font_medium()
-          .text_color(isPlaying ? t.foreground : t.muted)
-          .child(song.title)
-      )
-      // Artist
-      .when(Boolean(song.artist), (el) =>
-        el.child(
-          div()
-            .max_w(140)
-            .truncate()
-            .text_size(11)
-            .text_color(t.dim)
-            .child(`· ${song.artist}`)
-        )
-      )
-      // Mini play / pause indicator button
-      .child(
-        div()
-          .flex_shrink_0()
-          .px(4)
-          .py(1)
-          .rounded(3)
-          .text_size(10)
-          .text_color(isPlaying ? accentColor : t.dim)
-          .hover((s) => s.bg(t.hover ?? t.surface))
-          .tooltip(isPlaying ? "Pause" : "Play")
-          .on_click((e, cx) => {
-            e.stop_propagation();
-            this.togglePlay(cx);
-          })
-          .child(isPlaying ? "⏸" : "▶")
-      );
   }
 
   // Render expanded active Claude Code pill
@@ -215,13 +203,13 @@ export default class WorkspaceStatus extends View {
       .gap(6)
       .px(8)
       .h(22)
-      .rounded(5)
-      .bg(t.surface ?? "#1e1e2e")
+      .rounded(6)
+      .bg(t.raised ?? t.surface ?? "#ffffff1a")
       .border(1)
-      .border_color(t.accent ?? t.border)
+      .border_color(t.input ?? t.border)
       .cursor_pointer()
       .tooltip(tip)
-      .hover((s) => s.bg(t.selected ?? "#334155"))
+      .hover((s) => s.bg(t.hover ?? t.selected ?? "#ffffff1f"))
       .on_click(() => this.openQuotasDashboard())
       .child(svg(CLAUDE_ICON).size(13).flex_shrink_0())
       .child(
@@ -237,7 +225,7 @@ export default class WorkspaceStatus extends View {
             .px(3)
             .py(0.5)
             .rounded(3)
-            .bg(t.dim ? `${t.dim}33` : "#45475a")
+            .bg(t.surface ?? "#ffffff12")
             .text_size(9.5)
             .text_color(t.muted)
             .child(effort)
@@ -272,35 +260,6 @@ export default class WorkspaceStatus extends View {
               .text_color(sevenD >= 85 ? (t.blocked ?? "#f38ba8") : t.muted)
               .child(`7d ${sevenD}%`)
           )
-      )
-      .when(Boolean(claude?.subagents && claude.subagents.total > 0), (el) =>
-        el
-          .child(div().text_color(t.dim).child("·"))
-          .child(
-            h_flex()
-              .gap(3)
-              .items_center()
-              .px(5)
-              .py(1)
-              .rounded(3)
-              .bg(t.dim ? `${t.dim}26` : "#45475a33")
-              .tooltip(
-                `${claude.subagents.total} subagents: ${claude.subagents.running} running, ${claude.subagents.done} done\n` +
-                  claude.subagents.items.map((s) => `• ${s.name} (${s.status})`).join("\n")
-              )
-              .child(
-                svg("mods/workspace-chrome/spinner.svg")
-                  .size(10)
-                  .text_color(t.ansi2 ?? "#a6e3a1")
-                  .when(claude.subagents.running > 0, (s) => s.spin(900))
-              )
-              .child(
-                div()
-                  .text_size(10.5)
-                  .text_color(t.foreground)
-                  .child(`${claude.subagents.total} sub (${claude.subagents.running}/${claude.subagents.done})`)
-              )
-          )
       );
   }
 
@@ -323,13 +282,13 @@ export default class WorkspaceStatus extends View {
       .gap(6)
       .px(8)
       .h(22)
-      .rounded(5)
-      .bg(t.surface ?? "#1e1e2e")
+      .rounded(6)
+      .bg(t.raised ?? t.surface ?? "#ffffff1a")
       .border(1)
-      .border_color(t.accent ?? t.border)
+      .border_color(t.input ?? t.border)
       .cursor_pointer()
       .tooltip(tip)
-      .hover((s) => s.bg(t.selected ?? "#334155"))
+      .hover((s) => s.bg(t.hover ?? t.selected ?? "#ffffff1f"))
       .on_click(() => this.openQuotasDashboard())
       .child(svg(CODEX_ICON).size(13).flex_shrink_0())
       .child(
@@ -345,7 +304,7 @@ export default class WorkspaceStatus extends View {
             .px(3)
             .py(0.5)
             .rounded(3)
-            .bg(t.dim ? `${t.dim}33` : "#45475a")
+            .bg(t.surface ?? "#ffffff12")
             .text_size(9.5)
             .text_color(t.muted)
             .child(effort)
@@ -391,13 +350,13 @@ export default class WorkspaceStatus extends View {
       .gap(6)
       .px(8)
       .h(22)
-      .rounded(5)
-      .bg(t.surface ?? "#1e1e2e")
+      .rounded(6)
+      .bg(t.raised ?? t.surface ?? "#ffffff1a")
       .border(1)
-      .border_color(t.accent ?? t.border)
+      .border_color(t.input ?? t.border)
       .cursor_pointer()
       .tooltip(tip)
-      .hover((s) => s.bg(t.selected ?? "#334155"))
+      .hover((s) => s.bg(t.hover ?? t.selected ?? "#ffffff1f"))
       .on_click(() => this.openQuotasDashboard())
       .child(svg(AGY_ICON).size(13).flex_shrink_0())
       .child(
@@ -413,7 +372,7 @@ export default class WorkspaceStatus extends View {
             .px(3)
             .py(0.5)
             .rounded(3)
-            .bg(t.dim ? `${t.dim}33` : "#45475a")
+            .bg(t.surface ?? "#ffffff12")
             .text_size(9.5)
             .text_color(t.muted)
             .child(effort)
@@ -453,13 +412,13 @@ export default class WorkspaceStatus extends View {
       .gap(4)
       .px(6)
       .h(20)
-      .rounded(4)
-      .bg(t.chrome)
+      .rounded(6)
+      .bg(t.surface ?? "#ffffff12")
       .border(1)
       .border_color(t.border)
       .cursor_pointer()
       .tooltip(tip)
-      .hover((s) => s.bg(t.selected ?? "#334155"))
+      .hover((s) => s.bg(t.hover ?? t.selected ?? "#ffffff1f"))
       .on_click(() => this.openQuotasDashboard())
       .child(svg(CLAUDE_ICON).size(12).flex_shrink_0())
       .child(
@@ -482,13 +441,13 @@ export default class WorkspaceStatus extends View {
       .gap(4)
       .px(6)
       .h(20)
-      .rounded(4)
-      .bg(t.chrome)
+      .rounded(6)
+      .bg(t.surface ?? "#ffffff12")
       .border(1)
       .border_color(t.border)
       .cursor_pointer()
       .tooltip(tip)
-      .hover((s) => s.bg(t.selected ?? "#334155"))
+      .hover((s) => s.bg(t.hover ?? t.selected ?? "#ffffff1f"))
       .on_click(() => this.openQuotasDashboard())
       .child(svg(CODEX_ICON).size(12).flex_shrink_0())
       .child(
@@ -511,13 +470,13 @@ export default class WorkspaceStatus extends View {
       .gap(4)
       .px(6)
       .h(20)
-      .rounded(4)
-      .bg(t.chrome)
+      .rounded(6)
+      .bg(t.surface ?? "#ffffff12")
       .border(1)
       .border_color(t.border)
       .cursor_pointer()
       .tooltip(tip)
-      .hover((s) => s.bg(t.selected ?? "#334155"))
+      .hover((s) => s.bg(t.hover ?? t.selected ?? "#ffffff1f"))
       .on_click(() => this.openQuotasDashboard())
       .child(svg(AGY_ICON).size(12).flex_shrink_0())
       .child(
@@ -525,6 +484,40 @@ export default class WorkspaceStatus extends View {
           .text_size(10.5)
           .text_color(t.muted)
           .child(label)
+      );
+  }
+
+  // Render Input Method (IME) badge styled for Liquid Glass
+  renderImeBadge(t, _cx) {
+    const ime = this.ime || { badge: "ABC", name: "ABC", isChinese: false };
+    const isChinese = Boolean(ime.isChinese);
+    const badgeColor = isChinese ? (t.blocked ?? t.ansi3 ?? "#ffd479") : t.foreground;
+    const dotColor = isChinese ? (t.blocked ?? "#ffd479") : (t.done ?? t.ansi2 ?? "#6be6b5");
+
+    return h_flex()
+      .id("ime-badge")
+      .items_center()
+      .gap(5)
+      .px(8)
+      .h(22)
+      .rounded(6)
+      .bg(isChinese ? (t.raised ?? "#ffffff26") : (t.surface ?? "#ffffff12"))
+      .border(1)
+      .border_color(isChinese ? (t.blocked ?? t.input ?? t.border) : t.border)
+      .tooltip(`當前輸入法: ${ime.name || ime.badge}`)
+      .hover((s) => s.bg(t.hover ?? t.selected ?? "#ffffff1f"))
+      .child(
+        div()
+          .size(6)
+          .rounded_full()
+          .bg(dotColor)
+      )
+      .child(
+        div()
+          .font_bold()
+          .text_size(11)
+          .text_color(badgeColor)
+          .child(ime.badge || "ABC")
       );
   }
 
@@ -541,13 +534,13 @@ export default class WorkspaceStatus extends View {
       .px(8)
       .h(22)
       .max_w(360)
-      .rounded(5)
-      .bg(t.surface ?? "#1e1e2e")
+      .rounded(6)
+      .bg(t.surface ?? "#ffffff12")
       .border(1)
       .border_color(t.border)
       .cursor_pointer()
       .tooltip(`Agent 完整路徑: ${cwd}\n點擊複製路徑`)
-      .hover((s) => s.bg(t.selected ?? "#334155"))
+      .hover((s) => s.bg(t.hover ?? t.selected ?? "#ffffff1f"))
       .on_click((_e, cx) => {
         try {
           if (typeof cx?.write_to_clipboard === "function") {
@@ -583,13 +576,13 @@ export default class WorkspaceStatus extends View {
       .px(8)
       .h(22)
       .max_w(220)
-      .rounded(5)
-      .bg(t.surface ?? "#1e1e2e")
+      .rounded(6)
+      .bg(t.surface ?? "#ffffff12")
       .border(1)
       .border_color(t.border)
       .cursor_pointer()
       .tooltip(`Git 分支: ${branchName}\n點擊複製分支名稱`)
-      .hover((s) => s.bg(t.selected ?? "#334155"))
+      .hover((s) => s.bg(t.hover ?? t.selected ?? "#ffffff1f"))
       .on_click((_e, cx) => {
         try {
           if (typeof cx?.write_to_clipboard === "function") {
@@ -736,8 +729,8 @@ export default class WorkspaceStatus extends View {
         .gap(6)
         .px(8)
         .h(22)
-        .rounded(5)
-        .bg(t.surface ?? "#1e1e2e")
+        .rounded(6)
+        .bg(t.surface ?? "#ffffff12")
         .border(1)
         .border_color(t.border)
         .tooltip(`目前 Session 無執行中 Agent${totalGlobalAgents > 0 ? `\n全域共有 ${totalGlobalAgents} 個 Agent 在其他 Session` : ""}`)
@@ -805,8 +798,8 @@ export default class WorkspaceStatus extends View {
       .gap(6)
       .px(8)
       .h(22)
-      .rounded(5)
-      .bg(t.surface ?? "#1e1e2e")
+      .rounded(6)
+      .bg(t.surface ?? "#ffffff12")
       .border(1)
       .border_color(t.border)
       .tooltip(fullTooltip)
@@ -938,43 +931,51 @@ export default class WorkspaceStatus extends View {
       return el;
     };
 
+    const maxOffset = this.getMaxScrollOffset();
+    const offsetPx = maxOffset > 1 ? Math.round(Math.min(this.scrollOffset, maxOffset)) : 0;
+
     return h_flex()
+      .id("status-viewport")
       .size_full()
       .px(14)
-      .gap(12)
       .items_center()
-      .bg(t.chrome)
-      .border_t(1)
-      .border_color(t.border)
-      .text_size(11.8)
-      .text_color(t.muted)
-      // Machine (if remote or custom named)
-      .when(Boolean(space?.machine && space.machine !== "This computer"), (el) =>
-        el.child(label("server", space.machine))
-      )
-      // Agent Count & Breakdown
-      .child(this.renderAgentsWidget(t, cx))
-      // Spacer: absorbs all middle space, pushing AI Agent Status Bar and controls to the right
-      .child(div().flex_1())
-      // Right Group: Agent CWD Full Path
-      .when(Boolean(agentCwd), (el) => el.child(this.renderAgentCwd(agentCwd, t, cx)))
-      // Right Group: Git Branch (right after path, matching styling)
-      .when(Boolean(branchName), (el) => el.child(this.renderGitBranch(branchName, t, cx)))
-      // Right Group: Unified AI Agent Status Bar (Right-aligned!)
-      .child(this.renderAgentStatusBar(t, cx))
-      // Right Corner: YouTube Music Widget (when active)
-      .when(Boolean(this.song && this.song.active), (el) =>
-        el.child(this.renderMusicWidget(t, this.song, cx))
-      )
-      // Right Corner: Palette command
+      .overflow_x_hidden()
+      .on_size_change((size, scx) => {
+        const usable = Math.max(0, (size?.width ?? 0) - HORIZONTAL_PADDING_PX);
+        this.updateMarqueeBounds(usable, this.contentWidth, scx);
+      })
+      .on_hover((hovered, hcx) => {
+        this.isHoveringBar = Boolean(hovered);
+        if (!hovered) this.lastScrollTickAt = Date.now();
+        hcx?.notify?.();
+      })
+      .on_scroll_wheel((e, wcx) => this.handleScrollWheel(e, wcx))
       .child(
-        div()
-          .id("palette")
-          .text_color(t.dim)
-          .cursor_pointer()
-          .hover((s) => s.text_color(t.foreground))
-          .on_click(() => run("app.palette"))
-          .child(this.hint(t))
+        h_flex()
+          .id("status-content")
+          .flex_none()
+          .gap(12)
+          .items_center()
+          .text_size(11.8)
+          .text_color(t.muted)
+          .ml(offsetPx > 0 ? -offsetPx : 0)
+          .on_size_change((size, scx) => {
+            this.updateMarqueeBounds(this.viewportWidth, size?.width ?? 0, scx);
+          })
+          // Machine (if remote or custom named)
+          .when(Boolean(space?.machine && space.machine !== "This computer"), (el) =>
+            el.child(label("server", space.machine))
+          )
+          // Left Group (1): Path (Agent CWD)
+          .when(Boolean(agentCwd), (el) => el.child(this.renderAgentCwd(agentCwd, t, cx)))
+          // Left Group (2): Git Branch
+          .when(Boolean(branchName), (el) => el.child(this.renderGitBranch(branchName, t, cx)))
+          // Left Group (3): Input Method (IME) Indicator
+          .child(this.renderImeBadge(t, cx))
+          // Left Group (4): Usage / Quotas (Unified AI Agent Status Bar)
+          .child(this.renderAgentStatusBar(t, cx))
+          // Left Group (5): Agent Count & Breakdown
+          .child(this.renderAgentsWidget(t, cx))
       );
   }
 }

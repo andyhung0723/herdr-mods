@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Install Enhanced Workspace Status (Unified AI Agent Status Bar & YouTube Music Now Playing)."""
+"""Install Enhanced Workspace Status (Unified AI Agent Status Bar & IME badge)."""
 
 from __future__ import annotations
 
@@ -148,6 +148,16 @@ def update_layout_node(node: dict, target_id: str, new_mod: str) -> bool:
         if node["content"].get("mod") != new_mod:
             node["content"]["mod"] = new_mod
             changed = True
+        desired_status = {
+            "background": "chrome",
+            "radius": 12,
+            "border": {"width": 1, "color": "border"},
+            "shadow": "md",
+        }
+        for k, v in desired_status.items():
+            if node.get(k) != v:
+                node[k] = v
+                changed = True
     for child in node.get("children", []):
         if isinstance(child, dict) and update_layout_node(child, target_id, new_mod):
             changed = True
@@ -219,9 +229,7 @@ def main() -> int:
     print("    • Expanded status for focused agent with live Model, Context %, Quota Limits, Cost/Tokens")
     print("    • Compact indicator badges for background agents")
     print("    • Click any agent badge to open full Quotas Dashboard (agent-quotas)")
-    print("  - YouTube Music Widget (Right Corner):")
-    print("    • Displays '▶ ♫ Song • Artist' when active")
-    print("    • Click title to bring app to front, click ⏸/▶ to toggle playback")
+    print("  - IME badge: current input source via ime-watcher (LaunchAgent)")
     return 0
 
 

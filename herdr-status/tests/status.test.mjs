@@ -48,6 +48,7 @@ async function harness({
   panes = [],
   terminals = [],
   files = {},
+  claudeSubagents = null,
 } = {}) {
   const events = [];
   const renderedElements = [];
@@ -124,6 +125,13 @@ async function harness({
             stderr: "",
           };
         }
+        if (args[0] && args[0].endsWith("claude_subagents.py") && claudeSubagents) {
+          return {
+            code: 0,
+            stdout: JSON.stringify(claudeSubagents),
+            stderr: "",
+          };
+        }
       }
       if (cmd === "sqlite3") {
         return { code: 0, stdout: "142000\n", stderr: "" };
@@ -150,6 +158,10 @@ async function harness({
       _text: [],
       _tooltip: null,
       _onClick: null,
+      _onSizeChange: null,
+      _onHover: null,
+      _onScrollWheel: null,
+      _ml: null,
     };
     const proxy = new Proxy(el, {
       get: (target, prop) => {
@@ -158,6 +170,10 @@ async function harness({
         if (prop === "_text") return target._text;
         if (prop === "_tooltip") return target._tooltip;
         if (prop === "_onClick") return target._onClick;
+        if (prop === "_onSizeChange") return target._onSizeChange;
+        if (prop === "_onHover") return target._onHover;
+        if (prop === "_onScrollWheel") return target._onScrollWheel;
+        if (prop === "_ml") return target._ml;
         if (prop === "id") return (id) => { target._id = id; return proxy; };
         if (prop === "child") return (c) => {
           if (typeof c === "string" || typeof c === "number") target._text.push(String(c));
@@ -166,6 +182,10 @@ async function harness({
         };
         if (prop === "tooltip") return (tip) => { target._tooltip = tip; return proxy; };
         if (prop === "on_click") return (fn) => { target._onClick = fn; return proxy; };
+        if (prop === "on_size_change") return (fn) => { target._onSizeChange = fn; return proxy; };
+        if (prop === "on_hover") return (fn) => { target._onHover = fn; return proxy; };
+        if (prop === "on_scroll_wheel") return (fn) => { target._onScrollWheel = fn; return proxy; };
+        if (prop === "ml") return (v) => { target._ml = v; return proxy; };
         if (prop === "when") return (cond, fn) => {
           if (cond && typeof fn === "function") fn(proxy);
           return proxy;
@@ -242,50 +262,6 @@ function collectAllText(el) {
   }
   return texts;
 }
-
-test("workspace status renders YouTube Music widget in bottom-right corner when playing", async () => {
-  const { View, cx } = await harness({ mockSong: MOCK_SONG_ACTIVE });
-
-  const view = new View();
-  view.init({}, cx);
-  await view.pollMusic(cx);
-
-  assert.ok(view.song);
-  assert.equal(view.song.active, true);
-  assert.equal(view.song.title, "夜に駆ける");
-  assert.equal(view.song.artist, "YOASOBI");
-  assert.equal(view.song.playing, true);
-
-  const rendered = view.render(cx);
-  assert.ok(rendered);
-});
-
-test("workspace status handles inactive state cleanly without crashing", async () => {
-  const { View, cx } = await harness({ mockSong: MOCK_SONG_INACTIVE });
-
-  const view = new View();
-  view.init({}, cx);
-  await view.pollMusic(cx);
-
-  assert.ok(view.song);
-  assert.equal(view.song.active, false);
-
-  const rendered = view.render(cx);
-  assert.ok(rendered);
-});
-
-test("activate and toggle actions call python probe", async () => {
-  const { View, cx, events } = await harness();
-
-  const view = new View();
-  view.init({}, cx);
-
-  await view.activateYTM(cx);
-  assert.ok(events.some((e) => e[0] === "exec" && e[2].includes("activate")));
-
-  await view.togglePlay(cx);
-  assert.ok(events.some((e) => e[0] === "exec" && e[2].includes("toggle")));
-});
 
 test("agent collector detects active Claude pane and renders expanded Claude pill", async () => {
   const { View, cx } = await harness({
@@ -581,7 +557,7 @@ test("statusbar-agents detects Herdr terminal subagents and displays subagents (
   assert.ok(agentsWidget._tooltip.includes("Linter"), "Tooltip should list completed subagent");
 });
 
-test("parseTranscriptTasks parses Claude Code transcript tasks and displays on expanded Claude pill", async () => {
+test("parseTranscriptTasks parses Claude Code transcript tasks and displays on statusbar-agents without duplicating in Claude pill", async () => {
   const mockTranscript = [
     JSON.stringify({
       type: "assistant",
@@ -623,5 +599,281 @@ test("parseTranscriptTasks parses Claude Code transcript tasks and displays on e
   assert.ok(expandedClaude, "Should render expanded Claude pill");
 
   const claudeTexts = collectAllText(expandedClaude);
-  assert.ok(claudeTexts.some((t) => t.includes("2 sub (1/1)")), "Should display 2 sub (1/1)");
+  assert.equal(
+    claudeTexts.some((t) => t.includes("sub (")),
+    false,
+    "Should NOT duplicate subagent count inside expanded Claude pill"
+  );
+
+  const agentsWidget = findElementById(rendered, "statusbar-agents");
+  assert.ok(agentsWidget, "Should render statusbar-agents widget");
+  const widgetTexts = collectAllText(agentsWidget);
+  assert.ok(
+    widgetTexts.some((t) => t.includes("1 agent · 2 subagents")),
+    "Should display 2 subagents in statusbar-agents"
+  );
+});
+
+test("status bar removes palette and music, orders items left-to-right: path > git > ime > usage > agent", async () => {
+  const { View, cx } = await harness({
+    mockSong: MOCK_SONG_ACTIVE,
+    focused: { pane: "p1", terminal: "t1", cwd: "/Users/dev/Workspace/project-x" },
+    panes: [{ pane: "p1", app: "claude-code", focused: true, branch: "feature-glass" }],
+    files: {
+      "/tmp/herdr-ime.json": JSON.stringify({ badge: "注音", name: "前進注音", isChinese: true }),
+    },
+  });
+
+  const view = new View();
+  view.init({}, cx);
+  await view.pollAgentStatus(cx);
+  await view.pollIme(cx);
+
+  const rendered = view.render(cx);
+  assert.equal(findElementById(rendered, "palette"), null, "Should not render #palette command hint");
+  assert.equal(findElementById(rendered, "ytm-now-playing"), null, "Should not render #ytm-now-playing in bottom bar");
+
+  const imeBadge = findElementById(rendered, "ime-badge");
+  assert.ok(imeBadge, "Should render #ime-badge");
+  assert.ok(collectAllText(imeBadge).includes("注音"), "Should display current IME badge");
+
+  const viewport = findElementById(rendered, "status-viewport");
+  assert.ok(viewport, "Should render #status-viewport container");
+  const content = findElementById(rendered, "status-content");
+  assert.ok(content, "Should render #status-content inner row");
+
+  const childSummary = content._children.map((c) => c._id ?? "spacer");
+  assert.deepEqual(childSummary, [
+    "agent-cwd",
+    "git-branch",
+    "ime-badge",
+    "unified-agent-statusbar",
+    "statusbar-agents",
+  ]);
+});
+
+test("parseTranscriptTasks supports Claude Code Agent tool, ignores api-request-blob, and tracks async subagent lifecycle", async () => {
+  const { collector } = await harness();
+
+  const mockTranscript = [
+    JSON.stringify({
+      type: "api-request-blob",
+      message: {
+        role: "assistant",
+        content: [
+          {
+            type: "tool_use",
+            id: "agent_blob_dup",
+            name: "Agent",
+            input: { description: "Should be ignored blob" },
+          },
+        ],
+      },
+    }),
+    JSON.stringify({
+      type: "assistant",
+      message: {
+        role: "assistant",
+        content: [
+          {
+            type: "tool_use",
+            id: "agent_1",
+            name: "Agent",
+            input: { description: "Research codebase", subagent_type: "task-researcher" },
+          },
+          {
+            type: "tool_use",
+            id: "agent_2",
+            name: "Agent",
+            input: { description: "Implement feature", subagent_type: "task-worker" },
+          },
+          {
+            type: "tool_use",
+            id: "agent_3",
+            name: "Agent",
+            input: { subagent_type: "reviewer" },
+          },
+        ],
+      },
+    }),
+    // Async launches should stay running even though tool_result arrived
+    JSON.stringify({
+      type: "user",
+      toolUseResult: { isAsync: true, status: "async_launched", agentId: "a111" },
+      message: {
+        role: "user",
+        content: [
+          {
+            type: "tool_result",
+            tool_use_id: "agent_1",
+            content: [{ type: "text", text: "Async agent launched successfully." }],
+          },
+        ],
+      },
+    }),
+    JSON.stringify({
+      type: "user",
+      toolUseResult: { isAsync: true, status: "async_launched", agentId: "a222" },
+      message: {
+        role: "user",
+        content: [
+          {
+            type: "tool_result",
+            tool_use_id: "agent_2",
+            content: [{ type: "text", text: "Async agent launched successfully." }],
+          },
+        ],
+      },
+    }),
+    // Synchronous launch completes on tool_result
+    JSON.stringify({
+      type: "user",
+      message: {
+        role: "user",
+        content: [
+          {
+            type: "tool_result",
+            tool_use_id: "agent_3",
+            content: "Review complete",
+          },
+        ],
+      },
+    }),
+    // Async agent_1 finishes via queue-operation task-notification
+    JSON.stringify({
+      type: "queue-operation",
+      operation: "enqueue",
+      content: "<task-notification>\n<task-id>a111</task-id>\n<tool-use-id>agent_1</tool-use-id>\n</task-notification>",
+    }),
+    // Async agent_2 stays running (no completion event yet)
+  ].join("\n");
+
+  const parsed = Array.from(collector.parseTranscriptTasks(mockTranscript), (t) => ({ ...t }));
+  assert.deepEqual(parsed, [
+    { id: "agent_1", name: "Research codebase", status: "done" },
+    { id: "agent_2", name: "Implement feature", status: "running" },
+    { id: "agent_3", name: "reviewer", status: "done" },
+  ]);
+});
+
+test("getLiveClaudeStatus falls back to claude_subagents.py when transcript exceeds readTextFile 1 MiB limit", async () => {
+  const customClaudeStatusline = {
+    ...MOCK_CLAUDE_STATUSLINE,
+    transcript_path: "/tmp/large-transcript.jsonl",
+  };
+
+  const { View, cx, events } = await harness({
+    focused: { pane: "p1", terminal: "t1" },
+    panes: [{ pane: "p1", app: "claude-code", focused: true }],
+    files: {
+      "/tmp/claude-statusline-input.json": JSON.stringify(customClaudeStatusline),
+      // Intentionally omit /tmp/large-transcript.jsonl so readTextFile returns null (simulating >1 MiB)
+    },
+    claudeSubagents: {
+      total: 3,
+      running: 2,
+      done: 1,
+      items: [
+        { id: "t_1", name: "Security audit", status: "done" },
+        { id: "t_2", name: "API client", status: "running" },
+        { id: "t_3", name: "Deploy script", status: "running" },
+      ],
+    },
+  });
+
+  const view = new View();
+  view.init({}, cx);
+  await view.pollAgentStatus(cx);
+
+  assert.ok(
+    events.some(
+      (e) =>
+        e[0] === "exec" &&
+        e[1] === "python3" &&
+        e[2][0].endsWith("claude_subagents.py") &&
+        e[2].includes("/tmp/large-transcript.jsonl")
+    ),
+    "Should invoke claude_subagents.py with --transcript argument"
+  );
+
+  const rendered = view.render(cx);
+  const agentsWidget = findElementById(rendered, "statusbar-agents");
+  assert.ok(agentsWidget, "Should render statusbar-agents widget");
+
+  const widgetTexts = collectAllText(agentsWidget);
+  assert.ok(
+    widgetTexts.some((t) => t.includes("1 agent · 3 subagents")),
+    `Expected "1 agent · 3 subagents" in statusbar-agents, got: ${JSON.stringify(widgetTexts)}`
+  );
+  assert.ok(agentsWidget._tooltip.includes("3 subagents: 2 執行中 · 1 已完成"));
+  assert.ok(agentsWidget._tooltip.includes("API client"));
+
+  const expandedClaude = findElementById(rendered, "agent-status-claude-expanded");
+  assert.ok(expandedClaude, "Should render expanded Claude pill");
+  const claudeTexts = collectAllText(expandedClaude);
+  assert.equal(
+    claudeTexts.some((t) => t.includes("sub (")),
+    false,
+    "Should NOT duplicate subagent count inside expanded Claude pill"
+  );
+});
+
+test("status bar auto-scrolls ping-pong when overflowing, pauses on hover, supports scroll wheel, and resets when fitting", async () => {
+  const { View, cx } = await harness({
+    focused: { pane: "p1", terminal: "t1", cwd: "/Users/dev/Workspace/project-x" },
+    panes: [{ pane: "p1", app: "claude-code", focused: true, branch: "feature-overflow" }],
+  });
+
+  const view = new View();
+  view.init({}, cx);
+  await view.pollAgentStatus(cx);
+
+  let rendered = view.render(cx);
+  const viewport = findElementById(rendered, "status-viewport");
+  const content = findElementById(rendered, "status-content");
+  assert.ok(viewport && content);
+  assert.equal(content._ml, 0, "Should start with ml=0");
+
+  // Simulate viewport width 528px (usable = 500px after 28px padding) and content width 600px (100px overflow)
+  viewport._onSizeChange({ width: 528, height: 28 }, cx);
+  content._onSizeChange({ width: 600, height: 22 }, cx);
+  assert.equal(view.getMaxScrollOffset(), 100);
+
+  // Immediately after overflow starts, it should still be in initial pause
+  const t0 = Date.now();
+  view.tickMarquee(cx, t0 + 100);
+  assert.equal(view.scrollOffset, 0, "Should pause at left edge before scrolling");
+
+  // Advance past initial 1.8s pause and tick smoothly
+  view.tickMarquee(cx, t0 + 2000);
+  view.tickMarquee(cx, t0 + 2100);
+  assert.ok(view.scrollOffset > 0 && view.scrollOffset < 100, "Should pan right slowly");
+
+  rendered = view.render(cx);
+  assert.ok(findElementById(rendered, "status-content")._ml < 0, "Should apply negative ml offset");
+
+  // Hover pauses scrolling
+  viewport._onHover(true, cx);
+  const pausedOffset = view.scrollOffset;
+  view.tickMarquee(cx, t0 + 2200);
+  assert.equal(view.scrollOffset, pausedOffset, "Hovering should pause auto-scroll");
+
+  // Unhover resumes scrolling until reaching right end (100px) and reversing direction
+  viewport._onHover(false, cx);
+  let simNow = t0 + 2200;
+  for (let i = 0; i < 60 && view.scrollDir === 1; i++) {
+    simNow += 100;
+    view.tickMarquee(cx, simNow);
+  }
+  assert.equal(view.scrollOffset, 100, "Should clamp at maxOffset");
+  assert.equal(view.scrollDir, -1, "Should reverse direction at right edge");
+
+  // Scroll wheel fine-tunes offset
+  viewport._onScrollWheel({ delta: { x: 20, y: 0 } }, cx);
+  assert.equal(view.scrollOffset, 80, "Scroll wheel should adjust offset");
+
+  // When viewport expands to fit content, scrollOffset resets to 0
+  viewport._onSizeChange({ width: 700, height: 28 }, cx);
+  assert.equal(view.getMaxScrollOffset(), 0);
+  assert.equal(view.scrollOffset, 0, "Should reset scrollOffset when content fits");
 });

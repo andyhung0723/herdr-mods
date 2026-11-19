@@ -157,34 +157,151 @@ export function detectActiveAgent({ focused, panes, agents }) {
   return null;
 }
 
+const SUBAGENT_TOOL_NAMES = new Set(["Agent", "Task", "subagent", "dispatch_agent"]);
+
+function markSubagentDoneByNotification(raw, tasks, agentIdToTaskId) {
+  if (!raw) return;
+  for (const match of raw.matchAll(/<tool-use-id>([^<]+)<\/tool-use-id>/g)) {
+    const task = tasks.get(match[1]);
+    if (task) task.status = "done";
+  }
+  for (const match of raw.matchAll(/(?:<task-id>|<agent-message from=")([^"<]+)/g)) {
+    const tid = agentIdToTaskId.get(match[1]);
+    const task = tid ? tasks.get(tid) : null;
+    if (task) task.status = "done";
+  }
+}
+
 export function parseTranscriptTasks(transcriptContent) {
   if (!transcriptContent) return [];
   const lines = transcriptContent.split("\n").filter(Boolean);
   const tasks = new Map();
+  const agentIdToTaskId = new Map();
 
   for (const line of lines) {
-    if (!line.includes("tool_use") && !line.includes("tool_result")) continue;
+    if (line.includes('"api-request-blob"')) continue;
+    if (
+      !line.includes("tool_use") &&
+      !line.includes("tool_result") &&
+      !line.includes("task-notification") &&
+      !line.includes("agent-message") &&
+      !line.includes("tool-use-id")
+    ) {
+      continue;
+    }
     try {
       const entry = JSON.parse(line);
+      if (!entry || entry.type === "api-request-blob") continue;
+
+      if (entry.type === "queue-operation" || entry.type === "attachment") {
+        const raw = String(entry.content || entry.attachment?.prompt || "");
+        markSubagentDoneByNotification(raw, tasks, agentIdToTaskId);
+        continue;
+      }
+
       const msg = entry.message || entry;
+      if (typeof msg?.content === "string") {
+        if (msg.content.includes("<task-notification>") || msg.content.includes("<agent-message")) {
+          markSubagentDoneByNotification(msg.content, tasks, agentIdToTaskId);
+        }
+        continue;
+      }
+
       const contents = Array.isArray(msg?.content) ? msg.content : [];
+      const tur = entry.toolUseResult;
 
       for (const item of contents) {
-        if (item.type === "tool_use" && (item.name === "Task" || item.name === "subagent")) {
+        if (!item || typeof item !== "object") continue;
+        if (item.type === "tool_use" && SUBAGENT_TOOL_NAMES.has(item.name)) {
+          if (!item.id || tasks.has(item.id)) continue;
+          const inp = item.input || {};
+          const name =
+            inp.description ||
+            inp.name ||
+            inp.subagent_type ||
+            (typeof inp.prompt === "string" ? inp.prompt.slice(0, 30) : "") ||
+            "Subagent";
           tasks.set(item.id, {
             id: item.id,
-            name: item.input?.description || item.input?.prompt?.slice(0, 30) || "Subagent",
+            name: String(name),
             status: "running",
           });
         } else if (item.type === "tool_result" && tasks.has(item.tool_use_id)) {
           const t = tasks.get(item.tool_use_id);
-          t.status = "done";
+          const isAsync =
+            (tur && typeof tur === "object" && (tur.isAsync === true || tur.status === "async_launched")) ||
+            JSON.stringify(item.content || "").includes("Async agent launched");
+
+          if (isAsync) {
+            const aid = tur && typeof tur === "object" ? tur.agentId : null;
+            if (aid) {
+              t.agentId = aid;
+              agentIdToTaskId.set(aid, item.tool_use_id);
+            }
+          } else {
+            t.status = "done";
+          }
         }
       }
     } catch {}
   }
 
-  return Array.from(tasks.values());
+  return Array.from(tasks.values()).map(({ id, name, status }) => ({ id, name, status }));
+}
+
+async function collectClaudeSubagentsViaProbe(transcriptPath, h) {
+  if (typeof exec !== "function" || !transcriptPath) return null;
+  try {
+    const appH = typeof appHome === "function" ? appHome() : `${h}/.config/herdr-app`;
+    const probeCandidates = [
+      `${appH}/mods/enhanced-status/claude_subagents.py`,
+    ];
+
+    let probeScript = probeCandidates[0];
+    for (const cand of probeCandidates) {
+      const exists = await readTextFile(cand).catch(() => null);
+      if (exists) {
+        probeScript = cand;
+        break;
+      }
+    }
+
+    const res = await exec("python3", [probeScript, "--transcript", transcriptPath]).catch(() => null);
+    if (res?.code === 0 && res?.stdout?.trim()) {
+      const parsed = JSON.parse(res.stdout.trim());
+      if (Array.isArray(parsed?.items)) {
+        return parsed.items;
+      }
+    }
+  } catch {}
+  return null;
+}
+
+function mergeSubagents(parsedItems, probeItems) {
+  if (!Array.isArray(probeItems) || probeItems.length === 0) {
+    return parsedItems;
+  }
+  if (!Array.isArray(parsedItems) || parsedItems.length === 0) {
+    return probeItems;
+  }
+  const merged = new Map();
+  for (const item of parsedItems) {
+    if (item?.id) merged.set(item.id, item);
+  }
+  for (const item of probeItems) {
+    if (!item?.id) continue;
+    const prev = merged.get(item.id);
+    if (!prev) {
+      merged.set(item.id, item);
+    } else {
+      merged.set(item.id, {
+        ...prev,
+        ...item,
+        status: prev.status === "done" || item.status === "done" ? "done" : item.status,
+      });
+    }
+  }
+  return Array.from(merged.values());
 }
 
 export async function getLiveClaudeStatus() {
@@ -214,12 +331,12 @@ export async function getLiveClaudeStatus() {
 
     let subagents = [];
     if (liveJson.transcript_path) {
-      try {
-        const transcriptRaw = await readTextFile(liveJson.transcript_path).catch(() => null);
-        if (transcriptRaw) {
-          subagents = parseTranscriptTasks(transcriptRaw);
-        }
-      } catch {}
+      const [transcriptRaw, probeItems] = await Promise.all([
+        readTextFile(liveJson.transcript_path).catch(() => null),
+        collectClaudeSubagentsViaProbe(liveJson.transcript_path, h).catch(() => null),
+      ]);
+      const parsedItems = transcriptRaw ? parseTranscriptTasks(transcriptRaw) : [];
+      subagents = mergeSubagents(parsedItems, probeItems);
     }
     const subagentsRunning = subagents.filter((s) => s.status === "running").length;
     const subagentsDone = subagents.filter((s) => s.status === "done").length;
@@ -333,7 +450,6 @@ export async function getLiveCodexStatus() {
       `${appH}/mods/enhanced-status/codex_limits.py`,
       `${appH}/mods/workspace-status/codex_limits.py`,
       `${appH}/mods/agent-quotas/codex_limits.py`,
-      `${h}/Workspace/side-project/herdr-mods/herdr-status/mods/enhanced-status/codex_limits.py`,
     ];
 
     let probeScript = probeCandidates[0];
@@ -431,7 +547,6 @@ export async function getLiveAntigravityStatus() {
       `${appH}/mods/enhanced-status/antigravity_limits.py`,
       `${appH}/mods/workspace-status/antigravity_limits.py`,
       `${appH}/mods/agent-quotas/antigravity_limits.py`,
-      `${h}/Workspace/side-project/herdr-mods/herdr-status/mods/enhanced-status/antigravity_limits.py`,
     ];
 
     let probeScript = probeCandidates[0];
