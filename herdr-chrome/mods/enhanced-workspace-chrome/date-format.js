@@ -7,7 +7,7 @@ const WEEKDAYS = ["週日", "週一", "週二", "週三", "週四", "週五", "�
 /**
  * Formats a Date instance into time and date parts.
  * @param {Date} [date]
- * @returns {{ time: string, date: string, fullDate: string, isoTimestamp: string }}
+ * @returns {{ time: string, hm: string, sec: string, date: string, fullDate: string, isoTimestamp: string }}
  */
 export function formatClock(date = new Date()) {
   const pad = (n) => String(n).padStart(2, "0");
@@ -18,11 +18,15 @@ export function formatClock(date = new Date()) {
   const month = pad(date.getMonth() + 1);
   const day = pad(date.getDate());
   const weekday = WEEKDAYS[date.getDay()] ?? "";
+  const hm = `${hours}:${minutes}`;
+  const sec = `:${seconds}`;
 
   return {
-    time: `${hours}:${minutes}:${seconds}`,
+    time: `${hm}${sec}`,
+    hm,
+    sec,
     date: `${month}/${day} ${weekday}`,
     fullDate: `${year}/${month}/${day} ${weekday}`,
-    isoTimestamp: `${year}-${month}-${day} ${hours}:${minutes}:${seconds}`,
+    isoTimestamp: `${year}-${month}-${day} ${hm}${sec}`,
   };
 }

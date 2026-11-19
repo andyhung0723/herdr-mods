@@ -21,6 +21,7 @@ from pathlib import Path
 from typing import Any
 
 MOD_NAME = "enhanced-workspace-chrome"
+PANE_MOD_NAME = "glass-pane"
 
 
 class InstallError(RuntimeError):
@@ -115,22 +116,49 @@ def update_layout(home: Path, dry_run: bool) -> bool:
 
     changed = False
 
-    def update_node(node: Any) -> bool:
+    def update_node(node: Any) -> None:
         nonlocal changed
         if not isinstance(node, dict):
-            return False
-        if node.get("id") == "brand":
+            return
+        node_id = node.get("id")
+        if node_id == "brand":
             content = node.get("content")
             if isinstance(content, dict) and content.get("mod") != MOD_NAME:
                 content["mod"] = MOD_NAME
                 changed = True
-                return True
+            desired_size = {"px": 122}
+            if node.get("size") != desired_size:
+                node["size"] = desired_size
+                changed = True
+        elif node_id == "sidebar-footer":
+            content = node.get("content")
+            if isinstance(content, dict) and content.get("mod") != MOD_NAME:
+                content["mod"] = MOD_NAME
+                changed = True
+        elif node_id == "sidebar":
+            desired_sidebar = {
+                "background": "chrome",
+                "radius": 16,
+                "border": {"width": 1, "color": "border"},
+                "shadow": "lg",
+            }
+            for k, v in desired_sidebar.items():
+                if node.get(k) != v:
+                    node[k] = v
+                    changed = True
+        elif node_id == "main":
+            content = node.get("content")
+            if isinstance(content, dict):
+                pane = content.get("pane")
+                if isinstance(pane, dict):
+                    desired_focus = {"width": 1, "color": "accent"}
+                    if pane.get("focus") != desired_focus:
+                        pane["focus"] = desired_focus
+                        changed = True
         children = node.get("children")
         if isinstance(children, list):
             for child in children:
-                if update_node(child):
-                    return True
-        return False
+                update_node(child)
 
     update_node(root)
     if changed:
@@ -164,30 +192,38 @@ def main(argv: list[str]) -> int:
 
     source_mod_dir = repo_root / "mods" / MOD_NAME
     target_mod_dir = home / "mods" / MOD_NAME
+    source_pane_dir = repo_root / "mods" / PANE_MOD_NAME
+    target_pane_dir = home / "mods" / PANE_MOD_NAME
 
     if not source_mod_dir.is_dir():
         raise InstallError(f"Source mod dir not found: {source_mod_dir}")
+    if not source_pane_dir.is_dir():
+        raise InstallError(f"Source mod dir not found: {source_pane_dir}")
 
-    # Validate source mod first
+    # Validate source mods first
     run_mod_check(source_mod_dir, home)
+    run_mod_check(source_pane_dir, home)
 
     # Backup existing
     files_to_backup = [
         home / "layouts" / "main-popup.json",
         target_mod_dir,
+        target_pane_dir,
     ]
     backup_dir = create_backup(home, files_to_backup, args.dry_run)
     print(f"Backup created at: {backup_dir}")
 
     # Copy files
     copy_mod_files(source_mod_dir, target_mod_dir, args.dry_run)
+    copy_mod_files(source_pane_dir, target_pane_dir, args.dry_run)
 
     # Update layout main-popup.json
     update_layout(home, args.dry_run)
 
-    # Validate target mod
+    # Validate target mods
     if not args.dry_run:
         run_mod_check(target_mod_dir, home)
+        run_mod_check(target_pane_dir, home)
 
     print(
         f"\nSuccessfully installed {MOD_NAME}!\n"
