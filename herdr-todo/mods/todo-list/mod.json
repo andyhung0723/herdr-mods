@@ -1,0 +1,10 @@
+{
+  "place": "none",
+  "title": "Todo",
+  "focusable": true,
+  "overlay": {
+    "kind": "dialog",
+    "width": 860,
+    "height": 640
+  }
+}
