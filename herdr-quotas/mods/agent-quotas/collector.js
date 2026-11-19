@@ -259,11 +259,8 @@ export async function collectCodexData() {
   let resetCredits = 0;
 
   try {
-    let scriptPath = `${h}/.config/herdr-app/mods/agent-quotas/codex_limits.py`;
-    const exists = await readTextFile(scriptPath);
-    if (!exists) {
-      scriptPath = `${h}/Workspace/side-project/herdr-mods/herdr-quotas/mods/agent-quotas/codex_limits.py`;
-    }
+    const appH = typeof appHome === "function" ? appHome() : `${h}/.config/herdr-app`;
+    const scriptPath = `${appH}/mods/agent-quotas/codex_limits.py`;
     const res = await exec("python3", [scriptPath]);
     if (res.code === 0 && res.stdout) {
       const parsed = JSON.parse(res.stdout.trim());
@@ -338,11 +335,8 @@ export async function collectAntigravityData() {
   let week = { percent: 0, remainingPercent: 100, resetsAt: null, timeRemaining: null, displayName: "Weekly Limit" };
 
   try {
-    let scriptPath = `${h}/.config/herdr-app/mods/agent-quotas/antigravity_limits.py`;
-    const exists = await readTextFile(scriptPath);
-    if (!exists) {
-      scriptPath = `${h}/Workspace/side-project/herdr-mods/herdr-quotas/mods/agent-quotas/antigravity_limits.py`;
-    }
+    const appH = typeof appHome === "function" ? appHome() : `${h}/.config/herdr-app`;
+    const scriptPath = `${appH}/mods/agent-quotas/antigravity_limits.py`;
     const res = await exec("python3", [scriptPath]);
     if (res.code === 0 && res.stdout) {
       const parsed = JSON.parse(res.stdout.trim());
