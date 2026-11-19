@@ -7,6 +7,7 @@ Outputs JSON for Herdr services-inspector mod.
 from __future__ import annotations
 
 import argparse
+from concurrent.futures import ThreadPoolExecutor
 import json
 import os
 import re
@@ -389,10 +390,20 @@ def main() -> int:
         return 0 if res["ok"] else 1
 
     # Scan mode
+    if args.mode == "all":
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            ports_fut = pool.submit(scan_ports)
+            docker_fut = pool.submit(scan_docker)
+            ports = ports_fut.result()
+            docker = docker_fut.result()
+    else:
+        ports = scan_ports() if args.mode == "ports" else []
+        docker = scan_docker() if args.mode == "docker" else None
+
     data: dict = {
         "timestamp": time.time(),
-        "ports": scan_ports() if args.mode in ("all", "ports") else [],
-        "docker": scan_docker() if args.mode in ("all", "docker") else None,
+        "ports": ports,
+        "docker": docker,
     }
     print(json.dumps(data))
     return 0

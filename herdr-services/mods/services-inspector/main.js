@@ -42,6 +42,7 @@ function getPanelWidth() {
 
 export default class ServicesInspector extends View {
   init(initialProps, cx) {
+    this.asyncCx = cx;
     const p = initialProps ?? props() ?? {};
     this.overlayId = p.overlay ?? null;
     this.role = p.role ?? (this.overlayId ? "dialog" : "panel");
@@ -84,7 +85,7 @@ export default class ServicesInspector extends View {
     this.reloadInflight = true;
     if (force || !this.data) {
       this.loading = true;
-      cx?.notify?.();
+      (cx ?? this.asyncCx)?.notify?.();
     }
     try {
       const res = await fetchServicesData({ mode: "all", force });
@@ -95,41 +96,41 @@ export default class ServicesInspector extends View {
     } finally {
       this.loading = false;
       this.reloadInflight = false;
-      cx?.notify?.();
+      (this.asyncCx ?? cx)?.notify?.();
     }
   }
 
   async handleKill(pid, cx) {
     if (!pid || this.killingPid) return;
     this.killingPid = pid;
-    cx?.notify?.();
+    (cx ?? this.asyncCx)?.notify?.();
     try {
       const res = await killProcess(pid, 15);
       if (!res.ok) {
         // Try SIGKILL if SIGTERM was rejected or failed
         await killProcess(pid, 9);
       }
-      await this.reload(cx, true);
+      await this.reload(this.asyncCx, true);
     } catch (err) {
       console.error("Kill failed:", err);
     } finally {
       this.killingPid = null;
-      cx?.notify?.();
+      (this.asyncCx ?? cx)?.notify?.();
     }
   }
 
   async handleDockerAction(containerId, action, cx) {
     if (!containerId || this.dockerActionId) return;
     this.dockerActionId = `${containerId}:${action}`;
-    cx?.notify?.();
+    (cx ?? this.asyncCx)?.notify?.();
     try {
       await controlDocker(containerId, action);
-      await this.reload(cx, true);
+      await this.reload(this.asyncCx, true);
     } catch (err) {
       console.error("Docker action failed:", err);
     } finally {
       this.dockerActionId = null;
-      cx?.notify?.();
+      (this.asyncCx ?? cx)?.notify?.();
     }
   }
 
@@ -163,7 +164,9 @@ export default class ServicesInspector extends View {
     return v_flex()
       .track_focus(this.handle)
       .size_full()
-      .bg(t.sidebar ?? t.background)
+      .when(this.role === "dialog", (el) =>
+        el.bg(t.popover).rounded(14).border_1().border_color(t.border).shadow_lg()
+      )
       .text_color(t.foreground)
       .overflow_hidden()
       // 1. Header Toolbar
@@ -173,6 +176,7 @@ export default class ServicesInspector extends View {
       // 3. Main Content Area
       .child(
         v_flex()
+          .id("services-scroll-body")
           .flex_1()
           .overflow_y_scrollbar()
           .p(10)
@@ -193,7 +197,6 @@ export default class ServicesInspector extends View {
       .items_center()
       .justify_between()
       .border_b(1, t.border)
-      .bg(t.background)
       // Left: Icon + Title
       .child(
         h_flex()
@@ -218,6 +221,7 @@ export default class ServicesInspector extends View {
           .bg(t.surface ?? t.background)
           .child(
             h_flex()
+              .id("services-tab-ports")
               .items_center()
               .gap(4)
               .px(8)
@@ -225,15 +229,17 @@ export default class ServicesInspector extends View {
               .rounded(4)
               .cursor_pointer()
               .when(this.activeTab === "ports", (el) => el.bg(t.selected ?? "#334155"))
+              .when(this.activeTab !== "ports", (el) => el.hover((s) => s.bg(t.hover).text_color(t.foreground)))
               .text_color(this.activeTab === "ports" ? t.foreground : t.muted)
-              .on_click(() => {
+              .on_click((_e, clickCx) => {
                 this.activeTab = "ports";
-                cx.notify();
+                clickCx.notify();
               })
               .child(div().text_size(11.5).font_medium().child(isVeryNarrow ? `Ports` : `Ports (${portCount})`))
           )
           .child(
             h_flex()
+              .id("services-tab-docker")
               .items_center()
               .gap(4)
               .px(8)
@@ -241,10 +247,11 @@ export default class ServicesInspector extends View {
               .rounded(4)
               .cursor_pointer()
               .when(this.activeTab === "docker", (el) => el.bg(t.selected ?? "#334155"))
+              .when(this.activeTab !== "docker", (el) => el.hover((s) => s.bg(t.hover).text_color(t.foreground)))
               .text_color(this.activeTab === "docker" ? t.foreground : t.muted)
-              .on_click(() => {
+              .on_click((_e, clickCx) => {
                 this.activeTab = "docker";
-                cx.notify();
+                clickCx.notify();
               })
               .child(
                 div()
@@ -267,6 +274,7 @@ export default class ServicesInspector extends View {
           .gap(6)
           .child(
             h_flex()
+              .id("services-btn-refresh")
               .items_center()
               .gap(4)
               .px(6)
@@ -274,15 +282,17 @@ export default class ServicesInspector extends View {
               .rounded(4)
               .cursor_pointer()
               .bg(t.surface ?? t.background)
+              .hover((s) => s.bg(t.hover).text_color(t.foreground))
               .text_size(11)
               .text_color(this.loading ? t.accent : t.muted)
-              .on_click(() => this.reload(cx, true))
+              .on_click((_e, clickCx) => this.reload(clickCx, true))
               .child(svg(ICON_REFRESH).size(11).flex_none())
               .child(div().child(this.loading ? "..." : "Refresh"))
           )
           .when(this.role === "dialog", (el) =>
             el.child(
               h_flex()
+                .id("services-btn-close")
                 .items_center()
                 .justify_center()
                 .size(20)
@@ -290,7 +300,7 @@ export default class ServicesInspector extends View {
                 .cursor_pointer()
                 .bg(t.surface)
                 .text_color(t.muted)
-                .hover((s) => s.text_color(t.foreground))
+                .hover((s) => s.bg(t.hover).text_color(t.foreground))
                 .on_click(() => closeOverlay(this.overlayId))
                 .child(svg(ICON_X).size(12).flex_none())
             )
@@ -314,21 +324,24 @@ export default class ServicesInspector extends View {
           .gap(4)
           .child(
             div()
+              .id("services-filter-all")
               .px(7)
               .py(2)
               .rounded(4)
               .cursor_pointer()
               .text_size(11)
               .when(this.filterMode === "all", (el) => el.bg(t.accent ?? "#89b4fa"))
+              .when(this.filterMode !== "all", (el) => el.hover((s) => s.bg(t.hover).text_color(t.foreground)))
               .text_color(this.filterMode === "all" ? (t.accentForeground ?? "#ffffff") : t.muted)
-              .on_click(() => {
+              .on_click((_e, clickCx) => {
                 this.filterMode = "all";
-                cx.notify();
+                clickCx.notify();
               })
               .child(`All (${total})`)
           )
           .child(
             h_flex()
+              .id("services-filter-dev")
               .items_center()
               .gap(4)
               .px(7)
@@ -337,16 +350,18 @@ export default class ServicesInspector extends View {
               .cursor_pointer()
               .text_size(11)
               .when(this.filterMode === "dev", (el) => el.bg(t.accent ?? "#89b4fa"))
+              .when(this.filterMode !== "dev", (el) => el.hover((s) => s.bg(t.hover).text_color(t.foreground)))
               .text_color(this.filterMode === "dev" ? (t.accentForeground ?? "#ffffff") : t.muted)
-              .on_click(() => {
+              .on_click((_e, clickCx) => {
                 this.filterMode = "dev";
-                cx.notify();
+                clickCx.notify();
               })
               .child(svg(ICON_CODE).size(11).flex_none())
               .child(div().child(`Dev (${devCount})`))
           )
           .child(
             h_flex()
+              .id("services-filter-ipc")
               .items_center()
               .gap(4)
               .px(7)
@@ -355,10 +370,11 @@ export default class ServicesInspector extends View {
               .cursor_pointer()
               .text_size(11)
               .when(this.filterMode === "ipc", (el) => el.bg(t.accent ?? "#89b4fa"))
+              .when(this.filterMode !== "ipc", (el) => el.hover((s) => s.bg(t.hover).text_color(t.foreground)))
               .text_color(this.filterMode === "ipc" ? (t.accentForeground ?? "#ffffff") : t.muted)
-              .on_click(() => {
+              .on_click((_e, clickCx) => {
                 this.filterMode = "ipc";
-                cx.notify();
+                clickCx.notify();
               })
               .child(svg(ICON_PACKAGE).size(11).flex_none())
               .child(div().child(`App IPC (${ipcCount})`))
@@ -562,6 +578,7 @@ export default class ServicesInspector extends View {
           .when(Boolean(p.url), (el) =>
             el.child(
               h_flex()
+                .id(`services-open-${p.port}-${p.pid}`)
                 .items_center()
                 .gap(4)
                 .px(7)
@@ -569,9 +586,10 @@ export default class ServicesInspector extends View {
                 .rounded(4)
                 .cursor_pointer()
                 .bg(t.background)
+                .hover((s) => s.bg(t.hover))
                 .text_size(11)
                 .text_color(t.ansi2 ?? "#a6e3a1")
-                .on_click(() => this.handleOpenUrl(p.url, cx))
+                .on_click((_e, clickCx) => this.handleOpenUrl(p.url, clickCx))
                 .child(svg(ICON_GLOBE).size(11).flex_none())
                 .child(div().child("Open"))
             )
@@ -580,6 +598,7 @@ export default class ServicesInspector extends View {
           .when(!p.isProtected, (el) =>
             el.child(
               div()
+                .id(`services-kill-${p.port}-${p.pid}`)
                 .px(7)
                 .py(3)
                 .rounded(4)
@@ -588,7 +607,7 @@ export default class ServicesInspector extends View {
                 .text_size(11)
                 .font_medium()
                 .text_color(isKilling ? t.muted : (t.accentForeground ?? "#ffffff"))
-                .on_click(() => this.handleKill(p.pid, cx))
+                .on_click((_e, clickCx) => this.handleKill(p.pid, clickCx))
                 .child(isKilling ? "Killing..." : "Kill")
             )
           )
@@ -674,6 +693,7 @@ export default class ServicesInspector extends View {
             )
             .child(
               h_flex()
+                .id("services-docker-check-again")
                 .items_center()
                 .gap(4)
                 .px(8)
@@ -681,9 +701,10 @@ export default class ServicesInspector extends View {
                 .rounded(4)
                 .cursor_pointer()
                 .bg(t.selected ?? "#334155")
+                .hover((s) => s.bg(t.hover))
                 .text_size(11.5)
                 .text_color(t.foreground)
-                .on_click(() => this.reload(cx, true))
+                .on_click((_e, clickCx) => this.reload(clickCx, true))
                 .child(svg(ICON_REFRESH).size(12).flex_none())
                 .child(div().child("Check Again"))
             )
@@ -781,6 +802,7 @@ export default class ServicesInspector extends View {
             el
               .child(
                 h_flex()
+                  .id(`services-docker-restart-${c.id}`)
                   .items_center()
                   .gap(4)
                   .px(6)
@@ -788,14 +810,16 @@ export default class ServicesInspector extends View {
                   .rounded(4)
                   .cursor_pointer()
                   .bg(t.background)
+                  .hover((s) => s.bg(t.hover))
                   .text_size(11)
                   .text_color(t.foreground)
-                  .on_click(() => this.handleDockerAction(c.id, "restart", cx))
+                  .on_click((_e, clickCx) => this.handleDockerAction(c.id, "restart", clickCx))
                   .when(!isActionInflight, (btn) => btn.child(svg(ICON_REFRESH).size(11).flex_none()))
                   .child(div().child(isActionInflight ? "..." : "Restart"))
               )
               .child(
                 h_flex()
+                  .id(`services-docker-stop-${c.id}`)
                   .items_center()
                   .gap(4)
                   .px(6)
@@ -805,7 +829,7 @@ export default class ServicesInspector extends View {
                   .bg(t.ansi1 ?? "#f38ba8")
                   .text_size(11)
                   .text_color(t.accentForeground ?? "#ffffff")
-                  .on_click(() => this.handleDockerAction(c.id, "stop", cx))
+                  .on_click((_e, clickCx) => this.handleDockerAction(c.id, "stop", clickCx))
                   .when(!isActionInflight, (btn) => btn.child(svg(ICON_STOP).size(11).flex_none()))
                   .child(div().child(isActionInflight ? "..." : "Stop"))
               )
@@ -813,6 +837,7 @@ export default class ServicesInspector extends View {
           .when(!isRunning, (el) =>
             el.child(
               h_flex()
+                .id(`services-docker-start-${c.id}`)
                 .items_center()
                 .gap(4)
                 .px(7)
@@ -822,7 +847,7 @@ export default class ServicesInspector extends View {
                 .bg(t.ansi2 ?? "#a6e3a1")
                 .text_size(11)
                 .text_color("#181825")
-                .on_click(() => this.handleDockerAction(c.id, "start", cx))
+                .on_click((_e, clickCx) => this.handleDockerAction(c.id, "start", clickCx))
                 .when(!isActionInflight, (btn) => btn.child(svg(ICON_PLAY).size(11).flex_none()))
                 .child(div().child(isActionInflight ? "..." : "Start"))
             )
