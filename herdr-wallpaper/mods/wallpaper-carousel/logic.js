@@ -1,21 +1,19 @@
 /**
- * Pure wallpaper carousel logic for filtering, index computation, and layout transformation.
+ * Pure static Liquid Glass wallpaper and layout helper functions.
  */
 
+export const DEFAULT_GLASS_IMAGE = "backgrounds/liquid_glass.jpg";
+export const LIQUID_GLASS_THEME = "liquid-glass";
+
 /**
- * Filters and naturally sorts wallpaper image filenames.
- * Supports .jpg, .jpeg, .png, .webp, .bmp.
- * Ignores dotfiles, directories, non-images.
- * @param {string[]} fileList
- * @returns {string[]}
+ * Normalizes a background image path under backgrounds/.
+ * @param {string|null|undefined} imagePath
+ * @returns {string}
  */
-export function filterWallpaperFiles(fileList) {
-  if (!Array.isArray(fileList)) return [];
-  const validExts = /\.(jpe?g|png|webp|bmp)$/i;
-  return fileList
-    .map((f) => (typeof f === "string" ? f.trim() : ""))
-    .filter((f) => f.length > 0 && !f.startsWith(".") && validExts.test(f))
-    .sort((a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: "base" }));
+export function normalizeBackgroundPath(imagePath) {
+  const clean = typeof imagePath === "string" ? imagePath.trim() : "";
+  if (!clean) return DEFAULT_GLASS_IMAGE;
+  return clean.startsWith("backgrounds/") ? clean : `backgrounds/${clean}`;
 }
 
 /**
@@ -39,77 +37,46 @@ export function extractCurrentWallpaper(layoutInput) {
 }
 
 /**
- * Computes next or previous wallpaper filename from sorted list.
- * @param {string[]} files Sorted list of wallpaper filenames
- * @param {string|null} current Current wallpaper filename or relative path
- * @param {number} step Offset (+1 for next, -1 for prev)
- * @returns {string|null}
- */
-export function getNextWallpaper(files, current, step = 1) {
-  if (!Array.isArray(files) || files.length === 0) return null;
-  if (files.length === 1) return files[0];
-
-  const cleanCurrent = current ? current.replace(/^backgrounds\//, "").trim() : "";
-  const currentIndex = files.indexOf(cleanCurrent);
-
-  if (currentIndex === -1) {
-    // Current not found in list -> start with first
-    return files[0];
-  }
-
-  // Modulo wrap-around with support for negative steps
-  const total = files.length;
-  const nextIndex = ((currentIndex + step) % total + total) % total;
-  return files[nextIndex];
-}
-
-/**
- * Updates layout JSON string with new wallpaper image path.
- * Returns formatted JSON string.
+ * Updates layout JSON string to use the static Liquid Glass wallpaper and theme
+ * while removing any legacy wallpaper-carousel-controller node.
  * @param {string} layoutJsonString
- * @param {string} newWallpaperFilename
+ * @param {string} [wallpaperFilename="liquid_glass.jpg"]
  * @returns {string}
  */
-export function updateLayoutJson(layoutJsonString, newWallpaperFilename) {
+export function updateLayoutJson(layoutJsonString, wallpaperFilename = "liquid_glass.jpg") {
   if (typeof layoutJsonString !== "string" || !layoutJsonString.trim()) {
     throw new Error("Invalid layout JSON string");
   }
-  if (!newWallpaperFilename || typeof newWallpaperFilename !== "string") {
+  if (!wallpaperFilename || typeof wallpaperFilename !== "string") {
     throw new Error("Invalid wallpaper filename");
   }
 
   const parsed = JSON.parse(layoutJsonString);
-  const cleanName = newWallpaperFilename.replace(/^backgrounds\//, "").trim();
+  const cleanName = wallpaperFilename.replace(/^backgrounds\//, "").trim();
 
-  if (!parsed.background || typeof parsed.background !== "object") {
-    parsed.background = {
-      image: `backgrounds/${cleanName}`,
-      fit: "cover",
-    };
-  } else {
-    parsed.background.image = `backgrounds/${cleanName}`;
-    if (!parsed.background.fit) {
-      parsed.background.fit = "cover";
+  parsed.background = {
+    image: `backgrounds/${cleanName}`,
+    fit: "cover",
+  };
+  parsed.theme = {
+    light: LIQUID_GLASS_THEME,
+    dark: LIQUID_GLASS_THEME,
+  };
+
+  function stripController(node) {
+    if (!node || typeof node !== "object" || !Array.isArray(node.children)) return;
+    node.children = node.children.filter((child) => {
+      if (!child || typeof child !== "object") return true;
+      return (
+        child.id !== "wallpaper-carousel-controller" &&
+        child.content?.mod !== "wallpaper-carousel"
+      );
+    });
+    for (const child of node.children) {
+      stripController(child);
     }
   }
+  stripController(parsed);
 
   return JSON.stringify(parsed, null, 2);
 }
-
-/**
- * Generates ordered seamless loop frame paths for Matrix digital rain.
- * @param {number} frameCount Number of frames (default: 32)
- * @param {string} folder Subfolder under backgrounds/ (default: "matrix-rain-smooth")
- * @returns {string[]}
- */
-export function getMatrixRainFrames(frameCount = 32, folder = "matrix-rain-smooth") {
-  const count = Math.max(1, Math.floor(Number(frameCount) || 32));
-  const cleanFolder = String(folder || "matrix-rain-smooth").replace(/^\/+|\/+$/g, "");
-  const frames = [];
-  for (let i = 0; i < count; i++) {
-    const num = String(i).padStart(2, "0");
-    frames.push(`${cleanFolder}/frame_${num}.jpg`);
-  }
-  return frames;
-}
-

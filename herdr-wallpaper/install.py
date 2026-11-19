@@ -1,13 +1,12 @@
 #!/usr/bin/env python3
-"""Install Herdr Matrix Animated Background / Wallpaper Carousel mod.
+"""Install static Liquid Glass wallpaper and theme for Herdr.
 
 Includes:
 - Safe timestamped backups
-- Copying Matrix rain frames & static wallpaper to ~/.config/herdr-app/backgrounds/
-- Copying mod to ~/.config/herdr-app/mods/wallpaper-carousel
-- Registering 0px controller in layouts/main-popup.json
-- Registering shortcuts in keys.json (Ctrl+B Alt+B to pause/resume, Ctrl+B Shift+B to switch mode)
-- Running herdr-app check validation
+- Copying assets/liquid_glass.jpg to ~/.config/herdr-app/backgrounds/liquid_glass.jpg
+- Copying ../themes/liquid-glass.json to ~/.config/herdr-app/themes/liquid-glass.json
+- Updating layouts/main-popup.json background and theme (and removing any legacy wallpaper-carousel-controller)
+- Cleaning legacy wallpaper-carousel.* shortcuts from keys.json
 """
 
 from __future__ import annotations
@@ -16,17 +15,13 @@ import argparse
 import json
 import os
 import shutil
-import subprocess
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-MOD_NAME = "wallpaper-carousel"
-SHORTCUT_NEXT = "ctrl-b shift-b"
-SHORTCUT_TOGGLE = "ctrl-b alt-b"
-ACTION_NEXT = f"{MOD_NAME}.next"
-ACTION_TOGGLE = f"{MOD_NAME}.toggle"
+LEGACY_MOD_NAME = "wallpaper-carousel"
+LEGACY_SHORTCUTS = ("ctrl-b shift-b", "ctrl-b alt-b")
 
 
 class InstallError(RuntimeError):
@@ -34,23 +29,11 @@ class InstallError(RuntimeError):
 
 
 def parse_args(argv: list[str]) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Install Herdr Matrix Animated Wallpaper / Carousel")
+    parser = argparse.ArgumentParser(description="Install static Liquid Glass wallpaper and theme")
     parser.add_argument(
         "--home",
         type=Path,
         help="Herdr app home (default: HERDR_APP_HOME or ~/.config/herdr-app)",
-    )
-    parser.add_argument(
-        "--mode",
-        choices=("matrix", "carousel"),
-        default="matrix",
-        help="Background mode: 'matrix' (animated digital rain) or 'carousel' (default: matrix)",
-    )
-    parser.add_argument(
-        "--interval",
-        type=int,
-        default=95,
-        help="Frame/rotation interval in milliseconds (default: 95ms for ~10.5 FPS matrix rain)",
     )
     parser.add_argument(
         "--dry-run",
@@ -67,19 +50,6 @@ def resolve_home(user_home: Path | None) -> Path:
     if env:
         return Path(env).expanduser().resolve()
     return (Path.home() / ".config" / "herdr-app").resolve()
-
-
-def run_mod_check(mod_dir: Path, home: Path) -> None:
-    child_env = os.environ.copy()
-    child_env["HERDR_APP_HOME"] = str(home)
-    cmd = ["herdr-app", "check", str(mod_dir)]
-    try:
-        proc = subprocess.run(cmd, env=child_env, capture_output=True, text=True, check=False)
-    except FileNotFoundError:
-        return
-    if proc.returncode != 0:
-        details = (proc.stderr or proc.stdout).strip()
-        raise InstallError(f"Mod check failed for {mod_dir}: {details}")
 
 
 def read_json_dict(path: Path) -> dict[str, Any]:
@@ -121,117 +91,85 @@ def create_backup(home: Path, files: list[Path], dry_run: bool) -> Path:
     return backup_dir
 
 
-def update_keys(home: Path, dry_run: bool) -> bool:
+def cleanup_keys(home: Path, dry_run: bool) -> bool:
     keys_path = home / "keys.json"
+    if not keys_path.is_file():
+        return False
     data = read_json_dict(keys_path)
-    global_keys = data.setdefault("global", {})
+    global_keys = data.get("global")
     if not isinstance(global_keys, dict):
-        raise InstallError(f"keys.json: 'global' must be a JSON object, got {type(global_keys)}")
+        return False
 
     changed = False
-    if global_keys.get(SHORTCUT_NEXT) != ACTION_NEXT:
-        global_keys[SHORTCUT_NEXT] = ACTION_NEXT
-        changed = True
-    if global_keys.get(SHORTCUT_TOGGLE) != ACTION_TOGGLE:
-        global_keys[SHORTCUT_TOGGLE] = ACTION_TOGGLE
+    for shortcut in LEGACY_SHORTCUTS:
+        if shortcut in global_keys:
+            del global_keys[shortcut]
+            changed = True
+    for k in [k for k, v in global_keys.items() if isinstance(v, str) and v.startswith(f"{LEGACY_MOD_NAME}.")]:
+        del global_keys[k]
         changed = True
 
     if changed:
         write_json_dict(keys_path, data, dry_run)
-        print(f"Updated {keys_path.name}: {SHORTCUT_NEXT} -> {ACTION_NEXT}, {SHORTCUT_TOGGLE} -> {ACTION_TOGGLE}")
-    else:
-        print(f"Keys already registered in {keys_path.name}")
+        print(f"Cleaned legacy {LEGACY_MOD_NAME}.* shortcuts from {keys_path.name}")
     return changed
 
 
-def update_layout(home: Path, mode: str, interval_ms: int, dry_run: bool) -> bool:
+def update_layout(home: Path, dry_run: bool) -> bool:
     layout_path = home / "layouts" / "main-popup.json"
     if not layout_path.is_file():
         raise InstallError(f"Layout not found: {layout_path}")
 
     data = read_json_dict(layout_path)
-    root = data
-
-    controller_id = f"{MOD_NAME}-controller"
-    desired_props = {
-        "mode": mode,
-        "intervalMs": interval_ms,
-        "frameCount": 32,
-        "matrixFolder": "matrix-rain-smooth",
-    }
-    controller_spec = {
-        "id": controller_id,
-        "type": "block",
-        "content": {
-            "mod": MOD_NAME,
-            "props": desired_props,
-        },
-        "size": {
-            "px": 0,
-        },
-        "min": 0,
-        "max": 0,
-    }
-
     changed = False
-    if mode == "matrix":
-        desired_bg = {
-            "image": "backgrounds/matrix-rain-smooth/frame_00.jpg",
-            "fit": "cover",
-        }
-        if root.get("background") != desired_bg:
-            root["background"] = desired_bg
-            changed = True
 
-    def inject_controller(node: Any) -> bool:
+    desired_bg = {
+        "image": "backgrounds/liquid_glass.jpg",
+        "fit": "cover",
+    }
+    if data.get("background") != desired_bg:
+        data["background"] = desired_bg
+        changed = True
+
+    desired_theme = {"light": "liquid-glass", "dark": "liquid-glass"}
+    if data.get("theme") != desired_theme:
+        data["theme"] = desired_theme
+        changed = True
+
+    def strip_controller(node: Any) -> bool:
+        removed = False
         if not isinstance(node, dict):
             return False
-        sub_children = node.get("children")
-        if isinstance(sub_children, list):
-            for sc in sub_children:
-                if isinstance(sc, dict) and sc.get("id") == controller_id:
-                    if sc.get("content", {}).get("props") != desired_props:
-                        sc.setdefault("content", {})["props"] = desired_props
-                        return True
-                    return False
+        children = node.get("children")
+        if isinstance(children, list):
+            kept: list[Any] = []
+            for child in children:
+                is_legacy = (
+                    isinstance(child, dict)
+                    and (
+                        child.get("id") == f"{LEGACY_MOD_NAME}-controller"
+                        or (isinstance(child.get("content"), dict) and child["content"].get("mod") == LEGACY_MOD_NAME)
+                    )
+                )
+                if is_legacy:
+                    removed = True
+                else:
+                    if strip_controller(child):
+                        removed = True
+                    kept.append(child)
+            if removed:
+                node["children"] = kept
+        return removed
 
-            for idx, sc in enumerate(sub_children):
-                if isinstance(sc, dict) and sc.get("id") in ("scratchpad-controller", "popup-terminal-controller"):
-                    sub_children.insert(idx + 1, controller_spec)
-                    return True
-
-            for sc in sub_children:
-                if inject_controller(sc):
-                    return True
-        return False
-
-    if inject_controller(root):
+    if strip_controller(data):
         changed = True
 
     if changed:
         write_json_dict(layout_path, data, dry_run)
-        print(f"Updated layout {layout_path.name}: registered {controller_id} (mode={mode}, {interval_ms}ms)")
-        return True
+        print(f"Updated layout {layout_path.name}: static Liquid Glass wallpaper + theme")
     else:
-        print(f"Controller {controller_id} already up to date in {layout_path.name}")
-        return False
-
-
-def copy_tree_files(source_dir: Path, target_dir: Path, dry_run: bool, label: str = "files") -> None:
-    if not source_dir.is_dir():
-        return
-    if dry_run:
-        print(f"[dry-run] copy {label}: {source_dir} -> {target_dir}")
-        return
-
-    target_dir.mkdir(parents=True, exist_ok=True)
-    for src in source_dir.rglob("*"):
-        if src.is_file() and not src.name.startswith("."):
-            rel = src.relative_to(source_dir)
-            dst = target_dir / rel
-            dst.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(src, dst)
-    print(f"Copied {label} to {target_dir}")
+        print(f"Layout {layout_path.name} already configured for static Liquid Glass wallpaper")
+    return changed
 
 
 def main(argv: list[str]) -> int:
@@ -239,18 +177,12 @@ def main(argv: list[str]) -> int:
     home = resolve_home(args.home)
     repo_root = Path(__file__).resolve().parent
 
-    source_mod_dir = repo_root / "mods" / MOD_NAME
-    target_mod_dir = home / "mods" / MOD_NAME
-    source_assets_dir = repo_root / "assets"
-    target_bg_dir = home / "backgrounds"
+    source_bg = repo_root / "assets" / "liquid_glass.jpg"
+    source_theme = repo_root.parent / "themes" / "liquid-glass.json"
 
-    if not source_mod_dir.is_dir():
-        raise InstallError(f"Source mod dir not found: {source_mod_dir}")
+    if not source_bg.is_file():
+        raise InstallError(f"Wallpaper asset not found: {source_bg}")
 
-    # Validate source mod first
-    run_mod_check(source_mod_dir, home)
-
-    # Backup targets
     files_to_backup = [
         home / "keys.json",
         home / "layouts" / "main-popup.json",
@@ -258,28 +190,35 @@ def main(argv: list[str]) -> int:
     backup_dir = create_backup(home, files_to_backup, args.dry_run)
     print(f"Backup created at: {backup_dir}")
 
-    # Copy background assets (static + matrix-rain frames)
-    copy_tree_files(source_assets_dir, target_bg_dir, args.dry_run, label="background assets")
+    target_bg = home / "backgrounds" / "liquid_glass.jpg"
+    if args.dry_run:
+        print(f"[dry-run] copy wallpaper: {source_bg} -> {target_bg}")
+    else:
+        target_bg.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(source_bg, target_bg)
+        print(f"Copied wallpaper to {target_bg}")
 
-    # Copy mod files
-    copy_tree_files(source_mod_dir, target_mod_dir, args.dry_run, label="mod files")
+    if source_theme.is_file():
+        target_theme = home / "themes" / "liquid-glass.json"
+        if args.dry_run:
+            print(f"[dry-run] copy theme: {source_theme} -> {target_theme}")
+        else:
+            target_theme.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(source_theme, target_theme)
+            print(f"Copied theme to {target_theme}")
 
-    # Update keys.json
-    update_keys(home, args.dry_run)
+    legacy_mod_dir = home / "mods" / LEGACY_MOD_NAME
+    if legacy_mod_dir.exists():
+        if args.dry_run:
+            print(f"[dry-run] remove legacy mod: {legacy_mod_dir}")
+        else:
+            shutil.rmtree(legacy_mod_dir)
+            print(f"Removed legacy mod: {legacy_mod_dir}")
 
-    # Update layout
-    update_layout(home, args.mode, args.interval, args.dry_run)
+    cleanup_keys(home, args.dry_run)
+    update_layout(home, args.dry_run)
 
-    # Validate installed mod
-    if not args.dry_run:
-        run_mod_check(target_mod_dir, home)
-
-    print(
-        f"\nSuccessfully installed {MOD_NAME} ({args.mode} mode)!\n"
-        f"- Frame interval: {args.interval}ms\n"
-        f"- Pause/Resume rain shortcut: `{SHORTCUT_TOGGLE}`\n"
-        f"- Switch mode shortcut: `{SHORTCUT_NEXT}`"
-    )
+    print("\nSuccessfully installed static Liquid Glass wallpaper and theme!")
     return 0
 
 
