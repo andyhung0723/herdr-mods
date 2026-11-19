@@ -524,9 +524,10 @@ export default class MarkdownPreview extends View {
       .id("markdown-preview-root")
       .track_focus(this.handle)
       .size_full()
-      .bg(t.background)
+      .bg(isOverlay ? t.popover : t.background)
       .border_1()
       .border_color(t.border)
+      .when(isOverlay, (el) => el.rounded(14).shadow_lg())
       .overflow_hidden()
       .on_key_down((e, cx) => {
         if (e.key === "escape" && this.overlayId) {

@@ -517,10 +517,10 @@ export default class Scratchpad extends View {
       .track_focus(this.handle)
       .size_full()
       .min_h(0)
-      .bg(t.background)
+      .bg(t.popover)
       .border_1()
       .border_color(t.border)
-      .rounded(12)
+      .rounded(14)
       .overflow_hidden()
       .on_key_down((e, cx) => {
         if (e.key === "escape") {

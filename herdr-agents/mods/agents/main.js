@@ -366,7 +366,7 @@ export default class Agents extends View {
         .rounded(8)
         .items_center()
         .gap(9)
-        .when(a.focused, (el) => el.bg(t.selected))
+        .when(a.focused, (el) => el.bg(t.selected).border(1).border_color(t.border))
         .cursor_pointer()
         .hover((s) => s.bg(t.hover))
         .on_hover((on, cx) => {
@@ -435,7 +435,6 @@ export default class Agents extends View {
     return v_flex()
       .size_full()
       .min_h(0)
-      .bg(t.chrome)
       .border_t(1)
       .border_color(t.border)
       .text_size(13)

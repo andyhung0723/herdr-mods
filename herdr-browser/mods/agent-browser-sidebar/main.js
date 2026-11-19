@@ -90,7 +90,6 @@ export default class AgentBrowserSidebar extends View {
     return v_flex()
       .size_full()
       .min_h(0)
-      .bg(t.chrome)
       .border_t(1)
       .border_color(t.border)
       .text_size(13)

@@ -67,7 +67,7 @@ export default class PopupTerminal extends View {
       .px(12)
       .gap(12)
       .items_center()
-      .bg(colors.chrome)
+      .bg(colors.popover)
       .border_b(1)
       .border_color(colors.border)
       .text_size(12)
