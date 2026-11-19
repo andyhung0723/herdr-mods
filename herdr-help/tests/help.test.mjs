@@ -83,6 +83,17 @@ async function harness() {
   return { View: main.namespace.default, cx, events };
 }
 
+test("enhanced help mod.json defines dialog overlay dimensions", async () => {
+  const modJsonRaw = await readFile(new URL("../mods/enhanced-help/mod.json", import.meta.url), "utf8");
+  const modJson = JSON.parse(modJsonRaw);
+  assert.equal(modJson.place, "none");
+  assert.equal(modJson.overlay?.kind, "dialog");
+  assert.equal(typeof modJson.overlay?.width, "number");
+  assert.equal(typeof modJson.overlay?.height, "number");
+  assert.ok(modJson.overlay.width >= 600);
+  assert.ok(modJson.overlay.height >= 400);
+});
+
 test("enhanced help groups custom mods at top and renders friendly labels", async () => {
   const { View, cx } = await harness();
 

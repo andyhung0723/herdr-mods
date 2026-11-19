@@ -14,10 +14,8 @@
      - `Ctrl+B G` ➔ **Git Manager (Fork Graph & Stashes)**
      - `Ctrl+B M` ➔ **Markdown Dual-Column Preview**
      - `Ctrl+B T` ➔ **Toggle Floating Popup Terminal**
-     - `Ctrl+B Alt+B` ➔ **Toggle Matrix Digital Rain Loop**
-     - `Ctrl+B Shift+B` ➔ **Next Wallpaper Background**
 2. **語意化即時搜尋**
-   - 支援搜尋功能關鍵字（例如打 `docker`、`ports`、`agent`、`matrix`、`git` 等皆能秒查到快捷鍵）。
+   - 支援搜尋功能關鍵字（例如打 `docker`、`ports`、`agent`、`todo`、`git` 等皆能秒查到快捷鍵）。
 
 ## 安裝
 

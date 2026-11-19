@@ -1882,7 +1882,7 @@ export default class EnhancedGit extends View {
           .gap(6)
           .items_center()
           .justify_between()
-          .bg(t.chrome ?? t.surface)
+          .bg(t.surface)
           .border_b(1)
           .border_color(t.border)
           // Left: Segmented Control [ Local | GitHub ]
@@ -1891,7 +1891,7 @@ export default class EnhancedGit extends View {
               .p(2)
               .gap(2)
               .rounded(6)
-              .bg(t.background)
+              .bg(t.surface)
               .border_1()
               .border_color(t.border)
               .items_center()
@@ -2204,18 +2204,20 @@ export default class EnhancedGit extends View {
       .track_focus(this.handle)
       .size_full()
       .min_h(0)
-      .bg(t.background)
-      .border_1()
-      .border_color(t.border)
-      .rounded(isDialog ? 12 : 8)
       .overflow_hidden()
       .when(isDialog, (el) =>
-        el.on_key_down((e, kcx) => {
-          if (e.key === "escape") {
-            this.close();
-            kcx.stop_propagation();
-          }
-        })
+        el
+          .bg(t.popover)
+          .border_1()
+          .border_color(t.border)
+          .rounded(14)
+          .shadow_lg()
+          .on_key_down((e, kcx) => {
+            if (e.key === "escape") {
+              this.close();
+              kcx.stop_propagation();
+            }
+          })
       )
       .child(this.renderHeader(t))
       .child(

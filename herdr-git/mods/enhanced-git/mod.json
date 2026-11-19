@@ -2,5 +2,12 @@
   "name": "enhanced-git",
   "version": "1.0.0",
   "description": "Comprehensive Git manager for Herdr with visual Git Graph, staged/unstaged staging, and sync.",
-  "main": "main.js"
+  "main": "main.js",
+  "place": "none",
+  "focusable": true,
+  "overlay": {
+    "kind": "dialog",
+    "width": 960,
+    "height": 680
+  }
 }

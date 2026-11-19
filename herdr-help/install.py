@@ -74,9 +74,11 @@ def update_keys_json(keys_path: Path, backups_dir: Path, dry_run: bool) -> None:
 
     global_keys = data.setdefault("global", {})
     
-    # Bind ctrl-b h and ctrl-b ? to enhanced-help
+    # Bind ctrl-b h, ctrl-b ?, cmd-/, and cmd-shift-/ to enhanced-help
     global_keys["ctrl-b h"] = HELP_ACTION
     global_keys["ctrl-b ?"] = HELP_ACTION
+    global_keys["cmd-/"] = HELP_ACTION
+    global_keys["cmd-shift-/"] = HELP_ACTION
 
     existing = global_keys.get(AGENT_INSPECTOR_KEY)
     if not existing:

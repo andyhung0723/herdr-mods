@@ -6,7 +6,7 @@ import { v_flex, h_flex, InputState, Input } from "gpui-base";
 import { keys, props, closeOverlay, theme } from "herdr";
 
 const GROUPS = [
-  ["Custom Mods & Extensions", /^mod\.open:|^popup-terminal|^wallpaper-carousel/],
+  ["Custom Mods & Extensions", /^mod\.open:(?!picker$|enhanced-help$)|^popup-terminal|^scratchpad|^wallpaper-carousel/],
   ["Spaces", /^space\./],
   ["Tabs", /^tab\./],
   ["Panes", /^pane\./],
@@ -16,8 +16,12 @@ const GROUPS = [
 ];
 
 const FRIENDLY_LABELS = {
+  "mod.open:enhanced-help": "Keybindings Cheat Sheet",
+  "mod.open:github-hub": "GitHub Hub (PRs, Actions CI, Issues)",
+  "mod.open:loadout": "Loadout (Skills, MCP & Rules Manager)",
   "mod.open:enhanced-agent-context": "Agent Inspector (Context, Rules, MCP)",
   "mod.open:services-inspector": "Services (Ports, Dev Servers, Docker)",
+  "mod.open:todo-list": "Todo List & Agent Task Dispatcher",
   "mod.open:spectra-status": "Spectra (SDD Status & Tasks)",
   "mod.open:agent-quotas": "Agent Quotas (Usage & Limits)",
   "mod.open:enhanced-git": "Git Manager (Fork Graph & Stashes)",
@@ -82,6 +86,9 @@ export default class Help extends View {
       .p(18)
       .gap(14)
       .bg(t.popover)
+      .rounded(14)
+      .border(1)
+      .border_color(t.border)
       .text_size(12)
       .child(
         h_flex()
@@ -95,7 +102,19 @@ export default class Help extends View {
               .child(div().text_size(15).font_semibold().text_color(t.foreground).child("Keybinds"))
               .child(div().text_size(11).text_color(t.dim).child(`(${all.length} shortcuts)`))
           )
-          .child(div().text_size(11).text_color(t.dim).child("Esc to close"))
+          .child(
+            div()
+              .id("help-esc")
+              .px(6)
+              .py(2)
+              .rounded(5)
+              .text_size(11)
+              .text_color(t.dim)
+              .cursor_pointer()
+              .hover((s) => s.bg(t.hover).text_color(t.foreground))
+              .on_click(() => closeOverlay(props().overlay))
+              .child("Esc to close")
+          )
       )
       .child(
         Input.new(this.input)
