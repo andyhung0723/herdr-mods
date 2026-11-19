@@ -12,7 +12,7 @@
 
 ## 🌟 模組套件一覽 (Mods Catalog)
 
-整個儲存庫共收錄 **18 個高品質原生 Mods**，依功能劃分為四大領域：
+整個儲存庫收錄的原生 Mods 依功能劃分為四大領域：
 
 ### 🤖 1. AI Agent 治理與監控 (Agentic Workflow)
 
@@ -33,6 +33,7 @@
 | [`herdr-github`](./herdr-github) | `github-hub` | Git 面板切換 `GitHub` | **GitHub Hub**：整合 Pull Requests、Actions CI 與 Issues，支援檢視 CI 失敗紀錄與 PR Diff，一鍵指派 Agent 除錯。 |
 | [`herdr-services`](./herdr-services) | `services-inspector` | `Ctrl+B Shift+E` / 右側 `Services` | 掃描本機 Listening Ports、Dev Servers 與 Docker 容器，支援一鍵釋放卡死的 Port 與容器重啟。 |
 | [`herdr-spectra`](./herdr-spectra) | `spectra-status` | 右側 `Spectra` 按鈕 | **Spectra SDD 面板**：整合規格驅動開發（SDD / OpenSpec），即時檢視規格檔案與任務 Checklist 進度。 |
+| [`herdr-postman`](./herdr-postman) | `api-client` | `Ctrl+B R` / 右側 `API` | Postman 風格的 HTTP 工作台：cURL 匯入匯出、Auth、環境變數，請求限 http/https 並限制回應大小。 |
 
 ---
 
@@ -43,7 +44,8 @@
 | [`herdr-scratchpad`](./herdr-scratchpad) | `scratchpad` | `Ctrl+B S` | 多分頁臨時筆記本，支援毫秒級同步持久化、一鍵複製全部內容。 |
 | [`herdr-markdown`](./herdr-markdown) | `markdown-preview` | `Ctrl+B M` | 原生雙欄 Markdown 即時預覽（左側檔案樹 + 右側渲染），支援文件相對導航與超連結。 |
 | [`herdr-popup`](./herdr-popup) | `popup-terminal` | `Ctrl+B T` | 零高度 Controller 的全域彈出終端機，隨時呼叫與收起。 |
-| [`herdr-help`](./herdr-help) | `enhanced-help` | `Ctrl+B H` | 將自訂 Mods 獨立歸類至頂部專屬區塊的增強型快捷鍵速查說明表。 |
+| [`herdr-help`](./herdr-help) | `enhanced-help` | `Ctrl+B H` / `⌘/` | 將自訂 Mods 獨立歸類至頂部專屬區塊的增強型快捷鍵速查說明表。 |
+| [`herdr-todo`](./herdr-todo) | `todo-list` | `Ctrl+B O` / 右側 `Todo` | 待辦清單，可一鍵把任務派給現有 Agent 或開新分頁執行 CLI。 |
 
 ---
 
@@ -51,12 +53,12 @@
 
 | Mod 目錄 | 模組名稱 | 觸發方式 / 位置 | 說明 |
 | :--- | :--- | :--- | :--- |
-| [`herdr-chrome`](./herdr-chrome) | `enhanced-workspace-chrome` | 頂部 Chrome 列 | 動態即時時間與日期、點擊複製時間戳記、附帶可愛走動與搖尾巴的柯基犬動畫。 |
+| [`herdr-chrome`](./herdr-chrome) | `enhanced-workspace-chrome` | 頂部 Chrome 列 | Liquid Glass 卡片式 sidebar：時鐘與日期、走動的柯基犬，以及 YouTube Music 播放列（播放／暫停）。 |
 | [`herdr-files`](./herdr-files) | `enhanced-files` | 左側檔案樹 | 新增 VS Code 等級右鍵選單（新建檔案/資料夾、重新命名、重複、刪除、複製路徑、在 Path Finder 中開啟）。 |
-| [`herdr-tabs`](./herdr-tabs) | `enhanced-tabs` | 頂部分頁列 | 整合 Git、Agent、Spectra、Services 等右側獨立面板快速開關切換按鈕。 |
-| [`herdr-status`](./herdr-status) | `enhanced-status` | 底部主狀態列 | 整合 AI Agent 統一狀態列（優先展開當前聚焦的 Claude Code / Codex / Antigravity 指標與限額）與右下角 YouTube Music 即時播放卡。 |
-| [`herdr-spaces`](./herdr-spaces) | `enhanced-spaces` | Space 切換區 | 增強版工作空間圖示與 Spaces 切換指示。 |
-| [`herdr-wallpaper`](./herdr-wallpaper) | `wallpaper-carousel` | 背景 | 自動桌布輪播器，包含 32 幀無縫循環的平滑駭客任務代碼雨（Matrix Rain）。 |
+| [`herdr-tabs`](./herdr-tabs) | `enhanced-tabs` / `tool-dock` | 頂部分頁列 / 最右側 icon 列 | 分頁列加編號；`tool-dock` 切換 Files、Git、Agent、Spectra、Services、Todo、API 面板，並記住每個 Space 開啟的面板。 |
+| [`herdr-status`](./herdr-status) | `enhanced-status` | 底部主狀態列 | 整合 AI Agent 統一狀態列（優先展開當前聚焦的 Claude Code / Codex / Antigravity 指標與限額）、輸入法指示，內容過長時自動來回捲動。 |
+| [`herdr-spaces`](./herdr-spaces) | `enhanced-spaces` | Space 切換區 | 增強版 Spaces 切換指示，每個 Space 可自訂圖示（內建 icon、emoji、匯入 SVG/PNG）與顏色。 |
+| [`herdr-wallpaper`](./herdr-wallpaper) | — | 背景與主題 | 安裝 Liquid Glass 主題（`themes/liquid-glass.json`）與靜態桌布。 |
 
 ---
 
@@ -72,7 +74,9 @@
 | `Ctrl+B T` | 開啟 / 收起浮層終端機 (Popup Terminal) | `popup-terminal` |
 | `Ctrl+B L` | 開啟 Agent Loadout 資源帳號矩陣 | `loadout` |
 | `Ctrl+B Shift+E` | 開啟本機服務與容器檢視面板 (Services) | `services-inspector` |
-| `Ctrl+B H` | 開啟增強版快捷鍵速查說明彈窗 | `enhanced-help` |
+| `Ctrl+B H` / `⌘/` | 開啟增強版快捷鍵速查說明彈窗 | `enhanced-help` |
+| `Ctrl+B O` | 開啟待辦清單 | `todo-list` |
+| `Ctrl+B R` | 開啟 HTTP API 工作台 | `api-client` |
 
 ---
 
