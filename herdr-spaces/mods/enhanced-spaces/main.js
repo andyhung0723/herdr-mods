@@ -3,9 +3,9 @@
 // its first terminal is in now, only where unusual: branch, ahead/behind. Agent state lives in the agents list, not here. Click to
 // switch, right-click for its menu, drag to reorder.
 
-import { View, div, svg } from "gpui-kit";
+import { View, div, svg, image } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
-import { spaces, machines, panes, run, openOverlay, exec, hc, theme, shared, setShared, watchFolder, window, layout } from "herdr";
+import { spaces, machines, panes, run, openOverlay, closeOverlay, exec, hc, theme, shared, setShared, watchFolder, window, layout, props, appHome } from "herdr";
 
 function find(node, id) {
   if (node?.id === id) return node;
@@ -36,6 +36,43 @@ const FALLBACK = 60000;
 // that draws space avatars): one strong color per hue, light and dark alike.
 const MARK = { ansi6: "#22a99a", ansi3: "#e3814f", ansi4: "#5b8def", ansi5: "#8b7cf6", ansi2: "#3fae6a", ansi1: "#d9649a" };
 
+const BUILTIN_ICONS = [
+  { label: "預設", path: "mods/enhanced-spaces/space.svg" },
+  { label: "Folder", path: "mods/workspace-chrome/folder.svg" },
+  { label: "Layers", path: "mods/workspace-chrome/layers.svg" },
+  { label: "Server", path: "mods/workspace-chrome/server.svg" },
+  { label: "Branch", path: "mods/workspace-chrome/branch.svg" },
+  { label: "Git", path: "icons/git.svg" },
+  { label: "Claude", path: "icons/claude.svg" },
+  { label: "Codex", path: "icons/codex.svg" },
+  { label: "AGY", path: "icons/antigravity.svg" },
+  { label: "Docker", path: "icons/docker.svg" },
+  { label: "Next", path: "icons/next.svg" },
+  { label: "Node", path: "icons/node.svg" },
+  { label: "Python", path: "icons/python.svg" },
+  { label: "TS", path: "icons/tsc.svg" },
+  { label: "Go", path: "icons/go.svg" },
+  { label: "Cargo", path: "icons/cargo.svg" },
+  { label: "Bun", path: "icons/bun.svg" },
+  { label: "Vite", path: "icons/vite.svg" },
+  { label: "GCloud", path: "icons/gcloud.svg" },
+  { label: "K8s", path: "icons/kubectl.svg" },
+  { label: "Supabase", path: "icons/supabase.svg" },
+  { label: "Vercel", path: "icons/vercel.svg" },
+  { label: "Nvim", path: "icons/nvim.svg" },
+  { label: "Agent", path: "icons/agent.svg" },
+];
+
+const QUICK_EMOJIS = ["🚀", "💼", "🧪", "📁", "⚡", "🛠️", "🎨", "📦", "🤖", "🔥", "🌐", "📝", "🔒", "🎯"];
+
+export function resolveSpaceIconEntry(iconsMap, spaceId) {
+  const entry = iconsMap?.[spaceId];
+  if (!entry || typeof entry !== "object" || !entry.value) {
+    return { kind: "svg", value: "mods/enhanced-spaces/space.svg" };
+  }
+  return entry;
+}
+
 // A space speaks up only when something in it needs you.
 export function glyph(status) {
   return status === "blocked" || status === "done" ? "●" : "·";
@@ -47,6 +84,15 @@ export function tone(t, status) {
 
 export default class Spaces extends View {
   init(_props, cx) {
+    const p = typeof props === "function" ? props() : {};
+    if (p?.iconPicker) {
+      this.customIcons = [];
+      this.colorMode = resolveSpaceIconEntry(shared("space.icons"), p.spaceId).kind === "image";
+      this.importing = false;
+      this.importError = null;
+      this.loadCustomIcons(cx);
+      return;
+    }
     this.git = {}; // where() -> { name, branch, ahead, behind, repo, linked }, null: not a repo
     this.checked = {}; // where() -> when it was last looked at
     this.unsure = new Set(); // where()s git couldn't answer for (a machine away)
@@ -250,6 +296,376 @@ export default class Spaces extends View {
     openOverlay({ mod: "menu", kind: "popup", width: 200, height: 260, props: { tab: "space", target: { id: w.id } } });
   }
 
+  openIconPicker(w) {
+    openOverlay({
+      mod: "enhanced-spaces",
+      kind: "popup",
+      width: 316,
+      height: 410,
+      props: { iconPicker: true, spaceId: w.id, spaceName: w.name },
+    });
+  }
+
+  loadCustomIcons(cx) {
+    const homeDir = typeof appHome === "function" ? appHome() : "";
+    if (!homeDir) return;
+    const customDir = `${homeDir}/icons/spaces`;
+    cx.spawn(async (scx) => {
+      try {
+        const res = await exec("sh", [
+          "-c",
+          'mkdir -p "$1" && ls -1 "$1" 2>/dev/null | grep -iE "\\.(svg|png|jpe?g|webp)$" | sort',
+          "sh",
+          customDir,
+        ]);
+        if (res.code === 0) {
+          this.customIcons = res.stdout
+            .split("\n")
+            .map((s) => s.trim())
+            .filter(Boolean)
+            .map((name) => ({ label: name.replace(/\.[^.]+$/, ""), path: `icons/spaces/${name}` }));
+          scx.notify();
+        }
+      } catch {}
+    });
+  }
+
+  setSpaceIcon(spaceId, entry) {
+    const current = { ...(shared("space.icons") ?? {}) };
+    if (!entry) delete current[spaceId];
+    else current[spaceId] = entry;
+    setShared("space.icons", current);
+  }
+
+  setSpaceColor(spaceId, color) {
+    const current = { ...(shared("space.colors") ?? {}) };
+    current[spaceId] = color;
+    setShared("space.colors", current);
+  }
+
+  importCustomIcon(spaceId, cx) {
+    if (this.importing) return;
+    const homeDir = typeof appHome === "function" ? appHome() : "";
+    if (!homeDir) return;
+    this.importing = true;
+    this.importError = null;
+    cx.notify();
+
+    cx.spawn(async (scx) => {
+      try {
+        const pick = await exec("osascript", [
+          "-e",
+          'POSIX path of (choose file of type {"public.svg-image", "public.png", "public.jpeg"} with prompt "選擇 Space 圖示 (SVG / PNG)")',
+        ]);
+        const srcPath = pick.stdout?.trim();
+        if (pick.code === 0 && srcPath) {
+          const rawName = srcPath.split("/").pop() || "custom.svg";
+          const safeName = rawName.replace(/[^a-zA-Z0-9._-]/g, "_");
+          const destDir = `${homeDir}/icons/spaces`;
+          const destPath = `${destDir}/${safeName}`;
+          const cp = await exec("sh", ["-c", 'mkdir -p "$1" && cp "$2" "$3"', "sh", destDir, srcPath, destPath]);
+          if (cp.code === 0) {
+            const relPath = `icons/spaces/${safeName}`;
+            const isNonSvg = !safeName.toLowerCase().endsWith(".svg");
+            const kind = isNonSvg || this.colorMode ? "image" : "svg";
+            this.setSpaceIcon(spaceId, { kind, value: relPath });
+            this.loadCustomIcons(scx);
+          } else {
+            this.importError = "複製檔案失敗";
+          }
+        }
+      } catch {
+        this.importError = "匯入失敗";
+      } finally {
+        this.importing = false;
+        scx.notify();
+      }
+    });
+  }
+
+  renderAvatar(entry, fill) {
+    if (entry.kind === "emoji") {
+      return h_flex()
+        .size(18)
+        .flex_none()
+        .rounded(5)
+        .bg(fill)
+        .items_center()
+        .justify_center()
+        .child(div().text_size(11.5).child(entry.value));
+    }
+    if (entry.kind === "image") {
+      return h_flex()
+        .size(18)
+        .flex_none()
+        .rounded(5)
+        .items_center()
+        .justify_center()
+        .child(image(entry.value).w(18).h(18).flex_none().rounded(4));
+    }
+    return h_flex()
+      .size(18)
+      .flex_none()
+      .rounded(5)
+      .bg(fill)
+      .items_center()
+      .justify_center()
+      .child(svg(entry.value).size(11).text_color("#ffffff"));
+  }
+
+  renderIconPicker(t, p, cx) {
+    const spaceId = p.spaceId;
+    const spaceName = p.spaceName || "Space";
+    const iconsMap = shared("space.icons") ?? {};
+    const colorsMap = shared("space.colors") ?? {};
+    const current = resolveSpaceIconEntry(iconsMap, spaceId);
+    const currentColor = colorsMap[spaceId] ?? "ansi6";
+    const fill = currentColor.startsWith("#") ? currentColor : (MARK[currentColor] ?? t[currentColor]);
+    const overlayId = p.overlay;
+
+    const sectionTitle = (title) =>
+      div().text_size(10.5).font_medium().text_color(t.dim).child(title);
+
+    const iconChip = (item, isCustom = false) => {
+      const isSvgFile = /\.svg$/i.test(item.path);
+      const active = current.value === item.path && (current.kind === "svg" || current.kind === "image");
+      const kind = !isSvgFile || (isCustom && this.colorMode) ? "image" : "svg";
+      return h_flex()
+        .id(`pick-icon-${item.path}`)
+        .size(30)
+        .flex_none()
+        .rounded(7)
+        .items_center()
+        .justify_center()
+        .cursor_pointer()
+        .bg(active ? t.selected : (t.surface ?? "#ffffff12"))
+        .border(1)
+        .border_color(active ? (t.accent ?? t.border) : t.border)
+        .hover((s) => s.bg(t.hover))
+        .tooltip(item.label)
+        .on_click((_e, clickCx) => {
+          this.setSpaceIcon(spaceId, { kind, value: item.path });
+          clickCx.notify();
+        })
+        .child(
+          kind === "image"
+            ? image(item.path).w(18).h(18).flex_none().rounded(3)
+            : svg(item.path).size(14).flex_none().text_color(active ? t.foreground : t.muted)
+        );
+    };
+
+    return v_flex()
+      .size_full()
+      .p(12)
+      .gap(10)
+      .bg(t.popover ?? t.chrome)
+      .text_color(t.foreground)
+      // Header
+      .child(
+        h_flex()
+          .items_center()
+          .justify_between()
+          .gap(8)
+          .child(
+            h_flex()
+              .items_center()
+              .gap(8)
+              .min_w(0)
+              .flex_1()
+              .child(this.renderAvatar(current, fill))
+              .child(div().truncate().text_size(12.5).font_semibold().child(spaceName))
+          )
+          .child(
+            h_flex()
+              .gap(6)
+              .items_center()
+              .child(
+                div()
+                  .id("icon-reset")
+                  .px(7)
+                  .py(3)
+                  .rounded(5)
+                  .text_size(10.5)
+                  .text_color(t.muted)
+                  .bg(t.surface ?? "#ffffff12")
+                  .cursor_pointer()
+                  .hover((s) => s.bg(t.hover).text_color(t.foreground))
+                  .on_click((_e, clickCx) => {
+                    this.setSpaceIcon(spaceId, null);
+                    clickCx.notify();
+                  })
+                  .child("還原預設")
+              )
+              .when(Boolean(overlayId), (el) =>
+                el.child(
+                  div()
+                    .id("icon-picker-close")
+                    .size(22)
+                    .rounded(5)
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .text_color(t.dim)
+                    .cursor_pointer()
+                    .hover((s) => s.bg(t.hover).text_color(t.foreground))
+                    .on_click(() => closeOverlay(overlayId))
+                    .child("✕")
+                )
+              )
+          )
+      )
+      // Color Swatches
+      .child(
+        v_flex()
+          .flex_none()
+          .gap(5)
+          .child(sectionTitle("方塊顏色"))
+          .child(
+            h_flex()
+              .gap(8)
+              .items_center()
+              .children(
+                Object.entries(MARK).map(([key, hex]) => {
+                  const selected = currentColor === key;
+                  return div()
+                    .id(`pick-color-${key}`)
+                    .size(20)
+                    .rounded(6)
+                    .bg(hex)
+                    .cursor_pointer()
+                    .border(selected ? 2 : 1)
+                    .border_color(selected ? t.foreground : "#00000033")
+                    .on_click((_e, clickCx) => {
+                      this.setSpaceColor(spaceId, key);
+                      clickCx.notify();
+                    });
+                })
+              )
+          )
+      )
+      // Pinned Custom SVG/PNG import bar
+      .child(
+        v_flex()
+          .flex_none()
+          .gap(6)
+          .child(
+            h_flex()
+              .items_center()
+              .justify_between()
+              .child(sectionTitle("自訂 SVG / PNG (icons/spaces)"))
+              .child(
+                div()
+                  .id("toggle-color-mode")
+                  .px(6)
+                  .py(2)
+                  .rounded(4)
+                  .text_size(10)
+                  .cursor_pointer()
+                  .bg(this.colorMode ? (t.selected ?? t.hover) : (t.surface ?? "#ffffff12"))
+                  .text_color(this.colorMode ? t.foreground : t.dim)
+                  .border(1)
+                  .border_color(this.colorMode ? (t.accent ?? t.border) : t.border)
+                  .tooltip("切換自訂圖示為「單色染白」或「保留原色」")
+                  .on_click((_e, clickCx) => {
+                    this.colorMode = !this.colorMode;
+                    if (current.value.startsWith("icons/spaces/") && /\.svg$/i.test(current.value)) {
+                      this.setSpaceIcon(spaceId, {
+                        kind: this.colorMode ? "image" : "svg",
+                        value: current.value,
+                      });
+                    }
+                    clickCx.notify();
+                  })
+                  .child(this.colorMode ? "保留原色" : "單色染白")
+              )
+          )
+          .child(
+            h_flex()
+              .gap(6)
+              .flex_wrap()
+              .child(
+                h_flex()
+                  .id("import-custom-svg")
+                  .flex_none()
+                  .h(30)
+                  .px(10)
+                  .gap(5)
+                  .rounded(7)
+                  .items_center()
+                  .cursor_pointer()
+                  .bg(t.surface ?? "#ffffff12")
+                  .border(1)
+                  .border_color(t.border)
+                  .text_size(11.5)
+                  .text_color(t.foreground)
+                  .hover((s) => s.bg(t.hover))
+                  .on_click((_e, clickCx) => this.importCustomIcon(spaceId, clickCx))
+                  .child(div().whitespace_nowrap().child(this.importing ? "匯入中…" : "+ 從 Finder 匯入"))
+              )
+              .children(this.customIcons.map((item) => iconChip(item, true)))
+          )
+          .when(Boolean(this.importError), (el) =>
+            el.child(div().text_size(10.5).text_color(t.blocked ?? "#f38ba8").child(this.importError))
+          )
+      )
+      // Scrollable body
+      .child(
+        v_flex()
+          .id("icon-picker-scroll")
+          .flex_1()
+          .min_h(0)
+          .gap(10)
+          .overflow_y_scrollbar()
+          // Emoji quick grid
+          .child(
+            v_flex()
+              .flex_none()
+              .gap(5)
+              .child(sectionTitle("Emoji"))
+              .child(
+                h_flex()
+                  .gap(5)
+                  .flex_wrap()
+                  .children(
+                    QUICK_EMOJIS.map((emoji) => {
+                      const active = current.kind === "emoji" && current.value === emoji;
+                      return h_flex()
+                        .id(`pick-emoji-${emoji}`)
+                        .size(28)
+                        .rounded(7)
+                        .items_center()
+                        .justify_center()
+                        .cursor_pointer()
+                        .text_size(14)
+                        .bg(active ? t.selected : (t.surface ?? "#ffffff12"))
+                        .border(1)
+                        .border_color(active ? (t.accent ?? t.border) : t.border)
+                        .hover((s) => s.bg(t.hover))
+                        .on_click((_e, clickCx) => {
+                          this.setSpaceIcon(spaceId, { kind: "emoji", value: emoji });
+                          clickCx.notify();
+                        })
+                        .child(emoji);
+                    })
+                  )
+              )
+          )
+          // Built-in icons grid
+          .child(
+            v_flex()
+              .flex_none()
+              .gap(5)
+              .child(sectionTitle("內建圖示"))
+              .child(
+                h_flex()
+                  .gap(5)
+                  .flex_wrap()
+                  .children(BUILTIN_ICONS.map((item) => iconChip(item, false)))
+              )
+          )
+      );
+  }
+
   orderingDue(now) {
     return this.ordering && now - this.ordering.at >= 1000
       && this.ordering.machines.every(name => machines().some(m => m.name === name && m.layout === "ready"));
@@ -371,6 +787,8 @@ export default class Spaces extends View {
     const on = w.active;
     const fromIndex = this.pressed === null ? -1 : spaces().findIndex(s => s.id === this.pressed);
     const colors = shared("space.colors") ?? {};
+    const iconsMap = shared("space.icons") ?? {};
+    const iconEntry = resolveSpaceIconEntry(iconsMap, w.id);
     const color = colors[w.id] ?? "ansi6";
     const fill = color.startsWith("#") ? color : (MARK[color] ?? t[color]);
     return v_flex()
@@ -381,7 +799,7 @@ export default class Spaces extends View {
       .flex_none()
       .justify_center()
       .rounded(8)
-      .when(on, (el) => el.bg(t.selected))
+      .when(on, (el) => el.bg(t.selected).border(1).border_color(t.border))
       .when(!on, (el) => el.hover((s) => s.bg(t.hover)))
       .when(this.pressed === w.id && this.over !== w.id, (el) => el.opacity(0.5))
       .when(this.pressed !== null && this.over === w.id && this.pressed !== w.id, (el) => el.child(
@@ -418,7 +836,18 @@ export default class Spaces extends View {
           .gap(9)
           .items_center()
           .when(Boolean(tree), el => el.pl(22).child(svg("mods/workspace-chrome/branch.svg").size(13).text_color(t.dim)))
-          .when(!tree, el => el.child(h_flex().size(18).flex_none().rounded(5).bg(fill).items_center().justify_center().child(svg("mods/enhanced-spaces/space.svg").size(11).text_color("#ffffff"))))
+          .when(!tree, el => el.child(
+            div()
+              .id(`space-icon-${w.id}`)
+              .cursor_pointer()
+              .tooltip("點擊自訂圖示與顏色")
+              .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
+              .on_click((_e, cx) => {
+                cx.stop_propagation();
+                this.openIconPicker(w);
+              })
+              .child(this.renderAvatar(iconEntry, fill))
+          ))
           .child(div().flex_shrink(0).max_w(150).truncate().text_color(t.foreground).child(w.name))
           .child(g ? this.gitTail(g, tree, w.name, t) : div().flex_1()),
       );
@@ -438,8 +867,10 @@ export default class Spaces extends View {
       .child(div().text_color(tone(t, w.status)).child(glyph(w.status)));
   }
 
-  render() {
+  render(cx) {
     const t = theme();
+    const p = typeof props === "function" ? props() : {};
+    if (p?.iconPicker) return this.renderIconPicker(t, p, cx);
     const collapsed = narrow();
     const palette = ["ansi6", "ansi3", "ansi4", "ansi5", "ansi2", "ansi1"];
     const sp = spaces();
@@ -453,7 +884,7 @@ export default class Spaces extends View {
       changed = true;
     }
     if (changed) setShared("space.colors", kept);
-    return v_flex().size_full().min_h(0).bg(t.chrome).text_size(13)
+    return v_flex().size_full().min_h(0).text_size(13)
       .child(h_flex().h(31).pl(16).pr(10).items_center().justify_between().text_size(11.5).text_color(t.dim)
         .when(!collapsed, el => el.child("Spaces"))
         .child(div().id("space-new").size(26).flex_none().flex().items_center().justify_center().rounded(6).hover(s => s.bg(t.hover).text_color(t.foreground))

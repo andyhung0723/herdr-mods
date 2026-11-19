@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import vm from "node:vm";
 import { readFile } from "node:fs/promises";
 
-async function harness() {
+async function harness({ props: customProps = {}, exec: customExec = null } = {}) {
   const events = [];
   const sharedMap = new Map();
 
@@ -16,8 +16,10 @@ async function harness() {
     panes: () => [],
     run: (cmd, args) => events.push(["run", cmd, args]),
     openOverlay: (spec) => events.push(["openOverlay", spec]),
-    exec: async () => ({ code: 0, stdout: "" }),
+    closeOverlay: (id) => events.push(["closeOverlay", id]),
+    exec: customExec || (async () => ({ code: 0, stdout: "" })),
     hc: async () => ({ code: 0, stdout: "" }),
+    appHome: () => "/Users/dev/.config/herdr-app",
     theme: () => ({
       chrome: "#181825",
       selected: "#313244",
@@ -37,7 +39,7 @@ async function harness() {
       id: "root",
       children: [{ id: "sidebar", size: { px: 268 } }],
     }),
-    props: () => ({}),
+    props: () => customProps,
   };
 
   const mockLocalStorage = {
@@ -58,6 +60,7 @@ async function harness() {
     );
 
   const svgsLoaded = [];
+  const imagesLoaded = [];
   let proxy;
   const element = {
     child() { return proxy; },
@@ -79,6 +82,10 @@ async function harness() {
     div: () => proxy,
     svg: (path) => {
       svgsLoaded.push(path);
+      return proxy;
+    },
+    image: (path) => {
+      imagesLoaded.push(path);
       return proxy;
     },
   });
@@ -116,17 +123,67 @@ async function harness() {
     };
   }
 
-  return { View: mod.namespace.default, api, svgsLoaded, events, cx };
+  return { View: mod.namespace.default, api, svgsLoaded, imagesLoaded, sharedMap, events, cx };
 }
 
 test("enhanced-spaces initializes and renders space dashboard icon", async () => {
   const { View, svgsLoaded, cx } = await harness();
   const instance = new View();
   instance.init({}, cx);
-  const rendered = instance.render();
+  const rendered = instance.render(cx);
   assert.ok(rendered);
   assert.ok(
     svgsLoaded.includes("mods/enhanced-spaces/space.svg"),
     "Should reference mods/enhanced-spaces/space.svg"
   );
+});
+
+test("enhanced-spaces renders custom svg, full-color image, and opens icon picker overlay", async () => {
+  const { View, svgsLoaded, imagesLoaded, sharedMap, events, cx } = await harness();
+  sharedMap.set("space.icons", {
+    sp1: { kind: "svg", value: "icons/spaces/my-team.svg" },
+    sp2: { kind: "image", value: "icons/spaces/brand-logo.png" },
+  });
+
+  const instance = new View();
+  instance.init({}, cx);
+  const rendered = instance.render(cx);
+  assert.ok(rendered);
+  assert.ok(svgsLoaded.includes("icons/spaces/my-team.svg"), "Should render custom svg icon");
+  assert.ok(imagesLoaded.includes("icons/spaces/brand-logo.png"), "Should render custom image icon");
+
+  instance.openIconPicker({ id: "sp1", name: "eForm" });
+  assert.ok(
+    events.some(
+      ([type, spec]) =>
+        type === "openOverlay" &&
+        spec?.mod === "enhanced-spaces" &&
+        spec?.props?.iconPicker === true &&
+        spec?.props?.spaceId === "sp1"
+    ),
+    "Should open icon picker overlay for sp1"
+  );
+
+  // Also verify setSpaceIcon updates shared state and resets cleanly
+  instance.setSpaceIcon("sp1", { kind: "emoji", value: "🚀" });
+  assert.equal(sharedMap.get("space.icons").sp1.value, "🚀");
+  instance.setSpaceIcon("sp1", null);
+  assert.equal(sharedMap.get("space.icons").sp1, undefined);
+});
+
+test("enhanced-spaces icon picker always renders .png custom icons with image() even in monochrome mode", async () => {
+  const { View, svgsLoaded, imagesLoaded, cx } = await harness({
+    props: { iconPicker: true, spaceId: "sp1", spaceName: "eForm" },
+    exec: async () => ({ code: 0, stdout: "eForm.png\nlogo.svg\n" }),
+  });
+
+  const instance = new View();
+  instance.init({}, cx);
+  // Wait microtask for loadCustomIcons
+  await new Promise((r) => setTimeout(r, 10));
+  instance.render(cx);
+
+  assert.ok(imagesLoaded.includes("icons/spaces/eForm.png"), "PNG custom icon must render via image()");
+  assert.equal(svgsLoaded.includes("icons/spaces/eForm.png"), false, "PNG custom icon must NOT render via svg()");
+  assert.ok(svgsLoaded.includes("icons/spaces/logo.svg"), "SVG custom icon in monochrome mode renders via svg()");
 });
