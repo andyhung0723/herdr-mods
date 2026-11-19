@@ -12,6 +12,9 @@ import {
 
 const MOD = "spectra-status";
 const ICON = `mods/${MOD}/spectra.svg`;
+const ICON_TARGET = `mods/${MOD}/target.svg`;
+const ICON_REFRESH = `mods/${MOD}/refresh.svg`;
+const ICON_EXTERNAL = `mods/${MOD}/external-link.svg`;
 const OVERLAY_KEY = "spectra-status.open-overlay";
 const ROOT_KEY = "spectra-status.last-root";
 
@@ -69,7 +72,7 @@ function progressBar(t, percent, color, height = 4) {
     .h(height)
     .w_full()
     .rounded(2)
-    .bg(t.background)
+    .bg(t.surface)
     .overflow_hidden()
     .child(
       div()
@@ -345,7 +348,6 @@ export default class SpectraStatus extends View {
       .gap(isNarrow ? 4 : 6)
       .border_b(1)
       .border_color(t.border)
-      .bg(t.chrome)
       .child(
         h_flex()
           .w_full()
@@ -362,18 +364,19 @@ export default class SpectraStatus extends View {
                 el.child(div().text_size(13.5).font_bold().text_color(t.foreground).child("Spectra"))
               )
               .child(
-                div()
+                h_flex()
                   .px(6)
                   .h(18)
+                  .gap(4)
                   .flex_none()
                   .rounded(4)
                   .bg(((hasRoot ? (t.working ?? "#10b981") : t.dim) || "#3b82f6") + "22")
                   .text_size(10.5)
                   .font_semibold()
                   .text_color(hasRoot ? (t.working ?? "#10b981") : t.dim)
-                  .flex()
                   .items_center()
-                  .child(hasRoot ? `🎯 ${projectLabel}` : "No Spec")
+                  .when(hasRoot, (el) => el.child(svg(ICON_TARGET).size(11).flex_none()))
+                  .child(div().child(hasRoot ? projectLabel : "No Spec"))
               )
           )
           .child(
@@ -383,10 +386,11 @@ export default class SpectraStatus extends View {
               .flex_none()
               .when(hasRoot, (el) =>
                 el.child(
-                  div()
+                  h_flex()
                     .id("btn-open-spectra-app")
                     .px(6)
                     .h(20)
+                    .gap(3)
                     .rounded(4)
                     .bg(t.raised)
                     .border(1)
@@ -397,9 +401,9 @@ export default class SpectraStatus extends View {
                     .hover((s) => s.bg(t.hover).text_color(t.foreground))
                     .tooltip("Open project in Spectra.app")
                     .on_click(() => this.openInSpectraApp())
-                    .flex()
                     .items_center()
-                    .child(isVeryNarrow ? "App ↗" : "Spectra ↗")
+                    .child(div().child(isVeryNarrow ? "App" : "Spectra"))
+                    .child(svg(ICON_EXTERNAL).size(11).flex_none())
                 )
               )
               .when(hasRoot && !isVeryNarrow, (el) =>
@@ -439,7 +443,7 @@ export default class SpectraStatus extends View {
                     this.reload(cx);
                   })
                   .child(
-                    svg("mods/workspace-chrome/clock.svg")
+                    svg(ICON_REFRESH)
                       .size(13)
                       .text_color(this.loading ? (t.working ?? t.foreground) : t.dim)
                   )
@@ -498,7 +502,7 @@ export default class SpectraStatus extends View {
             .px(5)
             .h(16)
             .rounded(8)
-            .bg(on ? t.raised : t.chrome)
+            .bg(on ? t.raised : t.surface)
             .text_size(10.5)
             .text_color(on ? t.accent ?? t.foreground : t.dim)
             .flex()
@@ -669,7 +673,7 @@ export default class SpectraStatus extends View {
             .on_click(() => this.openMarkdown(a.file));
         }
         if (idx > 0 && !isNarrow) {
-          chips = chips.child(div().text_size(10).text_color(t.dim).child("→"));
+          chips = chips.child(svg("mods/workspace-chrome/chevron-right.svg").size(11).flex_none().text_color(t.dim));
         }
         chips = chips.child(chip);
       });
@@ -713,7 +717,12 @@ export default class SpectraStatus extends View {
                   .gap(5)
                   .items_center()
                   .min_w(0)
-                  .child(div().text_size(10).text_color(t.dim).flex_none().child(isCollapsed ? "▸" : "▾"))
+                  .child(
+                    svg(isCollapsed ? "mods/workspace-chrome/chevron-right.svg" : "mods/workspace-chrome/chevron-down.svg")
+                      .size(12)
+                      .flex_none()
+                      .text_color(t.dim)
+                  )
                   .child(div().flex_1().min_w(0).truncate().text_size(12).font_semibold().text_color(t.foreground).child(s.title))
               )
               .child(
@@ -740,10 +749,14 @@ export default class SpectraStatus extends View {
                 .pl(12)
                 .child(
                   div()
-                    .text_size(11.5)
+                    .pt(2)
                     .flex_none()
-                    .text_color(task.done ? (t.ansi2 ?? "#10b981") : t.dim)
-                    .child(task.done ? "☑" : "☐")
+                    .child(
+                      svg(task.done ? "mods/workspace-chrome/circle-check.svg" : "mods/workspace-chrome/square.svg")
+                        .size(12)
+                        .flex_none()
+                        .text_color(task.done ? (t.ansi2 ?? "#10b981") : t.dim)
+                    )
                 )
                 .when(Boolean(task.id), (el) =>
                   el.child(div().text_size(11).flex_none().font_semibold().text_color(t.dim).child(task.id))
@@ -869,7 +882,16 @@ export default class SpectraStatus extends View {
               .child(svg("mods/workspace-chrome/file-text.svg").size(13).flex_none().text_color(t.accent))
               .child(div().flex_1().min_w(0).truncate().text_size(12).font_medium().text_color(t.foreground).child(s.id))
           )
-          .child(div().flex_none().text_size(10.5).text_color(t.dim).child("spec.md ↗"))
+          .child(
+            h_flex()
+              .flex_none()
+              .gap(3)
+              .items_center()
+              .text_size(10.5)
+              .text_color(t.dim)
+              .child(div().child("spec.md"))
+              .child(svg(ICON_EXTERNAL).size(11).flex_none())
+          )
       );
     }
     return list;
@@ -920,7 +942,6 @@ export default class SpectraStatus extends View {
     return v_flex()
       .id("spectra-panel")
       .size_full()
-      .bg(t.chrome)
       .child(this.renderPanelHeader(t, isNarrow, isVeryNarrow))
       .child(
         h_flex()
@@ -930,7 +951,6 @@ export default class SpectraStatus extends View {
           .gap(4)
           .border_b(1)
           .border_color(t.border)
-          .bg(t.chrome)
           .child(this.renderTabButton(t, "tasks", "Tasks", ICON, tasksCount, isNarrow, isVeryNarrow))
           .child(this.renderTabButton(t, "changes", "Changes", "mods/workspace-chrome/layers.svg", changesCount, isNarrow, isVeryNarrow))
           .child(this.renderTabButton(t, "specs", "Specs", "mods/workspace-chrome/file-text.svg", specsCount, isNarrow, isVeryNarrow))
@@ -940,23 +960,26 @@ export default class SpectraStatus extends View {
 
   // --- Dialog Mode (Ctrl+B Shift+S) ---------------------------------------
 
-  renderButton(t, id, label, onClick, tooltip) {
-    const btn = h_flex()
+  renderButton(t, id, label, onClick, tooltip, iconLeft = null, iconRight = null) {
+    let btn = h_flex()
       .id(id)
       .px(8)
       .h(24)
+      .gap(4)
       .flex_none()
       .items_center()
       .rounded(6)
       .border_1()
       .border_color(t.border)
-      .bg(t.background)
+      .bg(t.surface)
       .cursor_pointer()
       .hover((s) => s.bg(t.hover))
       .text_size(11.5)
       .text_color(t.foreground)
-      .on_click((_e, cx) => onClick(cx))
-      .child(label);
+      .on_click((_e, cx) => onClick(cx));
+    if (iconLeft) btn = btn.child(svg(iconLeft).size(12).flex_none().text_color(t.muted));
+    btn = btn.child(label);
+    if (iconRight) btn = btn.child(svg(iconRight).size(12).flex_none().text_color(t.muted));
     return tooltip ? btn.tooltip(tooltip) : btn;
   }
 
@@ -1088,14 +1111,22 @@ export default class SpectraStatus extends View {
           .child(div().flex_1())
           .when(this.loading, (el) => el.child(div().text_size(11).text_color(t.dim).flex_none().child("Updating…")))
           .child(
-            this.renderButton(t, "spectra-refresh", "↻ Refresh", (cx) => {
+            this.renderButton(t, "spectra-refresh", "Refresh", (cx) => {
               this.details.clear();
               this.reload(cx);
-            })
+            }, null, ICON_REFRESH)
           )
           .when(Boolean(this.root), (el) =>
             el.child(
-              this.renderButton(t, "spectra-open-app", "Open in Spectra ↗", () => this.openInSpectraApp(), "Open this project in Spectra.app")
+              this.renderButton(
+                t,
+                "spectra-open-app",
+                "Open in Spectra",
+                () => this.openInSpectraApp(),
+                "Open this project in Spectra.app",
+                null,
+                ICON_EXTERNAL
+              )
             )
           )
       )
