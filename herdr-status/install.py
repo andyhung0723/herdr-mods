@@ -9,6 +9,7 @@ import os
 import shutil
 import subprocess
 import sys
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -111,6 +112,20 @@ def render_launch_agent(binary: Path) -> str:
 """
 
 
+def is_launch_agent_loaded(service: str) -> bool:
+    res = subprocess.run(["launchctl", "print", service], capture_output=True, check=False)
+    return res.returncode == 0
+
+
+def unload_launch_agent(service: str, timeout_s: float = 5.0) -> None:
+    # bootout returns before launchd finishes tearing the job down; bootstrapping
+    # during that window fails with "Bootstrap failed: 5: Input/output error".
+    subprocess.run(["launchctl", "bootout", service], capture_output=True, check=False)
+    deadline = time.monotonic() + timeout_s
+    while is_launch_agent_loaded(service) and time.monotonic() < deadline:
+        time.sleep(0.1)
+
+
 def install_launch_agent(binary: Path, dry_run: bool) -> None:
     plist = Path.home() / "Library" / "LaunchAgents" / f"{IME_WATCHER_LABEL}.plist"
     domain = f"gui/{os.getuid()}"
@@ -119,8 +134,7 @@ def install_launch_agent(binary: Path, dry_run: bool) -> None:
         return
     plist.parent.mkdir(parents=True, exist_ok=True)
     plist.write_text(render_launch_agent(binary), encoding="utf-8")
-    # bootout fails harmlessly when the agent is not loaded yet.
-    subprocess.run(["launchctl", "bootout", f"{domain}/{IME_WATCHER_LABEL}"], capture_output=True, check=False)
+    unload_launch_agent(f"{domain}/{IME_WATCHER_LABEL}")
     res = subprocess.run(["launchctl", "bootstrap", domain, str(plist)], capture_output=True, text=True, check=False)
     if res.returncode != 0:
         print(f"Warning: could not start ime-watcher agent: {res.stderr.strip()}", file=sys.stderr)
